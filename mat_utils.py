@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.linalg
+import porepy as pp
 from matplotlib import pyplot as plt
 from scipy.sparse import csr_matrix, bmat
 from scipy.sparse.linalg import gmres, LinearOperator, inv
@@ -23,7 +24,7 @@ def trim_label(label: str) -> str:
 
 def spy(mat, show=True):
     marker = "+"
-    if max(*mat.shape) > 500:
+    if max(*mat.shape) > 300:
         marker = ","
     plt.spy(mat, marker=marker, markersize=4, color="black")
     if show:
@@ -144,13 +145,13 @@ def solve(
 
 
 class OmegaInv:
-    def __init__(self, D_inv, S_A_inv, B, C):
-        self.D_inv = D_inv
-        self.S_A_inv = S_A_inv
-        self.B = B
-        self.C = C
-        self.sep = D_inv.shape[0]
-        shape = D_inv.shape[0] + S_A_inv.shape[0]
+    def __init__(self, solve_momentum, solve_mass, C1, C2):
+        self.D_inv = solve_momentum
+        self.S_A_inv = solve_mass
+        self.B = C1
+        self.C = C2
+        self.sep = solve_momentum.shape[0]
+        shape = solve_momentum.shape[0] + solve_mass.shape[0]
         self.shape = shape, shape
 
     def dot(self, x):
@@ -251,13 +252,13 @@ def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
 
 class UpperBlockPreconditioner:
 
-    def __init__(self, K_inv, Omega_inv, Phi):
-        self.K_inv = K_inv
+    def __init__(self, F_inv, Omega_inv, Phi):
+        self.K_inv = F_inv
         self.Omega_inv = Omega_inv
         self.Phi = Phi
-        shape = K_inv.shape[0] + Omega_inv.shape[0]
+        shape = F_inv.shape[0] + Omega_inv.shape[0]
         self.shape = shape, shape
-        self.sep = K_inv.shape[0]
+        self.sep = F_inv.shape[0]
 
     def dot(self, x):
         x_K, x_Omega = x[: self.sep], x[self.sep :]
@@ -348,9 +349,9 @@ class PetscAMG(PetscPC):
 @dataclass
 class SolverStats:
 
-    time_invert_K: float = -1
-    time_invert_S_A: float = -1
-    time_invert_D: float = -1
+    time_invert_F: float = -1
+    time_prepare_mass: float = -1
+    time_prepare_momentum: float = -1
     time_prepare_solver: float = -1
     gmres_iters: int = -1
     time_solve_linear_system: float = -1
@@ -360,19 +361,110 @@ class MyAwesomeSolver:
 
     _solver_initialized = False
 
+    def sticking_sliding_open(self):
+        subdomains = self.mdg.subdomains(dim=1)
+        nd_vec_to_normal = self.normal_component(subdomains)
+        # The normal component of the contact traction and the displacement jump
+        t_n: pp.ad.Operator = nd_vec_to_normal @ self.contact_traction(subdomains)
+        u_n: pp.ad.Operator = nd_vec_to_normal @ self.displacement_jump(subdomains)
+
+        # The complimentarity condition
+        b = pp.ad.Scalar(-1.0) * t_n - self.contact_mechanics_numerical_constant(
+            subdomains
+        ) * (u_n - self.fracture_gap(subdomains))
+        b = b.value(self.equation_system)
+        open_cells = b <= 0
+
+        nd_vec_to_tangential = self.tangential_component(subdomains)
+        tangential_basis: list[pp.ad.SparseArray] = self.basis(
+            subdomains, dim=self.nd - 1  # type: ignore[call-arg]
+        )
+
+        t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
+        u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
+        u_t_increment: pp.ad.Operator = pp.ad.time_increment(u_t)
+
+        f_norm = pp.ad.Function(partial(pp.ad.l2_norm, self.nd - 1), "norm_function")
+        c_num_as_scalar = self.contact_mechanics_numerical_constant(subdomains)
+        c_num = pp.ad.sum_operator_list(
+            [e_i * c_num_as_scalar * e_i.T for e_i in tangential_basis]
+        )
+        tangential_sum = t_t + c_num @ u_t_increment
+        norm_tangential_sum = f_norm(tangential_sum)
+        norm = norm_tangential_sum.value(self.equation_system)
+        sticking_cells = (b > norm) & np.logical_not(open_cells)
+
+        sliding_cells = True ^ (sticking_cells | open_cells)
+        return sticking_cells, sliding_cells, open_cells
+
     def _initialize_solver(self):
         self.eq_dofs, self.var_dofs = make_row_col_dofs(self)
-        self.permutation = make_permutations(self.eq_dofs, order=[1, 2, 4, 5, 6, 3, 0])
-        self._solver_initialized = True
+        self._variables_indices = self.make_variables_indices()
+        self._equations_indices = self.make_equations_indices()
+        eq_idx = self._equations_indices
+        self.permutation = make_permutations(
+            self.eq_dofs, order=eq_idx[2] + eq_idx[1] + eq_idx[0]
+        )
         self.solver_stats = []
+        self._solver_initialized = True
 
-    def invert_K(self, K):
-        return inv(K)
+    def make_variables_indices(self):
+        dim_max = self.mdg.dim_max()
+        sd_ambient = self.mdg.subdomains(dim=dim_max)
+        sd_lower = [
+            k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
+        ]
+        sd_frac = self.mdg.subdomains(dim=dim_max - 1)
+        intf = self.mdg.interfaces()
+        intf_frac = self.mdg.interfaces(dim=dim_max - 1)
 
-    def invert_S_A(self, S_A):
+        return get_variables_indices(
+            variable_to_idx=make_variable_to_idx(self),
+            md_variables_groups=[
+                [
+                    self.pressure(sd_ambient),
+                ],
+                [
+                    self.displacement(sd_ambient),
+                ],
+                [
+                    self.pressure(sd_lower),
+                    self.interface_darcy_flux(intf),
+                    self.contact_traction(sd_frac),
+                    self.interface_displacement(intf_frac),
+                ],
+            ],
+        )
+
+    def make_equations_indices(self):
+        dim_max = self.mdg.dim_max()
+        sd_ambient = self.mdg.subdomains(dim=dim_max)
+        sd_lower = [
+            k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
+        ]
+        intf = self.mdg.interfaces()
+        return get_equations_indices(
+            equation_to_idx=make_equation_to_idx(self),
+            equations_group_order=[
+                [("mass_balance_equation", sd_ambient)],
+                [("momentum_balance_equation", sd_ambient)],
+                [
+                    ("mass_balance_equation", sd_lower),
+                    ("interface_darcy_flux_equation", intf),
+                    ("normal_fracture_deformation_equation", sd_lower),
+                    ("tangential_fracture_deformation_equation", sd_lower),
+                    ("interface_force_balance_equation", intf),
+                ],
+            ],
+        )
+
+    def invert_F(self, F):
+        return inv(F)
+
+    def prepare_solve_mass(self, S_A):
         return PetscAMG(S_A)
 
-    def invert_D(self, D):
+    def prepare_solve_momentum(self, D):
         return PetscAMG(D)
 
     def _prepare_solver(self):
@@ -385,50 +477,55 @@ class MyAwesomeSolver:
                 mat, row_dofs=self.eq_dofs, col_dofs=self.var_dofs
             )
 
-            A = block_matrix[0, 0]
-            B = block_matrix[0, 3]
-            C = block_matrix[3, 0]
-            D = block_matrix[3, 3]
-            E = concatenate_blocks(block_matrix, [0], [1, 2, 4, 5])
-            F = concatenate_blocks(block_matrix, [3], [1, 2, 4, 5])
-            G = concatenate_blocks(block_matrix, [1, 2, 4, 5, 6], [0])
-            H = concatenate_blocks(block_matrix, [1, 2, 4, 5, 6], [3])
-            K = concatenate_blocks(block_matrix, [1, 2, 4, 5, 6], [1, 2, 4, 5])
-            Phi = bmat([[H, G]])
+            eq_blocks = self._equations_indices
+            var_blocks = self._variables_indices
+
+            A = concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[0])
+            C1 = concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[1])
+            C2 = concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[0])
+            B = concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[1])
+            D1 = concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[2])
+            E1 = concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[2])
+            D2 = concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[0])
+            E2 = concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[1])
+            F = concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[2])
+            Phi = bmat([[E2, D2]])
 
             with TimerContext() as t:
-                K_inv = self.invert_K(K)
-            self._stats.time_invert_K = t.elapsed_time
+                F_inv = self.invert_F(F)
+            self._stats.time_invert_F = t.elapsed_time
 
-            E_Km1_G = E @ K_inv @ G
-            F_Km1_G = F @ K_inv @ G
-            E_Km1_H = E @ K_inv @ H
-            F_Km1_H = F @ K_inv @ H
+            D1_Finv_D2 = D1 @ F_inv @ D2
+            E1_Finv_D2 = E1 @ F_inv @ D2
+            D1_Finv_E2 = D1 @ F_inv @ E2
+            E1_Finv_E2 = E1 @ F_inv @ E2
 
-            Bp = B - E_Km1_H
-            Ap = A - E_Km1_G
-            Cp = C - F_Km1_G
-            Dp = D - F_Km1_H
+            Ap = A - D1_Finv_D2
+            Bp = B - E1_Finv_E2
+            C1p = C1 - D1_Finv_E2
+            C2p = C2 - E1_Finv_D2
 
             with TimerContext() as t:
-                Dp_inv = self.invert_D(Dp)
-            self._stats.time_invert_D = t.elapsed_time
+                Bp_inv = self.prepare_solve_momentum(Bp)
+            self._stats.time_prepare_momentum = t.elapsed_time
 
             S_Ap_fs = Ap + get_fixed_stress_stabilization(self)
 
             with TimerContext() as t:
-                S_Ap_fs_inv = self.invert_S_A(S_Ap_fs)
-            self._stats.time_invert_S_A = t.elapsed_time
+                S_Ap_fs_inv = self.prepare_solve_mass(S_Ap_fs)
+            self._stats.time_prepare_mass = t.elapsed_time
 
             Omega_p_inv_fstress = OmegaInv(
-                D_inv=Dp_inv, S_A_inv=S_Ap_fs_inv, B=Bp, C=Cp
+                solve_momentum=Bp_inv, solve_mass=S_Ap_fs_inv, C1=C1p, C2=C2p
             )
 
             preconditioner = UpperBlockPreconditioner(
-                K_inv=K_inv, Omega_inv=Omega_p_inv_fstress, Phi=Phi
+                F_inv=F_inv, Omega_inv=Omega_p_inv_fstress, Phi=Phi
             )
             reordered_mat = concatenate_blocks(
-                block_matrix, [1, 2, 4, 5, 6, 3, 0], [1, 2, 4, 5, 3, 0]
+                block_matrix,
+                eq_blocks[2] + eq_blocks[1] + eq_blocks[0],
+                var_blocks[2] + var_blocks[1] + var_blocks[0],
             )
 
             permuted_mat = self.permutation @ mat @ self.permutation.T
@@ -438,6 +535,8 @@ class MyAwesomeSolver:
         return reordered_mat, preconditioner
 
     def solve_linear_system(self) -> np.ndarray:
+        if not self.params.get('iterative_solver', True):
+            return super().solve_linear_system()
         with TimerContext() as t_solve:
             mat, rhs = self.linear_system
             mat_permuted, prec = self._prepare_solver()
@@ -485,7 +584,15 @@ class PetscILU(PetscPC):
         super().__init__(mat=mat)
 
 
-def color_spy(block_mat, row_idx, col_idx, row_names=None, col_names=None):
+def color_spy(block_mat, row_idx=None, col_idx=None, row_names=None, col_names=None):
+    if row_idx is None:
+        row_idx = list(range(block_mat.shape[0]))
+    if col_idx is None:
+        col_idx = list(range(block_mat.shape[1]))
+    if row_names is None:
+        row_names = row_idx
+    if col_names is None:
+        col_names = col_idx
     row_sep = [0]
     col_sep = [0]
     active_submatrices = []
@@ -506,18 +613,16 @@ def color_spy(block_mat, row_idx, col_idx, row_names=None, col_names=None):
         ystart, yend = row_sep[i : i + 2]
         row_label_pos.append(ystart + (yend - ystart) / 2)
         plt.axhspan(ystart - 0.5, yend - 0.5, facecolor=f"C{i}", alpha=0.3)
-    if row_names is not None:
-        ax.yaxis.set_ticks(row_label_pos)
-        ax.set_yticklabels(row_names, rotation=0)
+    ax.yaxis.set_ticks(row_label_pos)
+    ax.set_yticklabels(row_names, rotation=0)
 
     col_label_pos = []
     for i in range(len(col_idx)):
         xstart, xend = col_sep[i : i + 2]
         col_label_pos.append(xstart + (xend - xstart) / 2)
         plt.axvspan(xstart - 0.5, xend - 0.5, facecolor=f"C{i}", alpha=0.3)
-    if col_names is not None:
-        ax.xaxis.set_ticks(col_label_pos)
-        ax.set_xticklabels(col_names, rotation=0)
+    ax.xaxis.set_ticks(col_label_pos)
+    ax.set_xticklabels(col_names, rotation=0)
 
 
 from petsc4py.PETSc import KSP
@@ -626,12 +731,13 @@ def solve_petsc(
     plt.gcf().set_size_inches(14, 4)
 
     ax = plt.subplot(1, 2, 1)
-    ax.plot(residuals, label=label, marker=".", linestyle=linestyle)
+    ax.plot(residuals / residuals[0], label=label, marker=".", linestyle=linestyle)
     ax.set_yscale("log")
     ax.set_ylabel("pr. residual")
     ax.set_xlabel("gmres iter.")
     ax.grid(True)
-    ax.legend()
+    if label != "":
+        ax.legend()
 
     eigs = gmres.ksp.computeEigenvalues()
     ax = plt.subplot(1, 2, 2)
@@ -642,7 +748,8 @@ def solve_petsc(
     ax.set_xlabel(r"Re($\lambda)$")
     ax.set_ylabel(r"Im($\lambda$)")
     ax.grid(True)
-    ax.legend()
+    if label != '':
+        ax.legend()
     if logx_eigs:
         plt.xscale("log")
 
@@ -652,3 +759,42 @@ class PetscJacobi(PetscPC):
         options = PETSc.Options()
         options["pc_type"] = "jacobi"
         super().__init__(mat=mat)
+
+
+def make_variable_to_idx(model):
+    return {var: i for i, var in enumerate(model.equation_system.variables)}
+
+
+def get_variables_indices(variable_to_idx, md_variables_groups):
+    indices = []
+    for md_var_group in md_variables_groups:
+        group_idx = []
+        for md_var in md_var_group:
+            group_idx.extend([variable_to_idx[var] for var in md_var.sub_vars])
+        indices.append(group_idx)
+    return indices
+
+
+def make_equation_to_idx(model):
+    equation_to_idx = {}
+    idx = 0
+    for (
+        eq_name,
+        domains,
+    ) in model.equation_system._equation_image_space_composition.items():
+        for domain in domains:
+            equation_to_idx[(eq_name, domain)] = idx
+            idx += 1
+    return equation_to_idx
+
+
+def get_equations_indices(equation_to_idx, equations_group_order):
+    indices = []
+    for group in equations_group_order:
+        group_idx = []
+        for eq_name, domains in group:
+            for domain in domains:
+                if (eq_name, domain) in equation_to_idx:
+                    group_idx.append(equation_to_idx[(eq_name, domain)])
+        indices.append(group_idx)
+    return indices
