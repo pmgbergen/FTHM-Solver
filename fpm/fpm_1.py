@@ -1,3 +1,7 @@
+# 2D model, 8 fractures, 1 intersection.
+# Flow inlet boundary condition
+# Water and granite
+
 # %%
 import numpy as np
 import porepy as pp
@@ -6,57 +10,45 @@ from porepy.examples.flow_benchmark_2d_case_3 import Permeability
 from porepy.models.poromechanics import Poromechanics
 from porepy.viz.diagnostics_mixin import DiagnosticsMixin
 
-from mat_utils import *
-
-
-class TimeStepping:
-    def after_nonlinear_convergence(
-        self, solution: np.ndarray, errors: float, iteration_counter: int
-    ) -> None:
-        super().after_nonlinear_convergence(solution, errors, iteration_counter)
-        self.time_manager.compute_time_step(iteration_counter, recompute_solution=False)
-
-    def after_nonlinear_failure(
-        self, solution: np.ndarray, errors: float, iteration_counter: int
-    ) -> None:
-        self.time_manager.compute_time_step(recompute_solution=True)
+from pp_utils import (
+    BCFlow,
+    BCMechanicsOpen,
+    BCMechanicsSliding,
+    BCMechanicsSticking,
+    MyPetscSolver,
+    TimeStepping,
+)
 
 
 class PoroMech(
-    MyAwesomeSolver,
+    MyPetscSolver,
     TimeStepping,
+    BCFlow,
+    # BCMechanicsOpen,
+    # BCMechanicsSliding,
+    BCMechanicsSticking,
     Permeability,
     DiagnosticsMixin,
     Poromechanics,
 ):
 
+    @property
+    def fracture_permeabilities(self) -> np.ndarray:
+        """Permeability of the fractures.
+
+        Ordering corresponds to definition of fractures in the geometry.
+
+        """
+        return np.array([1, 1, 1, 1e-8, 1e-8, 1, 1, 1, 1, 1])
+
     def set_domain(self) -> None:
         self._domain = pp.Domain({"xmax": 2.2, "ymax": 1})
 
     def set_fractures(self) -> None:
-        # self._fractures = fracture_sets.benchmark_2d_case_1()
-        # self._fractures = fracture_sets.benchmark_2d_case_3()
         self._fractures = fracture_sets.seven_fractures_one_L_intersection()
 
-    def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryCondition:
-        bounds = self.domain_boundary_sides(sd)
-        bc = pp.BoundaryConditionVectorial(sd, bounds.north, "dir")
-        return bc
 
-    def bc_type_darcy_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
-        bounds = self.domain_boundary_sides(sd)
-        bc = pp.BoundaryCondition(sd, bounds.north + bounds.south, "dir")
-        return bc
-
-    def bc_values_pressure(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
-        bounds = self.domain_boundary_sides(boundary_grid)
-        values = np.zeros(boundary_grid.num_cells)
-        values[bounds.north] = self.fluid.convert_units(4e5, "Pa")
-        # values[bounds.south] = self.fluid.convert_units(0.01, "Pa")
-        return values
-
-
-def make_model():
+def make_model(cell_size=(1 / 20)):
     water = {
         "compressibility": 4.559 * 1e-10,  # [Pa^-1], isentropic compressibility
         "density": 998.2,  # [kg m^-3]
@@ -80,9 +72,9 @@ def make_model():
         "thermal_expansion": 9.66e-6,  # [K^-1]
     }
 
-    dt = 1e-2
+    dt = 1e-3
     time_manager = pp.TimeManager(
-        dt_init=dt, dt_min_max=(1e-10, 1e2), schedule=[0, 100 * dt], constant_dt=False
+        dt_init=dt, dt_min_max=(1e-10, 1e2), schedule=[0, 10 * dt], constant_dt=False
     )
     params = {
         "material_constants": {
@@ -93,16 +85,12 @@ def make_model():
         },
         "grid_type": "simplex",
         "time_manager": time_manager,
-        "units": pp.Units(
-            # m=1e-6,
-            # m=1
-            # m=1e6
-            kg=1e6
-        ),
+        "units": pp.Units(kg=1e6),
         "meshing_arguments": {
-            "cell_size": (1 / 20),
+            "cell_size": cell_size,
         },
-        "iterative_solver": False,
+        "simulation_name": "fpm_1",
+        # "iterative_solver": False,
     }
     return PoroMech(params)
 
@@ -135,14 +123,16 @@ if __name__ == "__main__":
         # alpha=0.5,
     )
 
-    pp.plot_grid(
-        model.mdg,
-        cell_value=model.pressure_variable,
-        vector_value=model.displacement_variable,
-        alpha=0.5,
-    )
+    # pp.plot_grid(
+    #     model.mdg,
+    #     cell_value=model.pressure_variable,
+    #     vector_value=model.displacement_variable,
+    #     alpha=0.5,
+    # )
 
-    model.time_manager.increase_time()
-    model.time_manager.increase_time_index()
-    model.before_nonlinear_loop()
-    model.before_nonlinear_iteration()
+    # model.time_manager.increase_time()
+    # model.time_manager.increase_time_index()
+    # model.before_nonlinear_loop()
+    # model.before_nonlinear_iteration()
+
+# %%

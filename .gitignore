@@ -3,3 +3,5 @@
 *.json
 *.msh
 *.geo_unrolled
+*.npz
+*.npy

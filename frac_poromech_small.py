@@ -6,8 +6,10 @@ import numpy as np
 from mat_utils import *
 from porepy.applications.md_grids.domains import nd_cube_domain
 
+from pp_utils import MyPetscSolver
 
-class PoroMech(MyAwesomeSolver, DiagnosticsMixin, Poromechanics):
+
+class PoroMech(MyPetscSolver, DiagnosticsMixin, Poromechanics):
 
     def set_domain(self) -> None:
         self._domain = nd_cube_domain(2, 1.0)
