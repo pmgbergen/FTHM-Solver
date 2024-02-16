@@ -1,4 +1,5 @@
 import itertools
+from pathlib import Path
 import time
 from typing import Literal, Sequence
 
@@ -11,8 +12,8 @@ from numpy.linalg import norm
 from scipy.sparse import bmat
 from scipy.sparse.linalg import LinearOperator, gmres
 
-from mat_utils import PetscGMRES
-from pp_utils import TimeStepStats
+from mat_utils import PetscGMRES, condest
+from pp_utils import LinearSolveStats, TimeStepStats
 
 BURBERRY = mpl.cycler(
     color=["#A70100", "#513819", "#956226", "#B8A081", "#747674", "#0D100E"]
@@ -266,6 +267,53 @@ def get_gmres_iterations(x: Sequence[TimeStepStats]) -> list[float]:
     return result
 
 
+def get_F_cond(data: Sequence[TimeStepStats], model):
+    res = []
+    for i in range(sum(len(x.linear_solves) for x in data)):
+        mat, rhs = load_matrix_rhs(data, i)
+        sliced_mat = model.slice_jacobian(mat)
+        res.append(condest(sliced_mat.F))
+    return res
+
+
+def get_S_Ap_cond(data: Sequence[TimeStepStats], model):
+    res = []
+    for i in range(sum(len(x.linear_solves) for x in data)):
+        mat, rhs = load_matrix_rhs(data, i)
+        model.linear_system = mat, rhs
+        model._prepare_solver()
+        res.append(condest(model.S_Ap_fs))
+    return res
+
+
+def get_Bp_cond(data: Sequence[TimeStepStats], model):
+    res = []
+    for i in range(sum(len(x.linear_solves) for x in data)):
+        mat, rhs = load_matrix_rhs(data, i)
+        sliced_mat = model.slice_jacobian(mat)
+        omega = model.slice_omega(sliced_mat)
+        res.append(condest(omega.Bp))
+    return res
+
+
+def get_Omega_p_cond(data: Sequence[TimeStepStats], model):
+    res = []
+    for i in range(sum(len(x.linear_solves) for x in data)):
+        mat, rhs = load_matrix_rhs(data, i)
+        sliced_mat = model.slice_jacobian(mat)
+        omega = model.slice_omega(sliced_mat)
+        res.append(condest(bmat([[omega.Bp, omega.C2p], [omega.C1p, omega.Ap]])))
+    return res
+
+
+def get_jacobian_cond(data: Sequence[TimeStepStats], model):
+    res = []
+    for i in range(sum(len(x.linear_solves) for x in data)):
+        mat, rhs = load_matrix_rhs(data, i)
+        res.append(condest(mat))
+    return res
+
+
 def get_petsc_converged_reason(x: Sequence[TimeStepStats]) -> list[int]:
     result = []
     for ts in x:
@@ -331,4 +379,13 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True):
         )
 
     plt.xlim(0, len(converged_reason) - 0.5)
-    plt.legend()
+    if legend:
+        plt.legend()
+
+
+def load_matrix_rhs(data: Sequence[TimeStepStats], idx: int):
+    flat_data: list[LinearSolveStats] = [y for x in data for y in x.linear_solves]
+    load_dir = Path("../matrices")
+    mat = scipy.sparse.load_npz(load_dir / flat_data[idx].matrix_id)
+    rhs = np.load(load_dir / flat_data[idx].rhs_id)
+    return mat, rhs

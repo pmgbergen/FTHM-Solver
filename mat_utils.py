@@ -5,6 +5,7 @@ import numpy as np
 import petsc4py
 import scipy.linalg
 import scipy.sparse
+import scipy.sparse.linalg
 
 petsc4py.init(sys.argv)
 
@@ -34,6 +35,15 @@ class OmegaInv:
 
 def cond(mat):
     return np.linalg.cond(mat.A)
+
+
+def inv(mat):
+    return scipy.sparse.linalg.inv(mat.tocsc())
+
+
+def condest(mat):
+    data = abs(mat.data)
+    return data.max() / data.min()
 
 
 def slice_matrix(mat, row_dofs, col_dofs, row_id, col_id):
@@ -364,6 +374,7 @@ def get_equations_indices(equation_to_idx, equations_group_order):
 
 def extract_diag_inv(mat):
     diag = mat.diagonal()
+    # diag = np.array(mat.sum(axis=1)).squeeze()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
     diag_inv = 1 / diag
     ones.data[:] = diag_inv

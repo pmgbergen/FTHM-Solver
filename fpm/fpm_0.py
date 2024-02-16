@@ -29,8 +29,8 @@ class PoroMech(
     MyPetscSolver,
     TimeStepping,
     # BCMechanicsOpen,
-    BCMechanicsSticking,
-    # BCMechanicsSliding,
+    # BCMechanicsSticking,
+    BCMechanicsSliding,
     BCFlow,
     Permeability,
     DiagnosticsMixin,
@@ -111,6 +111,8 @@ def make_model(cell_size=(1 / 20)):
             "cell_size": cell_size / m,
         },
         # "iterative_solver": False,
+        # 'rprec': True,
+        'estimate_cond': True,
         "simulation_name": "fpm_0",
     }
     return PoroMech(params)
@@ -162,6 +164,6 @@ if __name__ == "__main__":
         alpha=0.5,
     )
 
-    model.sticking_sliding_open()
+    print(model.simulation_name)
 
 # %%

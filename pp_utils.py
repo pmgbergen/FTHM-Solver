@@ -33,6 +33,8 @@ from mat_utils import (
     make_permutations,
     make_row_col_dofs,
     make_variable_to_idx,
+    cond,
+    extract_diag_inv,
 )
 
 
@@ -141,7 +143,10 @@ class TimeStepStats:
         data = cls(**json)
         tmp = []
         for x in data.linear_solves:
-            tmp.append(LinearSolveStats(**x))
+            payload = {
+                k: v for k, v in x.items() if k in LinearSolveStats.__dataclass_fields__
+            }
+            tmp.append(LinearSolveStats(**payload))
         data.linear_solves = tmp
         return data
 
@@ -174,13 +179,40 @@ def make_right_scaling(model: pp.SolutionStrategy, scales=(1e9, 1e-9)):
     )
 
     diag = np.ones(model.equation_system.num_dofs())
-    # for i in range(len(var_idx)):
-    #     for idx in var_idx[i]:
-    #         diag[var_dofs[idx]] = scales[i]
+
+    if model.params.get("rprec", False):
+        for i in range(len(var_idx)):
+            for idx in var_idx[i]:
+                diag[var_dofs[idx]] = scales[i]
 
     rprec = scipy.sparse.diags(diag).tocsr()
     rprec_inv = scipy.sparse.diags(1 / diag).tocsr()
     return rprec, rprec_inv
+
+
+@dataclass
+class SlicedMatrix:
+    #  A  C1 E1
+    #  C1 B  E2
+    #  D1 E1 F
+    A: scipy.sparse.csr_matrix  # mass nd
+    B: scipy.sparse.csr_matrix  # momentum nd
+    F: scipy.sparse.csr_matrix  # everything else
+    C1: scipy.sparse.csr_matrix
+    C2: scipy.sparse.csr_matrix
+    D1: scipy.sparse.csr_matrix
+    D2: scipy.sparse.csr_matrix
+    E1: scipy.sparse.csr_matrix
+    E2: scipy.sparse.csr_matrix
+
+
+@dataclass
+class SlicedOmega:
+    Ap: scipy.sparse.csr_matrix
+    Bp: scipy.sparse.csr_matrix
+    C1p: scipy.sparse.csr_matrix
+    C2p: scipy.sparse.csr_matrix
+    F_inv: scipy.sparse.csr_matrix
 
 
 class MyPetscSolver(pp.SolutionStrategy):
@@ -196,7 +228,10 @@ class MyPetscSolver(pp.SolutionStrategy):
     @property
     def simulation_name(self) -> str:
         sim_name = self.params.get("simulation_name", "simulation")
-        return f"{sim_name}_{self.bc_name}"
+        sim_name = f"{sim_name}_{self.bc_name}"
+        if self.params.get("rprec", False):
+            sim_name = f"{sim_name}_rprec"
+        return sim_name
 
     def before_nonlinear_loop(self) -> None:
         self._time_step_stats = TimeStepStats()
@@ -302,6 +337,52 @@ class MyPetscSolver(pp.SolutionStrategy):
         )
         self._solver_initialized = True
 
+    def slice_jacobian(self, mat) -> SlicedMatrix:
+        if not self._solver_initialized:
+            self._initialize_solver()
+
+        block_matrix = _make_block_mat(
+            mat, row_dofs=self.eq_dofs, col_dofs=self.var_dofs
+        )
+
+        eq_blocks = self._equations_indices
+        var_blocks = self._variables_indices
+
+        return SlicedMatrix(
+            A=concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[0]),
+            C1=concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[1]),
+            C2=concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[0]),
+            B=concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[1]),
+            D1=concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[2]),
+            E1=concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[2]),
+            D2=concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[0]),
+            E2=concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[1]),
+            F=concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[2]),
+        )
+
+    def slice_omega(self, sliced_mat: SlicedMatrix) -> SlicedOmega:
+        with TimerContext() as t:
+            F_inv = self.invert_F(sliced_mat.F)
+        self._linear_solve_stats.time_invert_F = t.elapsed_time
+
+        D1 = sliced_mat.D1
+        D2 = sliced_mat.D2
+        E1 = sliced_mat.E1
+        E2 = sliced_mat.E2
+
+        D1_Finv_D2 = D1 @ F_inv @ D2
+        E1_Finv_D2 = E1 @ F_inv @ D2
+        D1_Finv_E2 = D1 @ F_inv @ E2
+        E1_Finv_E2 = E1 @ F_inv @ E2
+
+        return SlicedOmega(
+            Ap=sliced_mat.A - D1_Finv_D2,
+            Bp=sliced_mat.B - E1_Finv_E2,
+            C1p=sliced_mat.C1 - D1_Finv_E2,
+            C2p=sliced_mat.C2 - E1_Finv_D2,
+            F_inv=F_inv,
+        )
+
     def make_variables_indices(self):
         dim_max = self.mdg.dim_max()
         sd_ambient = self.mdg.subdomains(dim=dim_max)
@@ -353,6 +434,7 @@ class MyPetscSolver(pp.SolutionStrategy):
         )
 
     def invert_F(self, F):
+        # return extract_diag_inv(F)
         try:
             return inv(F)
         except RuntimeError as e:
@@ -368,72 +450,49 @@ class MyPetscSolver(pp.SolutionStrategy):
     def _prepare_solver(self):
         with TimerContext() as t_prepare_solver:
             mat, _ = self.linear_system
-            block_matrix = _make_block_mat(
-                mat, row_dofs=self.eq_dofs, col_dofs=self.var_dofs
-            )
-
-            eq_blocks = self._equations_indices
-            var_blocks = self._variables_indices
-
-            A = concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[0])
-            C1 = concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[1])
-            C2 = concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[0])
-            B = concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[1])
-            D1 = concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[2])
-            E1 = concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[2])
-            D2 = concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[0])
-            E2 = concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[1])
-            F = concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[2])
-            Phi = bmat([[E2, D2]])
+            sliced_mat = self.slice_jacobian(mat)
+            Phi = bmat([[sliced_mat.E2, sliced_mat.D2]])
+            Omega = self.slice_omega(sliced_mat)
 
             with TimerContext() as t:
-                F_inv = self.invert_F(F)
-            self._linear_solve_stats.time_invert_F = t.elapsed_time
-
-            D1_Finv_D2 = D1 @ F_inv @ D2
-            E1_Finv_D2 = E1 @ F_inv @ D2
-            D1_Finv_E2 = D1 @ F_inv @ E2
-            E1_Finv_E2 = E1 @ F_inv @ E2
-
-            Ap = A - D1_Finv_D2
-            Bp = B - E1_Finv_E2
-            C1p = C1 - D1_Finv_E2
-            C2p = C2 - E1_Finv_D2
-
-            # for debugging
-            self.Ap = Ap
-            self.Bp = Bp
-            self.C1p = C1p
-            self.C2p = C2p
-            self.F = F
-
-            with TimerContext() as t:
-                Bp_inv = self.prepare_solve_momentum(Bp)
+                Bp_inv = self.prepare_solve_momentum(Omega.Bp)
             self._linear_solve_stats.time_prepare_momentum = t.elapsed_time
 
-            S_Ap_fs = Ap + get_fixed_stress_stabilization(self)
+            S_Ap_fs = Omega.Ap + get_fixed_stress_stabilization(self)
 
             with TimerContext() as t:
                 S_Ap_fs_inv = self.prepare_solve_mass(S_Ap_fs)
             self._linear_solve_stats.time_prepare_mass = t.elapsed_time
 
             Omega_p_inv_fstress = OmegaInv(
-                solve_momentum=Bp_inv, solve_mass=S_Ap_fs_inv, C1=C1p, C2=C2p
+                solve_momentum=Bp_inv,
+                solve_mass=S_Ap_fs_inv,
+                C1=Omega.C1p,
+                C2=Omega.C2p,
             )
 
             preconditioner = UpperBlockPreconditioner(
-                F_inv=F_inv, Omega_inv=Omega_p_inv_fstress, Phi=Phi
+                F_inv=Omega.F_inv, Omega_inv=Omega_p_inv_fstress, Phi=Phi
             )
-            reordered_mat = concatenate_blocks(
-                block_matrix,
-                eq_blocks[2] + eq_blocks[1] + eq_blocks[0],
-                var_blocks[2] + var_blocks[1] + var_blocks[0],
-            )
+            # reordered_mat = concatenate_blocks(
+            #     block_matrix,
+            #     eq_blocks[2] + eq_blocks[1] + eq_blocks[0],
+            #     var_blocks[2] + var_blocks[1] + var_blocks[0],
+            # )
 
-            # permuted_mat = self.permutation @ mat @ self.permutation.T
+            reordered_mat = self.permutation @ mat @ self.permutation.T
             # assert (reordered_mat - permuted_mat).data.size == 0
 
         self._linear_solve_stats.time_prepare_solver = t_prepare_solver.elapsed_time
+
+        # for debugging
+        self.Ap = Omega.Ap
+        self.Bp = Omega.Bp
+        self.C1p = Omega.C1p
+        self.C2p = Omega.C2p
+        self.F = sliced_mat.F
+        self.S_Ap_fs = S_Ap_fs
+
         return reordered_mat, preconditioner
 
     def assemble_linear_system(self) -> None:
@@ -462,7 +521,7 @@ class MyPetscSolver(pp.SolutionStrategy):
             rhs_permuted = self.permutation @ rhs
 
             gmres_ = PetscGMRES(mat=mat_permuted, pc=prec)
-            
+
             with TimerContext() as t_gmres:
                 res_permuted = gmres_.solve(rhs_permuted)
             self._linear_solve_stats.time_gmres = t_gmres.elapsed_time
