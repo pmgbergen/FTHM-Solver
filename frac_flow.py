@@ -1,40 +1,32 @@
-# 2D model, 8 fractures, 1 intersection.
-# Flow inlet boundary condition
+# 2D model, 1 fracture.
 # Water and granite
 
+# %%
 from typing import Literal
 import numpy as np
 import porepy as pp
-from porepy.applications.md_grids import fracture_sets
+from porepy.applications.md_grids.domains import nd_cube_domain
 from porepy.examples.flow_benchmark_2d_case_3 import Permeability
-from porepy.models.poromechanics import Poromechanics
+from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.viz.diagnostics_mixin import DiagnosticsMixin
+
 
 from pp_utils import (
     BCFlow,
-    BCMechanicsOpen,
-    BCMechanicsSliding,
-    BCMechanicsSticking,
-    MyPetscSolver,
     TimeStepping,
 )
 
 
 # MEGA = 1e9
+# MEGA = 1e10
 MEGA = 1
-# MEGA = 1e5
 
 
-class PoroMech(
-    MyPetscSolver,
+class Model(
     TimeStepping,
-    # BCMechanicsOpen,
-    # BCMechanicsSticking,
-    BCMechanicsSliding,
-    BCFlow,
     Permeability,
     DiagnosticsMixin,
-    Poromechanics,
+    SinglePhaseFlow,
 ):
 
     @property
@@ -47,13 +39,31 @@ class PoroMech(
         return np.array([1, 1, 1, 1e-8, 1e-8, 1, 1, 1, 1, 1]) * MEGA
 
     def set_domain(self) -> None:
-        self._domain = pp.Domain({"xmax": 2.2, "ymax": 1})
+        m = self.solid.units.m
+        # m = 1
+        self._domain = nd_cube_domain(2, 1 / m)
 
     def set_fractures(self) -> None:
-        self._fractures = fracture_sets.seven_fractures_one_L_intersection()
+        # self._fractures = []
+        m = self.solid.units.m
+        # m = 1
+        self._fractures = [
+            pp.LineFracture(np.array([[0.25, 0.8], [0.5, 0.5]]) / m)
+        ]
 
     def grid_type(self) -> Literal["simplex", "cartesian", "tensor_grid"]:
-        return "simplex"
+        return "cartesian"
+    
+    def bc_type_darcy_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
+        bounds = self.domain_boundary_sides(sd)
+        bc = pp.BoundaryCondition(sd, bounds.south + bounds.north, "dir")
+        return bc
+
+    def bc_values_pressure(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
+        bounds = self.domain_boundary_sides(boundary_grid)
+        values = np.zeros(boundary_grid.num_cells)
+        values[bounds.north] = self.fluid.convert_units(2e10 / MEGA, "Pa")
+        return values
 
 
 def make_model(cell_size=(1 / 20)):
@@ -67,13 +77,13 @@ def make_model(cell_size=(1 / 20)):
     }
 
     granite = {
-        "biot_coefficient": 0.47 * MEGA,  # [-]
+        "biot_coefficient": 0.47,  # [-]
         "density": 2683.0,  # [kg * m^-3]
         "friction_coefficient": 0.6,  # [-]
         "lame_lambda": 7020826106 / MEGA,  # [Pa]
-        "permeability": 5.0e-18,  # [m^2]
+        "permeability": 5.0e-18 * MEGA,  # [m^2]
         "porosity": 1.3e-2,  # [-]
-        "shear_modulus": 1.485472195e10,  # [Pa]
+        "shear_modulus": 1.485472195e10 / MEGA,  # [Pa]
         "specific_heat_capacity": 720.7,  # [J * kg^-1 * K^-1]
         "specific_storage": 4.74e-10 * MEGA,  # [Pa^-1]
         "thermal_conductivity": 3.1,  # [W * m^-1 * K^-1]
@@ -82,13 +92,11 @@ def make_model(cell_size=(1 / 20)):
 
     dt = 1e-3
     time_manager = pp.TimeManager(
-        dt_init=dt, dt_min_max=(1e-10, 1e2), schedule=[0, 10 * dt], constant_dt=False
+        dt_init=dt, dt_min_max=(1e-10, 1e2), schedule=[0, 100 * dt], constant_dt=False
     )
 
+    # units = pp.Units(kg=1e9, m=1e0)
     units = pp.Units()
-    # units = pp.Units(kg=1e6)
-    units = pp.Units(kg=1e9)
-    # units = pp.Units(m=1e6, kg=1e9)
     m = units.m
     # m = 1
     params = {
@@ -105,9 +113,9 @@ def make_model(cell_size=(1 / 20)):
             "cell_size": cell_size / m,
         },
         # "iterative_solver": False,
-        "simulation_name": "fpm_1",
+        "simulation_name": "fpm_0_tpfa",
     }
-    return PoroMech(params)
+    return Model(params)
 
 
 # %%
@@ -125,12 +133,16 @@ if __name__ == "__main__":
     model.plot_diagnostics(model.run_diagnostics(), "max")
     plt.show()
 
-    pp.plot_grid(
-        model.mdg,
-        plot_2d=True,
-        fracturewidth_1d=3,
-        rgb=[0.5, 0.5, 1],
-    )
+    model.discretize()
+
+    res = model.interface_darcy_flux_equation(model.mdg.interfaces())
+
+    # pp.plot_grid(
+    #     model.mdg,
+    #     plot_2d=True,
+    #     fracturewidth_1d=3,
+    #     rgb=[0.5, 0.5, 1],
+    # )
 
     pp.run_time_dependent_model(
         model,
@@ -148,14 +160,5 @@ if __name__ == "__main__":
         # vector_value=model.displacement_variable,
         # alpha=0.5,
     )
-
-    pp.plot_grid(
-        model.mdg,
-        cell_value=model.pressure_variable,
-        vector_value=model.displacement_variable,
-        alpha=0.5,
-    )
-
-    model.sticking_sliding_open()
 
 # %%

@@ -1,11 +1,11 @@
-# 2D model, 8 fractures, 1 intersection.
-# Flow inlet boundary condition
+# 2D model, 1 fracture.
 # Water and granite
 
+# %%
 from typing import Literal
 import numpy as np
 import porepy as pp
-from porepy.applications.md_grids import fracture_sets
+from porepy.applications.md_grids.domains import nd_cube_domain
 from porepy.examples.flow_benchmark_2d_case_3 import Permeability
 from porepy.models.poromechanics import Poromechanics
 from porepy.viz.diagnostics_mixin import DiagnosticsMixin
@@ -47,13 +47,19 @@ class PoroMech(
         return np.array([1, 1, 1, 1e-8, 1e-8, 1, 1, 1, 1, 1]) * MEGA
 
     def set_domain(self) -> None:
-        self._domain = pp.Domain({"xmax": 2.2, "ymax": 1})
+        m = self.solid.units.m
+        # m = 1
+        self._domain = nd_cube_domain(2, 1 / m)
 
     def set_fractures(self) -> None:
-        self._fractures = fracture_sets.seven_fractures_one_L_intersection()
+        m = self.solid.units.m
+        # m = 1
+        self._fractures = [
+            pp.LineFracture(np.array([[0.25, 0.8], [0.5, 0.5]]) / m)
+        ]
 
     def grid_type(self) -> Literal["simplex", "cartesian", "tensor_grid"]:
-        return "simplex"
+        return "cartesian"
 
 
 def make_model(cell_size=(1 / 20)):
@@ -82,7 +88,7 @@ def make_model(cell_size=(1 / 20)):
 
     dt = 1e-3
     time_manager = pp.TimeManager(
-        dt_init=dt, dt_min_max=(1e-10, 1e2), schedule=[0, 10 * dt], constant_dt=False
+        dt_init=dt, dt_min_max=(1e-10, 1e2), schedule=[0, 100 * dt], constant_dt=False
     )
 
     units = pp.Units()
@@ -105,7 +111,7 @@ def make_model(cell_size=(1 / 20)):
             "cell_size": cell_size / m,
         },
         # "iterative_solver": False,
-        "simulation_name": "fpm_1",
+        "simulation_name": "fpm_0_tpfa",
     }
     return PoroMech(params)
 
@@ -116,7 +122,6 @@ if __name__ == "__main__":
 
     model = make_model()
     model.prepare_simulation()
-
     model.time_manager.increase_time()
     model.time_manager.increase_time_index()
     model.before_nonlinear_loop()

@@ -17,12 +17,23 @@ from porepy.models.poromechanics import Poromechanics
 from porepy.viz.diagnostics_mixin import DiagnosticsMixin
 from scipy.sparse.linalg import inv
 
-from mat_utils import (OmegaInv, PetscAMGFlow, PetscAMGMechanics, PetscGMRES,
-                       TimerContext, UpperBlockPreconditioner, _make_block_mat,
-                       concatenate_blocks, get_equations_indices,
-                       get_fixed_stress_stabilization, get_variables_indices,
-                       make_equation_to_idx, make_permutations,
-                       make_row_col_dofs, make_variable_to_idx)
+from mat_utils import (
+    OmegaInv,
+    PetscAMGFlow,
+    PetscAMGMechanics,
+    PetscGMRES,
+    TimerContext,
+    UpperBlockPreconditioner,
+    _make_block_mat,
+    concatenate_blocks,
+    get_equations_indices,
+    get_fixed_stress_stabilization,
+    get_variables_indices,
+    make_equation_to_idx,
+    make_permutations,
+    make_row_col_dofs,
+    make_variable_to_idx,
+)
 
 
 class BCMechanics(BoundaryConditionsMomentumBalance):
@@ -80,11 +91,16 @@ class BCFlow(BoundaryConditionsSinglePhaseFlow):
         bc = pp.BoundaryCondition(sd, bounds.north + bounds.south, "dir")
         return bc
 
+    # def bc_values_pressure(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
+    #     bounds = self.domain_boundary_sides(boundary_grid)
+    #     values = np.zeros(boundary_grid.num_cells)
+    #     values[bounds.north] = self.fluid.convert_units(4e4, "Pa")
+    #     # values[bounds.south] = self.fluid.convert_units(0.01, "Pa")
+    #     return values
     def bc_values_pressure(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         bounds = self.domain_boundary_sides(boundary_grid)
         values = np.zeros(boundary_grid.num_cells)
-        values[bounds.north] = self.fluid.convert_units(4e4, "Pa")
-        # values[bounds.south] = self.fluid.convert_units(0.01, "Pa")
+        values[bounds.north] = self.fluid.convert_units(2e5, "Pa")
         return values
 
 
@@ -107,6 +123,7 @@ class LinearSolveStats:
     time_prepare_mass: float = -1
     time_prepare_momentum: float = -1
     time_prepare_solver: float = -1
+    time_gmres: float = -1
     gmres_iters: int = -1
     time_solve_linear_system: float = -1
     matrix_id: str = ""
@@ -136,6 +153,34 @@ def dump_json(name, data):
     json_data = json.dumps(dict_data)
     with open(save_path / name, "w") as file:
         file.write(json_data)
+
+
+def make_right_scaling(model: pp.SolutionStrategy, scales=(1e9, 1e-9)):
+    eq_dofs, var_dofs = make_row_col_dofs(model)
+
+    subdomains = model.mdg.subdomains()
+    intf = model.mdg.interfaces()
+
+    var_idx = get_variables_indices(
+        variable_to_idx=make_variable_to_idx(model),
+        md_variables_groups=[
+            [
+                model.pressure(subdomains),
+            ],
+            [
+                model.interface_darcy_flux(intf),
+            ],
+        ],
+    )
+
+    diag = np.ones(model.equation_system.num_dofs())
+    # for i in range(len(var_idx)):
+    #     for idx in var_idx[i]:
+    #         diag[var_dofs[idx]] = scales[i]
+
+    rprec = scipy.sparse.diags(diag).tocsr()
+    rprec_inv = scipy.sparse.diags(1 / diag).tocsr()
+    return rprec, rprec_inv
 
 
 class MyPetscSolver(pp.SolutionStrategy):
@@ -186,7 +231,7 @@ class MyPetscSolver(pp.SolutionStrategy):
         mat, rhs = self.linear_system
         name = f"{self.simulation_name}_{int(time.time() * 1000)}"
         mat_id = f"{name}.npz"
-        rhs_id = f'{name}_rhs.npy'
+        rhs_id = f"{name}_rhs.npy"
         scipy.sparse.save_npz(save_path / mat_id, mat)
         np.save(save_path / rhs_id, rhs)
         self._linear_solve_stats.matrix_id = mat_id
@@ -250,6 +295,7 @@ class MyPetscSolver(pp.SolutionStrategy):
         self.eq_dofs, self.var_dofs = make_row_col_dofs(self)
         self._variables_indices = self.make_variables_indices()
         self._equations_indices = self.make_equations_indices()
+        self._rprec, self._rprec_inv = make_right_scaling(self)
         eq_idx = self._equations_indices
         self.permutation = make_permutations(
             self.eq_dofs, order=eq_idx[2] + eq_idx[1] + eq_idx[0]
@@ -307,7 +353,11 @@ class MyPetscSolver(pp.SolutionStrategy):
         )
 
     def invert_F(self, F):
-        return inv(F)
+        try:
+            return inv(F)
+        except RuntimeError as e:
+            print(e)
+            return scipy.sparse.eye(F.shape[0])
 
     def prepare_solve_mass(self, S_A):
         return PetscAMGFlow(S_A)
@@ -317,8 +367,6 @@ class MyPetscSolver(pp.SolutionStrategy):
 
     def _prepare_solver(self):
         with TimerContext() as t_prepare_solver:
-            if not self._solver_initialized:
-                self._initialize_solver()
             mat, _ = self.linear_system
             block_matrix = _make_block_mat(
                 mat, row_dofs=self.eq_dofs, col_dofs=self.var_dofs
@@ -339,11 +387,7 @@ class MyPetscSolver(pp.SolutionStrategy):
             Phi = bmat([[E2, D2]])
 
             with TimerContext() as t:
-                try:
-                    F_inv = self.invert_F(F)
-                except RuntimeError as e:
-                    print(e)
-                    F_inv = scipy.sparse.eye(F.shape[0])
+                F_inv = self.invert_F(F)
             self._linear_solve_stats.time_invert_F = t.elapsed_time
 
             D1_Finv_D2 = D1 @ F_inv @ D2
@@ -392,6 +436,14 @@ class MyPetscSolver(pp.SolutionStrategy):
         self._linear_solve_stats.time_prepare_solver = t_prepare_solver.elapsed_time
         return reordered_mat, preconditioner
 
+    def assemble_linear_system(self) -> None:
+        super().assemble_linear_system()
+        if not self._solver_initialized:
+            self._initialize_solver()
+        mat, rhs = self.linear_system
+        scaled_mat = mat @ self._rprec
+        self.linear_system = scaled_mat, rhs
+
     def solve_linear_system(self) -> np.ndarray:
         if not self.params.get("iterative_solver", True):
             return super().solve_linear_system()
@@ -410,7 +462,10 @@ class MyPetscSolver(pp.SolutionStrategy):
             rhs_permuted = self.permutation @ rhs
 
             gmres_ = PetscGMRES(mat=mat_permuted, pc=prec)
-            res_permuted = gmres_.solve(rhs_permuted)
+            
+            with TimerContext() as t_gmres:
+                res_permuted = gmres_.solve(rhs_permuted)
+            self._linear_solve_stats.time_gmres = t_gmres.elapsed_time
 
             info = gmres_.ksp.getConvergedReason()
 
@@ -420,6 +475,8 @@ class MyPetscSolver(pp.SolutionStrategy):
                     res_permuted[:] = np.nan
 
             res = self.permutation.T.dot(res_permuted)
+
+            res = self._rprec @ res
 
         self._linear_solve_stats.petsc_converged_reason = info
         self._linear_solve_stats.time_solve_linear_system = t_solve.elapsed_time
