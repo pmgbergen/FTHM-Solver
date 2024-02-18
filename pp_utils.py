@@ -452,6 +452,8 @@ class MyPetscSolver(pp.SolutionStrategy):
             mat, _ = self.linear_system
             sliced_mat = self.slice_jacobian(mat)
             Phi = bmat([[sliced_mat.E2, sliced_mat.D2]])
+            Psi = bmat([[sliced_mat.E1], [sliced_mat.D1]])
+
             Omega = self.slice_omega(sliced_mat)
 
             with TimerContext() as t:
@@ -471,9 +473,12 @@ class MyPetscSolver(pp.SolutionStrategy):
                 C2=Omega.C2p,
             )
 
-            preconditioner = UpperBlockPreconditioner(
-                F_inv=Omega.F_inv, Omega_inv=Omega_p_inv_fstress, Phi=Phi
-            )
+            # preconditioner = UpperBlockPreconditioner(
+            #     F_inv=Omega.F_inv, Omega_inv=Omega_p_inv_fstress, Phi=Phi
+            # )
+            preconditioner = OmegaInv(solve_momentum=Omega.F_inv, solve_mass=Omega_p_inv_fstress, C1=Psi, C2=Phi)
+
+
             # reordered_mat = concatenate_blocks(
             #     block_matrix,
             #     eq_blocks[2] + eq_blocks[1] + eq_blocks[0],

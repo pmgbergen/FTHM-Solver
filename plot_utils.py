@@ -344,7 +344,7 @@ def group_intervals(arr):
     return intervals
 
 
-def color_converged_reason(data: Sequence[TimeStepStats], legend=True):
+def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True):
     converged_reason = get_petsc_converged_reason(data)
     intervals = group_intervals(converged_reason)
 
@@ -381,6 +381,9 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True):
     plt.xlim(0, len(converged_reason) - 0.5)
     if legend:
         plt.legend()
+
+    if grid:
+        plt.grid()
 
 
 def load_matrix_rhs(data: Sequence[TimeStepStats], idx: int):

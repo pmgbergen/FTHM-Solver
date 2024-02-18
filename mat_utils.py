@@ -286,7 +286,7 @@ class PetscGMRES:
         # options.setValue("ksp_type", "bcgs")
         options.setValue("ksp_rtol", 1e-10)
         options.setValue("ksp_max_it", 20 * 50)
-        options.setValue('ksp_norm_type', 'unpreconditioned')
+        options.setValue("ksp_norm_type", "unpreconditioned")
         options.setValue("ksp_gmres_restart", 50)
         if pc is None:
             options.setValue("pc_type", "none")
@@ -374,7 +374,14 @@ def get_equations_indices(equation_to_idx, equations_group_order):
 
 def extract_diag_inv(mat):
     diag = mat.diagonal()
-    # diag = np.array(mat.sum(axis=1)).squeeze()
+    ones = scipy.sparse.eye(mat.shape[0], format="csr")
+    diag_inv = 1 / diag
+    ones.data[:] = diag_inv
+    return ones
+
+
+def extract_rowmax_inv(mat):
+    diag = np.array(mat.sum(axis=1)).squeeze()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
     diag_inv = 1 / diag
     ones.data[:] = diag_inv
