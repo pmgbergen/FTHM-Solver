@@ -168,10 +168,10 @@ class BlockMatrixStorage:
         )
 
     def local_rhs(self, rhs):
-        col_idx = [x for x in self.local_col_idx if x is not None]
-        col_idx = np.concatenate(col_idx)
-        perm = np.zeros_like(col_idx)
-        perm[col_idx] = np.arange(col_idx.size)
+        row_idx = [x for x in self.local_row_idx if x is not None]
+        row_idx = np.concatenate(row_idx)
+        perm = np.zeros_like(row_idx)
+        perm[row_idx] = np.arange(row_idx.size)
         return rhs[perm]
 
     def reverse_transform_solution(self, x):

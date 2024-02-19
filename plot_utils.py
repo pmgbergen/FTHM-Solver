@@ -351,10 +351,11 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
     intervals = group_intervals(converged_reason)
 
     reasons_colors = {
-        -9: 0,
-        -5: 1,
-        2: 2,
-        -3: 3,
+        -9: 'C0',
+        -5: 'C1',
+        2: 'C2',
+        -3: 'C3',
+        -100: 'black'
     }
 
     reasons_explained = {
@@ -362,6 +363,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         -9: "Nan or inf",
         -5: "Diverged breakdown",
         2: "Converged reltol",
+        -100: "No data",
     }
 
     reasons_label = set()
@@ -375,7 +377,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         plt.axvspan(
             intervals[i] - 0.5,
             intervals[i + 1] - 0.5,
-            facecolor=f"C{reasons_colors[reason]}",
+            facecolor=reasons_colors[reason],
             alpha=0.3,
             **kwargs,
         )

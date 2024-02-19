@@ -487,6 +487,7 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
                 groups_row=self._equation_groups,
                 groups_col=self._variable_groups,
             )
+            self.bmat = bmat
 
             schema = self.make_solver_schema()
 

@@ -62,7 +62,7 @@ class PoroMech(
         return "simplex"
 
 
-def make_model(cell_size=(1 / 20)):
+def make_model(cell_size=(1 / 20), a=False):
     water = {
         "compressibility": 4.559 * 1e-10 * MEGA,  # [Pa^-1], isentropic compressibility
         "density": 998.2,  # [kg m^-3]
@@ -129,15 +129,15 @@ if __name__ == "__main__":
     model.before_nonlinear_loop()
     model.before_nonlinear_iteration()
     model.assemble_linear_system()
-    model.plot_diagnostics(model.run_diagnostics(), "max")
-    plt.show()
+    # model.plot_diagnostics(model.run_diagnostics(), "max")
+    # plt.show()
 
-    pp.plot_grid(
-        model.mdg,
-        plot_2d=True,
-        fracturewidth_1d=3,
-        rgb=[0.5, 0.5, 1],
-    )
+    # pp.plot_grid(
+    #     model.mdg,
+    #     plot_2d=True,
+    #     fracturewidth_1d=3,
+    #     rgb=[0.5, 0.5, 1],
+    # )
 
     pp.run_time_dependent_model(
         model,
