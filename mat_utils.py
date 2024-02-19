@@ -46,11 +46,11 @@ def condest(mat):
     return data.max() / data.min()
 
 
-def slice_matrix(mat, row_dofs, col_dofs, row_id, col_id):
-    rows = row_dofs[row_id]
-    cols = col_dofs[col_id]
-    rows, cols = np.meshgrid(rows, cols, sparse=True, copy=True, indexing="ij")
-    return mat[rows, cols]
+# def slice_matrix(mat, row_dofs, col_dofs, row_id, col_id):
+#     rows = row_dofs[row_id]
+#     cols = col_dofs[col_id]
+#     rows, cols = np.meshgrid(rows, cols, sparse=True, copy=True, indexing="ij")
+#     return mat[rows, cols]
 
 
 def concatenate_blocks(block_matrix, rows=None, cols=None):
@@ -65,70 +65,6 @@ def concatenate_blocks(block_matrix, rows=None, cols=None):
             res_row.append(block_matrix[i][j])
         result.append(res_row)
     return scipy.sparse.bmat(result)
-
-
-def make_row_col_dofs(model):
-    eq_info = []
-    eq_dofs = []
-    offset = 0
-    for (
-        eq_name,
-        data,
-    ) in model.equation_system._equation_image_space_composition.items():
-        local_offset = 0
-        for grid, dofs in data.items():
-            eq_dofs.append(dofs + offset)
-            eq_info.append((eq_name, grid))
-            local_offset += len(dofs)
-        offset += local_offset
-
-    var_info = []
-    var_dofs = []
-    for var in model.equation_system.variables:
-        var_info.append((var.name, var.domain))
-        var_dofs.append(model.equation_system.dofs_of([var]))
-    return eq_dofs, var_dofs
-
-
-def make_block_mat(model, mat):
-    eq_dofs, var_dofs = make_row_col_dofs(model)
-    return _make_block_mat(mat=mat, row_dofs=eq_dofs, col_dofs=var_dofs)
-
-
-def _make_block_mat(mat, row_dofs, col_dofs):
-    block_matrix = []
-    for i in range(len(row_dofs)):
-        block_row = []
-        for j in range(len(col_dofs)):
-            block_row.append(slice_matrix(mat, row_dofs, col_dofs, i, j))
-        block_matrix.append(block_row)
-
-    return np.array(block_matrix)
-
-
-def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
-    mu_lame = model.solid.shear_modulus()
-    lambda_lame = model.solid.lame_lambda()
-    alpha_biot = model.solid.biot_coefficient()
-    dim = model.nd
-
-    l_phys = alpha_biot**2 / (2 * mu_lame / dim + lambda_lame)
-    l_min = alpha_biot**2 / (4 * mu_lame + 2 * lambda_lame)
-
-    val = l_min * (l_phys / l_min) ** l_factor
-
-    diagonal_approx = val
-    subdomains = model.mdg.subdomains(dim=dim)
-    cell_volumes = subdomains[0].cell_volumes
-    diagonal_approx *= cell_volumes
-
-    density = model.fluid_density(subdomains).value(model.equation_system)
-    diagonal_approx *= density
-
-    dt = model.time_manager.dt
-    diagonal_approx /= dt
-
-    return scipy.sparse.diags(diagonal_approx)
 
 
 class UpperBlockPreconditioner:
@@ -152,7 +88,6 @@ class UpperBlockPreconditioner:
 
 
 def make_permutations(row_dof, order):
-    # order = [1, 2, 4, 5, 6, 3, 0]
     indices = np.concatenate([row_dof[i] for i in order])
     perm = scipy.sparse.eye(indices.size).tocsr()
     perm.indices[:] = indices
@@ -321,6 +256,9 @@ class PetscGMRES:
         self.ksp.solve(self.petsc_b, self.petsc_x)
         res = self.petsc_x.getArray()
         return res
+    
+    def dot(self, b):
+        return self.solve(b)
 
     def get_residuals(self):
         return self.ksp.getConvergenceHistory()
@@ -333,45 +271,6 @@ class PetscJacobi(PetscPC):
         super().__init__(mat=mat)
 
 
-def make_variable_to_idx(model):
-    return {var: i for i, var in enumerate(model.equation_system.variables)}
-
-
-def get_variables_indices(variable_to_idx, md_variables_groups):
-    indices = []
-    for md_var_group in md_variables_groups:
-        group_idx = []
-        for md_var in md_var_group:
-            group_idx.extend([variable_to_idx[var] for var in md_var.sub_vars])
-        indices.append(group_idx)
-    return indices
-
-
-def make_equation_to_idx(model):
-    equation_to_idx = {}
-    idx = 0
-    for (
-        eq_name,
-        domains,
-    ) in model.equation_system._equation_image_space_composition.items():
-        for domain in domains:
-            equation_to_idx[(eq_name, domain)] = idx
-            idx += 1
-    return equation_to_idx
-
-
-def get_equations_indices(equation_to_idx, equations_group_order):
-    indices = []
-    for group in equations_group_order:
-        group_idx = []
-        for eq_name, domains in group:
-            for domain in domains:
-                if (eq_name, domain) in equation_to_idx:
-                    group_idx.append(equation_to_idx[(eq_name, domain)])
-        indices.append(group_idx)
-    return indices
-
-
 def extract_diag_inv(mat):
     diag = mat.diagonal()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
@@ -380,8 +279,8 @@ def extract_diag_inv(mat):
     return ones
 
 
-def extract_rowmax_inv(mat):
-    diag = np.array(mat.sum(axis=1)).squeeze()
+def extract_rowsum_inv(mat):
+    diag = np.array((mat).sum(axis=1)).squeeze()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
     diag_inv = 1 / diag
     ones.data[:] = diag_inv

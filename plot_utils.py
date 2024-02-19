@@ -1,6 +1,7 @@
 import itertools
 from pathlib import Path
 import time
+import json
 from typing import Literal, Sequence
 
 import matplotlib as mpl
@@ -11,9 +12,10 @@ from matplotlib import pyplot as plt
 from numpy.linalg import norm
 from scipy.sparse import bmat
 from scipy.sparse.linalg import LinearOperator, gmres
+from stats import LinearSolveStats
 
 from mat_utils import PetscGMRES, condest
-from pp_utils import LinearSolveStats, TimeStepStats
+from stats import TimeStepStats
 
 BURBERRY = mpl.cycler(
     color=["#A70100", "#513819", "#956226", "#B8A081", "#747674", "#0D100E"]
@@ -392,3 +394,9 @@ def load_matrix_rhs(data: Sequence[TimeStepStats], idx: int):
     mat = scipy.sparse.load_npz(load_dir / flat_data[idx].matrix_id)
     rhs = np.load(load_dir / flat_data[idx].rhs_id)
     return mat, rhs
+
+
+def load_data(path) -> Sequence[TimeStepStats]:
+    with open(path, "r") as f:
+        payload = json.load(f)
+    return [TimeStepStats.from_json(x) for x in payload]

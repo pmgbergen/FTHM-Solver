@@ -1,41 +1,68 @@
+import json
 import sys
-from dataclasses import asdict, dataclass, field
+import time
+from dataclasses import asdict, dataclass
 from functools import cached_property, partial
 from pathlib import Path
-import time
-import json
+
 import numpy as np
 import porepy as pp
 import scipy.sparse
-from scipy.sparse import bmat
-from porepy.applications.md_grids import fracture_sets
-from porepy.applications.md_grids.domains import nd_cube_domain
-from porepy.examples.flow_benchmark_2d_case_3 import Permeability
 from porepy.models.fluid_mass_balance import BoundaryConditionsSinglePhaseFlow
 from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
-from porepy.models.poromechanics import Poromechanics
-from porepy.viz.diagnostics_mixin import DiagnosticsMixin
-from scipy.sparse.linalg import inv
+from stats import LinearSolveStats, TimeStepStats
+from fpm.block_matrix import BlockMatrixStorage, make_solver, SolveSchema
 
 from mat_utils import (
-    OmegaInv,
     PetscAMGFlow,
     PetscAMGMechanics,
     PetscGMRES,
     TimerContext,
-    UpperBlockPreconditioner,
-    _make_block_mat,
-    concatenate_blocks,
-    get_equations_indices,
-    get_fixed_stress_stabilization,
-    get_variables_indices,
-    make_equation_to_idx,
     make_permutations,
-    make_row_col_dofs,
-    make_variable_to_idx,
-    cond,
     extract_diag_inv,
+    PetscILU,
+    # slice_matrix,
 )
+
+
+class CheckStickingSlidingOpen:
+
+    def sticking_sliding_open(self):
+        frac_dim = self.nd - 1
+        subdomains = self.mdg.subdomains(dim=frac_dim)
+        nd_vec_to_normal = self.normal_component(subdomains)
+        # The normal component of the contact traction and the displacement jump
+        t_n: pp.ad.Operator = nd_vec_to_normal @ self.contact_traction(subdomains)
+        u_n: pp.ad.Operator = nd_vec_to_normal @ self.displacement_jump(subdomains)
+
+        # The complimentarity condition
+        b = pp.ad.Scalar(-1.0) * t_n - self.contact_mechanics_numerical_constant(
+            subdomains
+        ) * (u_n - self.fracture_gap(subdomains))
+        b = b.value(self.equation_system)
+        open_cells = b <= 0
+
+        nd_vec_to_tangential = self.tangential_component(subdomains)
+        tangential_basis: list[pp.ad.SparseArray] = self.basis(
+            subdomains, dim=frac_dim  # type: ignore[call-arg]
+        )
+
+        t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
+        u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
+        u_t_increment: pp.ad.Operator = pp.ad.time_increment(u_t)
+
+        f_norm = pp.ad.Function(partial(pp.ad.l2_norm, frac_dim), "norm_function")
+        c_num_as_scalar = self.contact_mechanics_numerical_constant(subdomains)
+        c_num = pp.ad.sum_operator_list(
+            [e_i * c_num_as_scalar * e_i.T for e_i in tangential_basis]
+        )
+        tangential_sum = t_t + c_num @ u_t_increment
+        norm_tangential_sum = f_norm(tangential_sum)
+        norm = norm_tangential_sum.value(self.equation_system)
+        sticking_cells = (b > norm) & np.logical_not(open_cells)
+
+        sliding_cells = True ^ (sticking_cells | open_cells)
+        return sticking_cells, sliding_cells, open_cells
 
 
 class BCMechanics(BoundaryConditionsMomentumBalance):
@@ -119,38 +146,6 @@ class TimeStepping:
         self.time_manager.compute_time_step(recompute_solution=True)
 
 
-@dataclass
-class LinearSolveStats:
-    time_invert_F: float = -1
-    time_prepare_mass: float = -1
-    time_prepare_momentum: float = -1
-    time_prepare_solver: float = -1
-    time_gmres: float = -1
-    gmres_iters: int = -1
-    time_solve_linear_system: float = -1
-    matrix_id: str = ""
-    rhs_id: str = ""
-    petsc_converged_reason: int = -100
-    num_sticking_sliding_open: tuple[int, int, int] = (-1, -1, -1)
-
-
-@dataclass
-class TimeStepStats:
-    linear_solves: list[LinearSolveStats] = field(default_factory=list)
-
-    @classmethod
-    def from_json(cls, json: str):
-        data = cls(**json)
-        tmp = []
-        for x in data.linear_solves:
-            payload = {
-                k: v for k, v in x.items() if k in LinearSolveStats.__dataclass_fields__
-            }
-            tmp.append(LinearSolveStats(**payload))
-        data.linear_solves = tmp
-        return data
-
-
 def dump_json(name, data):
     save_path = Path("./stats")
     save_path.mkdir(exist_ok=True)
@@ -160,62 +155,154 @@ def dump_json(name, data):
         file.write(json_data)
 
 
-def make_right_scaling(model: pp.SolutionStrategy, scales=(1e9, 1e-9)):
-    eq_dofs, var_dofs = make_row_col_dofs(model)
+def make_row_col_dofs(model):
+    eq_info = []
+    eq_dofs = []
+    offset = 0
+    for (
+        eq_name,
+        data,
+    ) in model.equation_system._equation_image_space_composition.items():
+        local_offset = 0
+        for grid, dofs in data.items():
+            eq_dofs.append(dofs + offset)
+            eq_info.append((eq_name, grid))
+            local_offset += len(dofs)
+        offset += local_offset
 
-    subdomains = model.mdg.subdomains()
-    intf = model.mdg.interfaces()
-
-    var_idx = get_variables_indices(
-        variable_to_idx=make_variable_to_idx(model),
-        md_variables_groups=[
-            [
-                model.pressure(subdomains),
-            ],
-            [
-                model.interface_darcy_flux(intf),
-            ],
-        ],
-    )
-
-    diag = np.ones(model.equation_system.num_dofs())
-
-    if model.params.get("rprec", False):
-        for i in range(len(var_idx)):
-            for idx in var_idx[i]:
-                diag[var_dofs[idx]] = scales[i]
-
-    rprec = scipy.sparse.diags(diag).tocsr()
-    rprec_inv = scipy.sparse.diags(1 / diag).tocsr()
-    return rprec, rprec_inv
+    var_info = []
+    var_dofs = []
+    for var in model.equation_system.variables:
+        var_info.append((var.name, var.domain))
+        var_dofs.append(model.equation_system.dofs_of([var]))
+    return eq_dofs, var_dofs
 
 
-@dataclass
-class SlicedMatrix:
-    #  A  C1 E1
-    #  C1 B  E2
-    #  D1 E1 F
-    A: scipy.sparse.csr_matrix  # mass nd
-    B: scipy.sparse.csr_matrix  # momentum nd
-    F: scipy.sparse.csr_matrix  # everything else
-    C1: scipy.sparse.csr_matrix
-    C2: scipy.sparse.csr_matrix
-    D1: scipy.sparse.csr_matrix
-    D2: scipy.sparse.csr_matrix
-    E1: scipy.sparse.csr_matrix
-    E2: scipy.sparse.csr_matrix
+def get_variables_group_ids(model, md_variables_groups):
+    variable_to_idx = {var: i for i, var in enumerate(model.equation_system.variables)}
+    indices = []
+    for md_var_group in md_variables_groups:
+        group_idx = []
+        for md_var in md_var_group:
+            group_idx.extend([variable_to_idx[var] for var in md_var.sub_vars])
+        indices.append(group_idx)
+    return indices
 
 
-@dataclass
-class SlicedOmega:
-    Ap: scipy.sparse.csr_matrix
-    Bp: scipy.sparse.csr_matrix
-    C1p: scipy.sparse.csr_matrix
-    C2p: scipy.sparse.csr_matrix
-    F_inv: scipy.sparse.csr_matrix
+# def make_right_scaling(model: pp.SolutionStrategy, scales=(1e9, 1e-9)):
+#     eq_dofs, var_dofs = make_row_col_dofs(model)
+
+#     subdomains = model.mdg.subdomains()
+#     intf = model.mdg.interfaces()
+
+#     var_idx = get_variables_group_ids(
+#         model=model,
+#         md_variables_groups=[
+#             [
+#                 model.pressure(subdomains),
+#             ],
+#             [
+#                 model.interface_darcy_flux(intf),
+#             ],
+#         ],
+#     )
+
+#     diag = np.ones(model.equation_system.num_dofs())
+
+#     if model.params.get("rprec", False):
+#         for i in range(len(var_idx)):
+#             for idx in var_idx[i]:
+#                 diag[var_dofs[idx]] = scales[i]
+
+#     rprec = scipy.sparse.diags(diag).tocsr()
+#     rprec_inv = scipy.sparse.diags(1 / diag).tocsr()
+#     return rprec, rprec_inv
 
 
-class MyPetscSolver(pp.SolutionStrategy):
+# @dataclass
+# class SlicedMatrix:
+#     #  A  C1 E1
+#     #  C1 B  E2
+#     #  D1 E1 F
+#     A: scipy.sparse.csr_matrix  # mass nd
+#     B: scipy.sparse.csr_matrix  # momentum nd
+#     F: scipy.sparse.csr_matrix  # everything else
+#     C1: scipy.sparse.csr_matrix
+#     C2: scipy.sparse.csr_matrix
+#     D1: scipy.sparse.csr_matrix
+#     D2: scipy.sparse.csr_matrix
+#     E1: scipy.sparse.csr_matrix
+#     E2: scipy.sparse.csr_matrix
+
+
+# @dataclass
+# class SlicedOmega:
+#     Ap: scipy.sparse.csr_matrix
+#     Bp: scipy.sparse.csr_matrix
+#     C1p: scipy.sparse.csr_matrix
+#     C2p: scipy.sparse.csr_matrix
+#     F_inv: scipy.sparse.csr_matrix
+
+
+# def _make_block_mat(mat, row_dofs, col_dofs):
+#     block_matrix = []
+#     for i in range(len(row_dofs)):
+#         block_row = []
+#         for j in range(len(col_dofs)):
+#             block_row.append(slice_matrix(mat, row_dofs, col_dofs, i, j))
+#         block_matrix.append(block_row)
+
+#     return np.array(block_matrix)
+
+
+def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
+    mu_lame = model.solid.shear_modulus()
+    lambda_lame = model.solid.lame_lambda()
+    alpha_biot = model.solid.biot_coefficient()
+    dim = model.nd
+
+    l_phys = alpha_biot**2 / (2 * mu_lame / dim + lambda_lame)
+    l_min = alpha_biot**2 / (4 * mu_lame + 2 * lambda_lame)
+
+    val = l_min * (l_phys / l_min) ** l_factor
+
+    diagonal_approx = val
+    subdomains = model.mdg.subdomains(dim=dim)
+    cell_volumes = subdomains[0].cell_volumes
+    diagonal_approx *= cell_volumes
+
+    density = model.fluid_density(subdomains).value(model.equation_system)
+    diagonal_approx *= density
+
+    dt = model.time_manager.dt
+    diagonal_approx /= dt
+
+    return scipy.sparse.diags(diagonal_approx)
+
+
+def get_equations_group_ids(model, equations_group_order):
+    equation_to_idx = {}
+    idx = 0
+    for (
+        eq_name,
+        domains,
+    ) in model.equation_system._equation_image_space_composition.items():
+        for domain in domains:
+            equation_to_idx[(eq_name, domain)] = idx
+            idx += 1
+
+    indices = []
+    for group in equations_group_order:
+        group_idx = []
+        for eq_name, domains in group:
+            for domain in domains:
+                if (eq_name, domain) in equation_to_idx:
+                    group_idx.append(equation_to_idx[(eq_name, domain)])
+        indices.append(group_idx)
+    return indices
+
+
+class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
     _solver_initialized = False
     _linear_solve_stats: LinearSolveStats
@@ -229,8 +316,9 @@ class MyPetscSolver(pp.SolutionStrategy):
     def simulation_name(self) -> str:
         sim_name = self.params.get("simulation_name", "simulation")
         sim_name = f"{sim_name}_{self.bc_name}"
-        if self.params.get("rprec", False):
-            sim_name = f"{sim_name}_rprec"
+        solver_type = self.params.get("solver_type", "baseline")
+        if solver_type != "baseline":
+            sim_name = f"{sim_name}_solver_{solver_type}"
         return sim_name
 
     def before_nonlinear_loop(self) -> None:
@@ -289,101 +377,13 @@ class MyPetscSolver(pp.SolutionStrategy):
             nl_params=nl_params,
         )
 
-    def sticking_sliding_open(self):
-        frac_dim = self.nd - 1
-        subdomains = self.mdg.subdomains(dim=frac_dim)
-        nd_vec_to_normal = self.normal_component(subdomains)
-        # The normal component of the contact traction and the displacement jump
-        t_n: pp.ad.Operator = nd_vec_to_normal @ self.contact_traction(subdomains)
-        u_n: pp.ad.Operator = nd_vec_to_normal @ self.displacement_jump(subdomains)
-
-        # The complimentarity condition
-        b = pp.ad.Scalar(-1.0) * t_n - self.contact_mechanics_numerical_constant(
-            subdomains
-        ) * (u_n - self.fracture_gap(subdomains))
-        b = b.value(self.equation_system)
-        open_cells = b <= 0
-
-        nd_vec_to_tangential = self.tangential_component(subdomains)
-        tangential_basis: list[pp.ad.SparseArray] = self.basis(
-            subdomains, dim=frac_dim  # type: ignore[call-arg]
-        )
-
-        t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
-        u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
-        u_t_increment: pp.ad.Operator = pp.ad.time_increment(u_t)
-
-        f_norm = pp.ad.Function(partial(pp.ad.l2_norm, frac_dim), "norm_function")
-        c_num_as_scalar = self.contact_mechanics_numerical_constant(subdomains)
-        c_num = pp.ad.sum_operator_list(
-            [e_i * c_num_as_scalar * e_i.T for e_i in tangential_basis]
-        )
-        tangential_sum = t_t + c_num @ u_t_increment
-        norm_tangential_sum = f_norm(tangential_sum)
-        norm = norm_tangential_sum.value(self.equation_system)
-        sticking_cells = (b > norm) & np.logical_not(open_cells)
-
-        sliding_cells = True ^ (sticking_cells | open_cells)
-        return sticking_cells, sliding_cells, open_cells
-
     def _initialize_solver(self):
         self.eq_dofs, self.var_dofs = make_row_col_dofs(self)
-        self._variables_indices = self.make_variables_indices()
-        self._equations_indices = self.make_equations_indices()
-        self._rprec, self._rprec_inv = make_right_scaling(self)
-        eq_idx = self._equations_indices
-        self.permutation = make_permutations(
-            self.eq_dofs, order=eq_idx[2] + eq_idx[1] + eq_idx[0]
-        )
+        self._variable_groups = self.make_variables_groups()
+        self._equation_groups = self.make_equations_groups()
         self._solver_initialized = True
 
-    def slice_jacobian(self, mat) -> SlicedMatrix:
-        if not self._solver_initialized:
-            self._initialize_solver()
-
-        block_matrix = _make_block_mat(
-            mat, row_dofs=self.eq_dofs, col_dofs=self.var_dofs
-        )
-
-        eq_blocks = self._equations_indices
-        var_blocks = self._variables_indices
-
-        return SlicedMatrix(
-            A=concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[0]),
-            C1=concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[1]),
-            C2=concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[0]),
-            B=concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[1]),
-            D1=concatenate_blocks(block_matrix, eq_blocks[0], var_blocks[2]),
-            E1=concatenate_blocks(block_matrix, eq_blocks[1], var_blocks[2]),
-            D2=concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[0]),
-            E2=concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[1]),
-            F=concatenate_blocks(block_matrix, eq_blocks[2], var_blocks[2]),
-        )
-
-    def slice_omega(self, sliced_mat: SlicedMatrix) -> SlicedOmega:
-        with TimerContext() as t:
-            F_inv = self.invert_F(sliced_mat.F)
-        self._linear_solve_stats.time_invert_F = t.elapsed_time
-
-        D1 = sliced_mat.D1
-        D2 = sliced_mat.D2
-        E1 = sliced_mat.E1
-        E2 = sliced_mat.E2
-
-        D1_Finv_D2 = D1 @ F_inv @ D2
-        E1_Finv_D2 = E1 @ F_inv @ D2
-        D1_Finv_E2 = D1 @ F_inv @ E2
-        E1_Finv_E2 = E1 @ F_inv @ E2
-
-        return SlicedOmega(
-            Ap=sliced_mat.A - D1_Finv_D2,
-            Bp=sliced_mat.B - E1_Finv_E2,
-            C1p=sliced_mat.C1 - D1_Finv_E2,
-            C2p=sliced_mat.C2 - E1_Finv_D2,
-            F_inv=F_inv,
-        )
-
-    def make_variables_indices(self):
+    def make_variables_groups(self):
         dim_max = self.mdg.dim_max()
         sd_ambient = self.mdg.subdomains(dim=dim_max)
         sd_lower = [
@@ -393,120 +393,108 @@ class MyPetscSolver(pp.SolutionStrategy):
         intf = self.mdg.interfaces()
         intf_frac = self.mdg.interfaces(dim=dim_max - 1)
 
-        return get_variables_indices(
-            variable_to_idx=make_variable_to_idx(self),
+        return get_variables_group_ids(
+            model=self,
             md_variables_groups=[
-                [
-                    self.pressure(sd_ambient),
-                ],
-                [
-                    self.displacement(sd_ambient),
-                ],
-                [
-                    self.pressure(sd_lower),
-                    self.interface_darcy_flux(intf),
-                    self.contact_traction(sd_frac),
-                    self.interface_displacement(intf_frac),
-                ],
+                [self.pressure(sd_ambient)],
+                [self.displacement(sd_ambient)],
+                [self.pressure(sd_lower)],
+                [self.interface_darcy_flux(intf)],
+                [self.contact_traction(sd_frac)],
+                [self.interface_displacement(intf_frac)],
             ],
         )
 
-    def make_equations_indices(self):
+    def make_equations_groups(self):
         dim_max = self.mdg.dim_max()
         sd_ambient = self.mdg.subdomains(dim=dim_max)
         sd_lower = [
             k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
         ]
         intf = self.mdg.interfaces()
-        return get_equations_indices(
-            equation_to_idx=make_equation_to_idx(self),
+
+        return get_equations_group_ids(
+            model=self,
             equations_group_order=[
-                [("mass_balance_equation", sd_ambient)],
-                [("momentum_balance_equation", sd_ambient)],
+                [("mass_balance_equation", sd_ambient)],  # 0
+                [("momentum_balance_equation", sd_ambient)],  # 1
+                [("mass_balance_equation", sd_lower)],  # 2
+                [("interface_darcy_flux_equation", intf)],  # 3
                 [
-                    ("mass_balance_equation", sd_lower),
-                    ("interface_darcy_flux_equation", intf),
-                    ("normal_fracture_deformation_equation", sd_lower),
+                    ("normal_fracture_deformation_equation", sd_lower),  # 4
                     ("tangential_fracture_deformation_equation", sd_lower),
-                    ("interface_force_balance_equation", intf),
                 ],
+                [("interface_force_balance_equation", intf)],  # 5
             ],
         )
 
-    def invert_F(self, F):
-        # return extract_diag_inv(F)
-        try:
-            return inv(F)
-        except RuntimeError as e:
-            print(e)
-            return scipy.sparse.eye(F.shape[0])
-
     def prepare_solve_mass(self, S_A):
-        return PetscAMGFlow(S_A)
+        with TimerContext() as t:
+            res = PetscAMGFlow(S_A)
+        self._linear_solve_stats.time_prepare_mass = t.elapsed_time
+        return res
 
     def prepare_solve_momentum(self, B):
-        return PetscAMGMechanics(mat=B, dim=self.mdg.dim_max())
+        with TimerContext() as t:
+            res = PetscAMGMechanics(mat=B, dim=self.mdg.dim_max())
+        self._linear_solve_stats.time_prepare_momentum = t.elapsed_time
+        return res
 
-    def _prepare_solver(self):
-        with TimerContext() as t_prepare_solver:
-            mat, _ = self.linear_system
-            sliced_mat = self.slice_jacobian(mat)
-            Phi = bmat([[sliced_mat.E2, sliced_mat.D2]])
-            Psi = bmat([[sliced_mat.E1], [sliced_mat.D1]])
+    def make_solver_schema(self):
+        solver_type = self.params.get("solver_type", "baseline")
 
-            Omega = self.slice_omega(sliced_mat)
-
-            with TimerContext() as t:
-                Bp_inv = self.prepare_solve_momentum(Omega.Bp)
-            self._linear_solve_stats.time_prepare_momentum = t.elapsed_time
-
-            S_Ap_fs = Omega.Ap + get_fixed_stress_stabilization(self)
-
-            with TimerContext() as t:
-                S_Ap_fs_inv = self.prepare_solve_mass(S_Ap_fs)
-            self._linear_solve_stats.time_prepare_mass = t.elapsed_time
-
-            Omega_p_inv_fstress = OmegaInv(
-                solve_momentum=Bp_inv,
-                solve_mass=S_Ap_fs_inv,
-                C1=Omega.C1p,
-                C2=Omega.C2p,
+        schema_fixed_stress = SolveSchema(
+            groups=[1],
+            invertor=lambda: get_fixed_stress_stabilization(self),
+            invertor_type="physical",
+            solve=lambda bmat: PetscAMGMechanics(dim=self.nd, mat=bmat.mat),
+            complement=SolveSchema(
+                groups=[0],
+                solve=lambda bmat: PetscAMGFlow(mat=bmat.mat),
+            ),
+        )
+        if solver_type == "baseline":
+            return SolveSchema(
+                groups=[2, 3, 4, 5],
+                complement=schema_fixed_stress,
             )
 
-            # preconditioner = UpperBlockPreconditioner(
-            #     F_inv=Omega.F_inv, Omega_inv=Omega_p_inv_fstress, Phi=Phi
-            # )
-            preconditioner = OmegaInv(solve_momentum=Omega.F_inv, solve_mass=Omega_p_inv_fstress, C1=Psi, C2=Phi)
+        if solver_type == "1":
+            schema_no_flow_intf = SolveSchema(
+                groups=[2, 4, 5],
+                complement=schema_fixed_stress,
+            )
 
+            return SolveSchema(
+                groups=[3],
+                # solve=lambda bmat: PetscILU(bmat.mat),
+                # invertor=lambda bmat: extract_diag_inv(bmat.mat),
+                complement=schema_no_flow_intf,
+            )
 
-            # reordered_mat = concatenate_blocks(
-            #     block_matrix,
-            #     eq_blocks[2] + eq_blocks[1] + eq_blocks[0],
-            #     var_blocks[2] + var_blocks[1] + var_blocks[0],
-            # )
+        raise ValueError(f"{solver_type}")
 
-            reordered_mat = self.permutation @ mat @ self.permutation.T
-            # assert (reordered_mat - permuted_mat).data.size == 0
+    def _prepare_solver(self):
+        if not self._solver_initialized:
+            self._initialize_solver()
+
+        with TimerContext() as t_prepare_solver:
+            mat, _ = self.linear_system
+            bmat = BlockMatrixStorage(
+                mat=mat,
+                row_idx=self.eq_dofs,
+                col_idx=self.var_dofs,
+                groups_row=self._equation_groups,
+                groups_col=self._variable_groups,
+            )
+
+            schema = self.make_solver_schema()
+
+            bmat_reordered, preconditioner = make_solver(schema=schema, mat_orig=bmat)
 
         self._linear_solve_stats.time_prepare_solver = t_prepare_solver.elapsed_time
 
-        # for debugging
-        self.Ap = Omega.Ap
-        self.Bp = Omega.Bp
-        self.C1p = Omega.C1p
-        self.C2p = Omega.C2p
-        self.F = sliced_mat.F
-        self.S_Ap_fs = S_Ap_fs
-
-        return reordered_mat, preconditioner
-
-    def assemble_linear_system(self) -> None:
-        super().assemble_linear_system()
-        if not self._solver_initialized:
-            self._initialize_solver()
-        mat, rhs = self.linear_system
-        scaled_mat = mat @ self._rprec
-        self.linear_system = scaled_mat, rhs
+        return bmat_reordered, preconditioner
 
     def solve_linear_system(self) -> np.ndarray:
         if not self.params.get("iterative_solver", True):
@@ -523,9 +511,9 @@ class MyPetscSolver(pp.SolutionStrategy):
 
             mat_permuted, prec = self._prepare_solver()
 
-            rhs_permuted = self.permutation @ rhs
+            rhs_permuted = mat_permuted.local_rhs(rhs)
 
-            gmres_ = PetscGMRES(mat=mat_permuted, pc=prec)
+            gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec)
 
             with TimerContext() as t_gmres:
                 res_permuted = gmres_.solve(rhs_permuted)
@@ -538,11 +526,14 @@ class MyPetscSolver(pp.SolutionStrategy):
                 if info == -9:
                     res_permuted[:] = np.nan
 
-            res = self.permutation.T.dot(res_permuted)
-
-            res = self._rprec @ res
+            res = mat_permuted.reverse_transform_solution(res_permuted)
 
         self._linear_solve_stats.petsc_converged_reason = info
         self._linear_solve_stats.time_solve_linear_system = t_solve.elapsed_time
         self._linear_solve_stats.gmres_iters = len(gmres_.get_residuals())
         return np.atleast_1d(res)
+
+
+# def make_block_mat(model, mat):
+#     eq_dofs, var_dofs = make_row_col_dofs(model)
+#     return _make_block_mat(mat=mat, row_dofs=eq_dofs, col_dofs=var_dofs)

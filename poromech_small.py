@@ -6,6 +6,8 @@ import numpy as np
 from mat_utils import *
 from porepy.applications.md_grids.domains import nd_cube_domain
 
+from pp_utils import get_fixed_stress_stabilization, make_block_mat
+
 
 class PoroMech(DiagnosticsMixin, Poromechanics):
     def set_domain(self) -> None:

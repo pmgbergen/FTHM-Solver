@@ -48,15 +48,16 @@ def color_spy(mat, row_idx, col_idx, row_names=None, col_names=None):
 
 
 class BlockMatrixStorage:
-    def __init__(self, mat, row_idx, col_idx, groups_col, groups_row):
+    def __init__(self, mat, row_idx, col_idx, groups_row, groups_col):
         self.mat = mat
         self.local_row_idx = [np.atleast_1d(x) if x is not None else x for x in row_idx]
         self.local_col_idx = [np.atleast_1d(x) if x is not None else x for x in col_idx]
-        self.groups_col = groups_col
         self.groups_row = groups_row
+        self.groups_col = groups_col
 
-        self.active_groups = tuple(range(len(groups_col))), tuple(
-            range(len(groups_row))
+        self.active_groups = (
+            (tuple(np.argsort([x[0] for x in groups_row]))),
+            (tuple(np.argsort([x[0] for x in groups_col]))),
         )
 
     @property
@@ -67,6 +68,10 @@ class BlockMatrixStorage:
         return f"BlockMatrixStorage of shape {self.shape} with {self.mat.nnz} elements"
 
     def __getitem__(self, key):
+        if isinstance(key, list):
+            key = key, key
+        if isinstance(key, slice):
+            key = key, key
         assert isinstance(key, tuple)
         assert len(key) == 2
 
@@ -169,12 +174,17 @@ class BlockMatrixStorage:
         perm[col_idx] = np.arange(col_idx.size)
         return rhs[perm]
 
+    def reverse_transform_solution(self, x):
+        col_idx = [x for x in self.local_col_idx if x is not None]
+        col_idx = np.concatenate(col_idx)
+        return x[col_idx]
+
 
 @dataclass
 class SolveSchema:
     groups: list[int]
-    solve: callable | Literal['direct'] = 'direct'
-    invertor: callable | Literal["use_solve", 'direct'] = "use_solve"
+    solve: callable | Literal["direct"] = "direct"
+    invertor: callable | Literal["use_solve", "direct"] = "use_solve"
     invertor_type: Literal["physical", "algebraic"] = "algebraic"
     complement: Optional["SolveSchema"] = None
     compute_cond: bool = False
@@ -199,9 +209,9 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         submat_00.color_spy()
         plt.show()
     if schema.compute_cond:
-        print(f'Blocks: {submat_00.active_groups[0]} cond: {cond(submat_00.mat):.2e}')
+        print(f"Blocks: {submat_00.active_groups[0]} cond: {cond(submat_00.mat):.2e}")
     solve = schema.solve
-    if solve == 'direct':
+    if solve == "direct":
         submat_00_solve = inv(submat_00.mat)
     else:
         submat_00_solve = solve(submat_00)
@@ -219,7 +229,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
     elif schema.invertor_type == "algebraic":
         if schema.invertor == "use_solve":
             submat_00_inv = submat_00_solve
-        elif schema.invertor == 'direct':
+        elif schema.invertor == "direct":
             submat_00_inv = inv(submat_00.mat)
         else:
             submat_00_inv = schema.invertor(submat_00)

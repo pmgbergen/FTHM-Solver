@@ -106,6 +106,7 @@ def make_model(cell_size=(1 / 20)):
         },
         # "iterative_solver": False,
         "simulation_name": "fpm_1",
+        'solver_type': '1',
     }
     return PoroMech(params)
 

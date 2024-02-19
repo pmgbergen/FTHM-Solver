@@ -28,8 +28,8 @@ MEGA = 1
 class PoroMech(
     MyPetscSolver,
     TimeStepping,
-    # BCMechanicsOpen,
-    BCMechanicsSticking,
+    BCMechanicsOpen,
+    # BCMechanicsSticking,
     # BCMechanicsSliding,
     BCFlow,
     Permeability,
@@ -111,7 +111,7 @@ def make_model(cell_size=(1 / 20)):
             "cell_size": cell_size / m,
         },
         # "iterative_solver": False,
-        # 'rprec': True,
+        'solver_type': '1',
         "simulation_name": "fpm_0",
     }
     return PoroMech(params)
