@@ -40,8 +40,12 @@ def cond(mat):
 def inv(mat):
     return scipy.sparse.linalg.inv(mat.tocsc())
 
+def pinv(mat):
+    return scipy.sparse.csr_matrix(np.linalg.pinv(mat.A))
+
 
 def condest(mat):
+    mat = mat.tocsr()
     data = abs(mat.data)
     return data.max() / data.min()
 
@@ -190,10 +194,10 @@ class PetscAMGFlow(PetscPC):
 
 
 class PetscILU(PetscPC):
-    def __init__(self, mat=None) -> None:
+    def __init__(self, mat=None, factor_levels: int = 0) -> None:
         options = PETSc.Options()
         options.setValue("pc_type", "ilu")
-        options.setValue("pc_factor_levels", 0)
+        options.setValue("pc_factor_levels", factor_levels)
         options.setValue("pc_factor_diagonal_fill", None)  # Doesn't affect
         options.setValue("pc_factor_mat_ordering_type", "rcm")
         options.setValue("pc_factor_nonzeros_along_diagonal", None)
@@ -271,6 +275,13 @@ class PetscJacobi(PetscPC):
         super().__init__(mat=mat)
 
 
+class PetscSOR(PetscPC):
+    def __init__(self, mat=None) -> None:
+        options = PETSc.Options()
+        options["pc_type"] = "sor"
+        options["pc_type_symmetric"] = True
+        super().__init__(mat=mat)
+
 def extract_diag_inv(mat):
     diag = mat.diagonal()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
@@ -280,9 +291,9 @@ def extract_diag_inv(mat):
 
 
 def extract_rowsum_inv(mat):
-    diag = np.array((mat).sum(axis=1)).squeeze()
+    rowsum = np.array((mat).sum(axis=1)).squeeze()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
-    diag_inv = 1 / diag
+    diag_inv = 1 / rowsum
     ones.data[:] = diag_inv
     return ones
 

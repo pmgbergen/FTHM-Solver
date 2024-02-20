@@ -280,6 +280,18 @@ def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
     return scipy.sparse.diags(diagonal_approx)
 
 
+def get_fixed_stress_stabilization_nd(model, l_factor: float = 0.6):
+    mat_nd = get_fixed_stress_stabilization(model=model, l_factor=l_factor)
+
+    sd_lower = [
+        sd for d in reversed(range(model.nd)) for sd in model.mdg.subdomains(dim=d)
+    ]
+    num_cells = sum(sd.num_cells for sd in sd_lower)
+
+    zero_lower = scipy.sparse.csr_matrix((num_cells, num_cells))
+    return scipy.sparse.block_diag([mat_nd, zero_lower])
+
+
 def get_equations_group_ids(model, equations_group_order):
     equation_to_idx = {}
     idx = 0

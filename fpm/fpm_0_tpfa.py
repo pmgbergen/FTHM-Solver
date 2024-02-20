@@ -111,6 +111,7 @@ def make_model(cell_size=(1 / 20)):
             "cell_size": cell_size / m,
         },
         # "iterative_solver": False,
+        'solver_type': '1',
         "simulation_name": "fpm_0_tpfa",
     }
     return PoroMech(params)
@@ -161,6 +162,6 @@ if __name__ == "__main__":
         alpha=0.5,
     )
 
-    model.sticking_sliding_open()
+    print(model.simulation_name)
 
 # %%
