@@ -10,19 +10,17 @@ from mat_utils import OmegaInv, inv, cond
 from plot_utils import plot_mat, spy
 
 
-def color_spy(mat, row_idx, col_idx, row_names=None, col_names=None):
+def color_spy(mat, row_idx, col_idx, row_names=None, col_names=None, aspect: Literal['equal', 'auto'] = 'equal', show: bool = False):
 
-    spy(mat, show=False)
+    spy(mat, show=False, aspect=aspect)
 
     row_sep = [0]
     for row in row_idx:
-        # if row is not None:
         row_sep.append(row[-1] + 1)
     row_sep = sorted(row_sep)
 
     col_sep = [0]
     for col in col_idx:
-        # if col is not None:
         col_sep.append(col[-1] + 1)
     col_sep = sorted(col_sep)
 
@@ -48,6 +46,9 @@ def color_spy(mat, row_idx, col_idx, row_names=None, col_names=None):
     ax.xaxis.set_ticks(col_label_pos)
     ax.set_xticklabels(col_names, rotation=0)
 
+    if show:
+        plt.show()
+
 
 class BlockMatrixStorage:
     def __init__(
@@ -59,6 +60,8 @@ class BlockMatrixStorage:
         groups_col,
         active_groups_col=None,
         active_groups_row=None,
+        group_row_names=None,
+        group_col_names=None,
     ):
         self.mat = mat
         self.local_row_idx = [np.atleast_1d(x) if x is not None else x for x in row_idx]
@@ -71,6 +74,9 @@ class BlockMatrixStorage:
         if active_groups_col is None:
             active_groups_col = tuple(np.argsort([x[0] for x in groups_col]))
         self.active_groups = active_groups_row, active_groups_col
+
+        self.groups_row_names = group_row_names
+        self.groups_col_names = group_col_names
 
     @property
     def shape(self):
@@ -87,10 +93,10 @@ class BlockMatrixStorage:
         assert isinstance(key, tuple)
         assert len(key) == 2
 
-        def correct_key(k):
+        def correct_key(k, total):
             if isinstance(k, slice):
                 start = k.start or 0
-                stop = k.stop or len(self.groups_row)
+                stop = k.stop or total
                 step = k.step or 1
                 k = list(range(start, stop, step))
             try:
@@ -100,8 +106,8 @@ class BlockMatrixStorage:
             return k
 
         groups_i, groups_j = key
-        groups_i = correct_key(groups_i)
-        groups_j = correct_key(groups_j)
+        groups_i = correct_key(groups_i, total=len(self.groups_row))
+        groups_j = correct_key(groups_j, total=len(self.groups_col))
 
         def inner(input_dofs_idx, take_groups, all_groups):
             dofs_idx = []
@@ -132,6 +138,8 @@ class BlockMatrixStorage:
             groups_row=self.groups_row,
             active_groups_row=tuple(groups_i),
             active_groups_col=tuple(groups_j),
+            group_col_names=self.groups_col_names,
+            group_row_names=self.groups_row_names,
         )
 
     def get_active_local_dofs(self, grouped=False):
@@ -159,16 +167,25 @@ class BlockMatrixStorage:
             col_idx = [np.concatenate(x) for x in col_idx]
         return row_idx, col_idx
 
-    def color_spy(self, groups=True):
+    def get_active_group_names(self):
+        def inner(group_names, active_groups):
+            if group_names is not None:
+                names = [f"{i}: {group_names[i]}" for i in active_groups]
+            else:
+                names = active_groups
+            return names
+
+        row_names = inner(self.groups_row_names, self.active_groups[0])
+        col_names = inner(self.groups_col_names, self.active_groups[1])
+        return row_names, col_names
+
+    def color_spy(self, groups=True, show=True, aspect: Literal['equal', 'auto'] = 'equal'):
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         if not groups:
-            row_names = None
-            col_names = None
+            row_names = col_names = None
         else:
-            row_names = self.active_groups[0]
-            col_names = self.active_groups[1]
-
-        color_spy(self.mat, row_idx, col_idx, row_names=row_names, col_names=col_names)
+            row_names, col_names = self.get_active_group_names()
+        color_spy(self.mat, row_idx, col_idx, row_names=row_names, col_names=col_names, show=show, aspect=aspect)
 
     def slice_domain(self, i, j):
         row_idx = [x for x in self.local_row_idx if x is not None][i]
@@ -176,8 +193,8 @@ class BlockMatrixStorage:
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij")
         return self.mat[I, J]
 
-    def matshow(self, log=True):
-        plot_mat(self.mat, log=log)
+    def matshow(self, log=True, show=True):
+        plot_mat(self.mat, log=log, show=show)
 
     def copy(self):
         return BlockMatrixStorage(
@@ -188,6 +205,8 @@ class BlockMatrixStorage:
             groups_col=self.groups_col,
             active_groups_row=self.active_groups[0],
             active_groups_col=self.active_groups[1],
+            group_col_names=self.groups_col_names,
+            group_row_names=self.groups_row_names,
         )
 
     def local_rhs(self, rhs):
@@ -218,13 +237,12 @@ class BlockMatrixStorage:
             data.append(row_data)
 
         if group:
-            y_tick_labels = self.active_groups[0]
-            x_tick_labels = self.active_groups[1]
+            y_tick_labels, x_tick_labels = self.get_active_group_names()
         else:
             y_tick_labels = x_tick_labels = "auto"
 
-        plt.figure()
-        ax = sns.heatmap(
+        ax = plt.gca()
+        sns.heatmap(
             data=np.array(data),
             square=False,
             annot=True,
@@ -232,7 +250,7 @@ class BlockMatrixStorage:
             fmt=".1e",
             xticklabels=x_tick_labels,
             yticklabels=y_tick_labels,
-            # robust=True,
+            ax=ax,
             linewidths=0.01,
             linecolor="grey",
             cbar=False,
@@ -267,7 +285,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
     groups_0 = schema.groups
     groups_1 = get_complement_groups(schema)
 
-    assert set(groups_0).intersection
+    assert len(set(groups_0).intersection(groups_1)) == 0
 
     submat_00 = mat_orig[groups_0, groups_0]
 
@@ -308,6 +326,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         schema=schema.complement, mat_orig=submat_11
     )
     if schema.only_complement:
+        print("Returning only Schur complement based on", groups_1)
         return complement_mat, complement_solve
 
     mat_permuted = mat_orig[groups_0 + groups_1, groups_0 + groups_1]

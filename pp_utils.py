@@ -1,7 +1,7 @@
 import json
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from functools import cached_property, partial
 from pathlib import Path
 
@@ -18,10 +18,6 @@ from mat_utils import (
     PetscAMGMechanics,
     PetscGMRES,
     TimerContext,
-    make_permutations,
-    extract_diag_inv,
-    PetscILU,
-    # slice_matrix,
 )
 
 
@@ -120,12 +116,6 @@ class BCFlow(BoundaryConditionsSinglePhaseFlow):
         bc = pp.BoundaryCondition(sd, bounds.north + bounds.south, "dir")
         return bc
 
-    # def bc_values_pressure(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
-    #     bounds = self.domain_boundary_sides(boundary_grid)
-    #     values = np.zeros(boundary_grid.num_cells)
-    #     values[bounds.north] = self.fluid.convert_units(4e4, "Pa")
-    #     # values[bounds.south] = self.fluid.convert_units(0.01, "Pa")
-    #     return values
     def bc_values_pressure(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         bounds = self.domain_boundary_sides(boundary_grid)
         values = np.zeros(boundary_grid.num_cells)
@@ -189,72 +179,6 @@ def get_variables_group_ids(model, md_variables_groups):
     return indices
 
 
-# def make_right_scaling(model: pp.SolutionStrategy, scales=(1e9, 1e-9)):
-#     eq_dofs, var_dofs = make_row_col_dofs(model)
-
-#     subdomains = model.mdg.subdomains()
-#     intf = model.mdg.interfaces()
-
-#     var_idx = get_variables_group_ids(
-#         model=model,
-#         md_variables_groups=[
-#             [
-#                 model.pressure(subdomains),
-#             ],
-#             [
-#                 model.interface_darcy_flux(intf),
-#             ],
-#         ],
-#     )
-
-#     diag = np.ones(model.equation_system.num_dofs())
-
-#     if model.params.get("rprec", False):
-#         for i in range(len(var_idx)):
-#             for idx in var_idx[i]:
-#                 diag[var_dofs[idx]] = scales[i]
-
-#     rprec = scipy.sparse.diags(diag).tocsr()
-#     rprec_inv = scipy.sparse.diags(1 / diag).tocsr()
-#     return rprec, rprec_inv
-
-
-# @dataclass
-# class SlicedMatrix:
-#     #  A  C1 E1
-#     #  C1 B  E2
-#     #  D1 E1 F
-#     A: scipy.sparse.csr_matrix  # mass nd
-#     B: scipy.sparse.csr_matrix  # momentum nd
-#     F: scipy.sparse.csr_matrix  # everything else
-#     C1: scipy.sparse.csr_matrix
-#     C2: scipy.sparse.csr_matrix
-#     D1: scipy.sparse.csr_matrix
-#     D2: scipy.sparse.csr_matrix
-#     E1: scipy.sparse.csr_matrix
-#     E2: scipy.sparse.csr_matrix
-
-
-# @dataclass
-# class SlicedOmega:
-#     Ap: scipy.sparse.csr_matrix
-#     Bp: scipy.sparse.csr_matrix
-#     C1p: scipy.sparse.csr_matrix
-#     C2p: scipy.sparse.csr_matrix
-#     F_inv: scipy.sparse.csr_matrix
-
-
-# def _make_block_mat(mat, row_dofs, col_dofs):
-#     block_matrix = []
-#     for i in range(len(row_dofs)):
-#         block_row = []
-#         for j in range(len(col_dofs)):
-#             block_row.append(slice_matrix(mat, row_dofs, col_dofs, i, j))
-#         block_matrix.append(block_row)
-
-#     return np.array(block_matrix)
-
-
 def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
     mu_lame = model.solid.shear_modulus()
     lambda_lame = model.solid.lame_lambda()
@@ -289,7 +213,7 @@ def get_fixed_stress_stabilization_nd(model, l_factor: float = 0.6):
     num_cells = sum(sd.num_cells for sd in sd_lower)
 
     zero_lower = scipy.sparse.csr_matrix((num_cells, num_cells))
-    return scipy.sparse.block_diag([mat_nd, zero_lower])
+    return scipy.sparse.block_diag([mat_nd, zero_lower]).tocsr()
 
 
 def get_equations_group_ids(model, equations_group_order):
@@ -547,6 +471,27 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         return np.atleast_1d(res)
 
 
-# def make_block_mat(model, mat):
-#     eq_dofs, var_dofs = make_row_col_dofs(model)
-#     return _make_block_mat(mat=mat, row_dofs=eq_dofs, col_dofs=var_dofs)
+def make_reorder_contact(model):
+    assert model.nd == 2
+    dofs_contact = np.concatenate([model.eq_dofs[i] for i in model._equation_groups[4]])
+    dofs_contact_start = dofs_contact[0]
+    dofs_contact_end = dofs_contact[-1] + 1
+
+    reorder = np.arange(model.equation_system.num_dofs())
+
+    dofs_contact_0 = dofs_contact[: len(dofs_contact) // 2]
+    dofs_contact_1 = dofs_contact[len(dofs_contact) // 2 :]
+    reorder[dofs_contact_start:dofs_contact_end] = np.stack(
+        [dofs_contact_0, dofs_contact_1]
+    ).ravel("f")
+    return reorder
+
+
+def reorder_J44(model):
+    assert model.nd == 2
+    dofs_contact = np.concatenate([model.eq_dofs[i] for i in model._equation_groups[4]])
+    reorder = np.zeros(dofs_contact.size, dtype=int)
+    half = reorder.size // 2
+    reorder[1::2] = np.arange(half)
+    reorder[::2] = np.arange(half) + half
+    return reorder

@@ -150,13 +150,13 @@ if __name__ == "__main__":
         # alpha=0.5,
     )
 
-    pp.plot_grid(
-        model.mdg,
-        cell_value=model.pressure_variable,
-        vector_value=model.displacement_variable,
-        alpha=0.5,
-    )
+    # pp.plot_grid(
+    #     model.mdg,
+    #     cell_value=model.pressure_variable,
+    #     vector_value=model.displacement_variable,
+    #     alpha=0.5,
+    # )
 
-    model.sticking_sliding_open()
+    print(model.simulation_name)
 
 # %%

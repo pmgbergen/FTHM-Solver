@@ -31,13 +31,21 @@ def trim_label(label: str) -> str:
     return label[:trim] + "..."
 
 
-def spy(mat, show=True):
+def spy(mat, show=True, aspect: Literal["equal", "auto"] = "equal"):
     marker = "+"
     if max(*mat.shape) > 300:
         marker = ","
-    plt.spy(mat, marker=marker, markersize=4, color="black")
+    plt.spy(mat, marker=marker, markersize=4, color="black", aspect=aspect)
     if show:
         plt.show()
+
+
+def plot_diff(a, b, log=True):
+    diff = a - b
+    if log:
+        diff = abs(diff)
+        plt.yscale("log")
+    plt.plot(diff)
 
 
 def plot_jacobian(model, equations=None):
@@ -84,12 +92,17 @@ def plot_jacobian(model, equations=None):
     ax.set_xticklabels(labels, rotation=45, ha="left")
 
 
-def plot_mat(mat, log=True):
-    mat = mat.A
+def plot_mat(mat, log=True, show=True):
+    try:
+        mat = mat.A
+    except AttributeError:
+        pass
     if log:
         mat = np.log10(abs(mat))
-    plt.matshow(mat)
+    plt.matshow(mat, fignum=0)
     plt.colorbar()
+    if show:
+        plt.show()
 
 
 def plot_eigs(mat, label="", logx=False):
@@ -240,7 +253,7 @@ def solve_petsc(
         residuals /= residuals[0]
     ax.plot(residuals, label=label, marker=".", linestyle=linestyle)
     ax.set_yscale("log")
-    ax.set_ylabel("pr. residual")
+    ax.set_ylabel("true residual")
     ax.set_xlabel("gmres iter.")
     ax.grid(True)
     if label != "":
@@ -350,13 +363,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
     converged_reason = get_petsc_converged_reason(data)
     intervals = group_intervals(converged_reason)
 
-    reasons_colors = {
-        -9: 'C0',
-        -5: 'C1',
-        2: 'C2',
-        -3: 'C3',
-        -100: 'black'
-    }
+    reasons_colors = {-9: "C0", -5: "C1", 2: "C2", -3: "C3", -100: "black"}
 
     reasons_explained = {
         -3: "Diverged its",
@@ -402,3 +409,48 @@ def load_data(path) -> Sequence[TimeStepStats]:
     with open(path, "r") as f:
         payload = json.load(f)
     return [TimeStepStats.from_json(x) for x in payload]
+
+
+def zoom_in_mat(mat, i, j, ni=200, nj=None):
+    if nj is None:
+        nj = ni
+
+    radius_i = ni // 2
+    radius_j = nj // 2
+    radius_i = min(radius_i, mat.shape[0] // 2)
+    radius_j = min(radius_j, mat.shape[1] // 2)
+    i = max(i, radius_i)
+    i = min(i, mat.shape[0] - radius_i)
+    j = max(j, radius_j)
+    j = min(j, mat.shape[1] - radius_j)
+
+    istart = i - radius_i
+    iend = i + radius_i
+    jstart = j - radius_j
+    jend = j + radius_j
+
+    return istart, iend, jstart, jend
+
+
+def set_zoomed_frame(istart, iend, jstart, jend):
+    i_ticks = np.linspace(0, iend - istart - 1, 5, endpoint=True, dtype=int)
+    j_ticks = np.linspace(0, jend - jstart - 1, 5, endpoint=True, dtype=int)
+    ax = plt.gca()
+    ax.set_yticks(i_ticks)
+    ax.set_xticks(j_ticks)
+    ax.set_yticklabels(i_ticks + istart)
+    ax.set_xticklabels(j_ticks + jstart)
+
+
+def matshow_around(mat, i, j, ni=200, nj=None, show=True, log=True):
+    istart, iend, jstart, jend = zoom_in_mat(mat, i=i, j=j, ni=ni, nj=nj)
+    plot_mat(mat[istart:iend, jstart:jend], show=False, log=log)
+    set_zoomed_frame(istart, iend, jstart, jend)
+    return istart, jstart
+
+
+def spy_around(mat, i, j, ni=200, nj=None, show=True):
+    istart, iend, jstart, jend = zoom_in_mat(mat, i=i, j=j, ni=ni, nj=nj)
+    spy(mat[istart:iend, jstart:jend], show=False, aspect="auto")
+    set_zoomed_frame(istart, iend, jstart, jend)
+    return istart, jstart

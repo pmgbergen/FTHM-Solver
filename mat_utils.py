@@ -40,6 +40,7 @@ def cond(mat):
 def inv(mat):
     return scipy.sparse.linalg.inv(mat.tocsc())
 
+
 def pinv(mat):
     return scipy.sparse.csr_matrix(np.linalg.pinv(mat.A))
 
@@ -218,15 +219,16 @@ class PetscPythonPC:
 class PetscGMRES:
     def __init__(self, mat, pc: PETSc.PC | None = None) -> None:
         self.shape = mat.shape
+        restart = 50
 
         self.ksp = PETSc.KSP().create()
         options = PETSc.Options()
         options.setValue("ksp_type", "gmres")
         # options.setValue("ksp_type", "bcgs")
         options.setValue("ksp_rtol", 1e-10)
-        options.setValue("ksp_max_it", 20 * 50)
+        options.setValue("ksp_max_it", 20 * restart)
         options.setValue("ksp_norm_type", "unpreconditioned")
-        options.setValue("ksp_gmres_restart", 50)
+        options.setValue("ksp_gmres_restart", restart)
         if pc is None:
             options.setValue("pc_type", "none")
 
@@ -260,7 +262,7 @@ class PetscGMRES:
         self.ksp.solve(self.petsc_b, self.petsc_x)
         res = self.petsc_x.getArray()
         return res
-    
+
     def dot(self, b):
         return self.solve(b)
 
@@ -282,12 +284,35 @@ class PetscSOR(PetscPC):
         options["pc_type_symmetric"] = True
         super().__init__(mat=mat)
 
+
 def extract_diag_inv(mat):
     diag = mat.diagonal()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
     diag_inv = 1 / diag
     ones.data[:] = diag_inv
     return ones
+
+
+def inv_block_diag_2x2(tmp):
+    ad = tmp.diagonal()
+    a = ad[::2]
+    d = ad[1::2]
+    b = tmp.diagonal(k=1)[::2]
+    c = tmp.diagonal(k=-1)[::2]
+
+    det = a * d - b * c
+
+    assert abs(det).min() > 0
+
+    diag = np.zeros_like(ad)
+    diag[::2] = d / det
+    diag[1::2] = a / det
+    lower = np.zeros(ad.size - 1)
+    lower[::2] = -c / det
+    upper = np.zeros(ad.size - 1)
+    upper[::2] = -b / det
+
+    return scipy.sparse.diags([lower, diag, upper], offsets=[-1, 0, 1]).tocsr()
 
 
 def extract_rowsum_inv(mat):
@@ -303,3 +328,16 @@ def reverse_cuthill_mckee(mat):
 
     reorder = reverse_cuthill_mckee(mat)
     return mat[reorder][:, reorder]
+
+
+class Permutation:
+
+    def __init__(self, operator, perm_rows) -> None:
+        self.operator = operator
+        self.perm_rows = perm_rows
+        self.shape = operator.shape
+
+    def dot(self, x):
+        x = x[self.perm_rows]
+        res = self.operator.dot(x)
+        return res
