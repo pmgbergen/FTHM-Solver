@@ -51,7 +51,9 @@ class PoroMech(
         self._domain = nd_cube_domain(3, 1.0)
 
     def set_fractures(self) -> None:
-        self._fractures = fracture_sets.orthogonal_fractures_3d(size=1)
+        # self._fractures = fracture_sets.orthogonal_fractures_3d(size=1)
+        self._fractures = fracture_sets.orthogonal_fractures_3d(size=1)[:1]
+
 
     def grid_type(self) -> Literal["simplex", "cartesian", "tensor_grid"]:
         return "simplex"
@@ -106,8 +108,8 @@ def make_model(cell_size=(1 / 4)):
             "cell_size": cell_size / m,
         },
         # "iterative_solver": False,
-        "solver_type": "1",
-        "simulation_name": "fpm_2",
+        'solver_type': '1',
+        "simulation_name": "fpm_2_one_frac",
     }
     return PoroMech(params)
 

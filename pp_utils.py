@@ -472,18 +472,28 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
 
 def make_reorder_contact(model):
-    assert model.nd == 2
     dofs_contact = np.concatenate([model.eq_dofs[i] for i in model._equation_groups[4]])
     dofs_contact_start = dofs_contact[0]
     dofs_contact_end = dofs_contact[-1] + 1
 
     reorder = np.arange(model.equation_system.num_dofs())
 
-    dofs_contact_0 = dofs_contact[: len(dofs_contact) // 2]
-    dofs_contact_1 = dofs_contact[len(dofs_contact) // 2 :]
-    reorder[dofs_contact_start:dofs_contact_end] = np.stack(
-        [dofs_contact_0, dofs_contact_1]
-    ).ravel("f")
+    if model.nd == 2:
+        dofs_contact_0 = dofs_contact[: len(dofs_contact) // model.nd]
+        dofs_contact_1 = dofs_contact[len(dofs_contact) // model.nd :]
+        reorder[dofs_contact_start:dofs_contact_end] = np.stack(
+            [dofs_contact_0, dofs_contact_1]
+        ).ravel("f")
+    elif model.nd == 3:
+        div = len(dofs_contact) // model.nd
+        dofs_contact_0 = dofs_contact[:div]
+        dofs_contact_1 = dofs_contact[div ::2]
+        dofs_contact_2 = dofs_contact[div + 1::2]
+        reorder[dofs_contact_start:dofs_contact_end] = np.stack(
+            [dofs_contact_0, dofs_contact_1, dofs_contact_2]
+        ).ravel("f")
+    else:
+        raise ValueError(f"{model.nd = }")
     return reorder
 
 

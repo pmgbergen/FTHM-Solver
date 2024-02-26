@@ -1,16 +1,25 @@
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 
 import seaborn as sns
 import numpy as np
 import matplotlib
+import scipy.sparse
 from matplotlib import pyplot as plt
 
 from mat_utils import OmegaInv, inv, cond
 from plot_utils import plot_mat, spy
 
 
-def color_spy(mat, row_idx, col_idx, row_names=None, col_names=None, aspect: Literal['equal', 'auto'] = 'equal', show: bool = False):
+def color_spy(
+    mat,
+    row_idx,
+    col_idx,
+    row_names=None,
+    col_names=None,
+    aspect: Literal["equal", "auto"] = "equal",
+    show: bool = False,
+):
 
     spy(mat, show=False, aspect=aspect)
 
@@ -60,8 +69,8 @@ class BlockMatrixStorage:
         groups_col,
         active_groups_col=None,
         active_groups_row=None,
-        group_row_names=None,
-        group_col_names=None,
+        group_row_names: Sequence[str] = None,
+        group_col_names: Sequence[str] = None,
     ):
         self.mat = mat
         self.local_row_idx = [np.atleast_1d(x) if x is not None else x for x in row_idx]
@@ -75,8 +84,8 @@ class BlockMatrixStorage:
             active_groups_col = tuple(np.argsort([x[0] for x in groups_col]))
         self.active_groups = active_groups_row, active_groups_col
 
-        self.groups_row_names = group_row_names
-        self.groups_col_names = group_col_names
+        self.groups_row_names: Optional[Sequence[str]] = group_row_names
+        self.groups_col_names: Optional[Sequence[str]] = group_col_names
 
     @property
     def shape(self):
@@ -128,7 +137,7 @@ class BlockMatrixStorage:
         row_idx, local_row_idx = inner(self.local_row_idx, groups_i, self.groups_row)
         col_idx, local_col_idx = inner(self.local_col_idx, groups_j, self.groups_col)
 
-        I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij")
+        I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         submat = self.mat[I, J]
         return BlockMatrixStorage(
             mat=submat,
@@ -141,6 +150,80 @@ class BlockMatrixStorage:
             group_col_names=self.groups_col_names,
             group_row_names=self.groups_row_names,
         )
+
+    def slice_domain(self, i, j):
+        row_idx = [x for x in self.local_row_idx if x is not None][i]
+        col_idx = [x for x in self.local_col_idx if x is not None][j]
+        I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
+        return self.mat[I, J]
+
+    def block_diag_inv(self):
+        active_idx = [x for x in self.local_row_idx if x is not None]
+        bmats = []
+        for active in active_idx:
+            I, J = np.meshgrid(active, active, sparse=True, indexing="ij", copy=False)
+            bmats.append(inv(self.mat[I, J]))
+        return scipy.sparse.block_diag(bmats, format="csr")
+
+    def copy(self):
+        return BlockMatrixStorage(
+            mat=self.mat.copy(),
+            row_idx=self.local_row_idx,
+            col_idx=self.local_col_idx,
+            groups_row=self.groups_row,
+            groups_col=self.groups_col,
+            active_groups_row=self.active_groups[0],
+            active_groups_col=self.active_groups[1],
+            group_col_names=self.groups_col_names,
+            group_row_names=self.groups_row_names,
+        )
+
+    def local_rhs(self, rhs):
+        # TODO: It must be global indices
+        row_idx = [x for x in self.local_row_idx if x is not None]
+        row_idx = np.concatenate(row_idx)
+        perm = np.zeros_like(row_idx)
+        perm[row_idx] = np.arange(row_idx.size)
+        return rhs[perm]
+
+    def reverse_transform_solution(self, x):
+        # TODO: It must be global indices
+        col_idx = [x for x in self.local_col_idx if x is not None]
+        col_idx = np.concatenate(col_idx)
+        return x[col_idx]
+
+    def get_global_indices(
+        self,
+        local_indices,
+        group: tuple[int, int],
+        subgroup: tuple[int, int] = (0, 0),
+    ):
+        assert group[0] in self.active_groups[0]
+        assert group[1] in self.active_groups[1]
+
+        group_row = self.groups_row[group[0]]
+        group_col = self.groups_col[group[1]]
+        subgroup_row = group_row[subgroup[0]]
+        subgroup_col = group_col[subgroup[1]]
+        offset_i = self.local_row_idx[subgroup_row][0]
+        offset_j = self.local_col_idx[subgroup_col][0]
+
+        global_i = np.array(local_indices[0]) + offset_i
+        global_j = np.array(local_indices[1]) + offset_j
+        return global_i, global_j
+
+    def slice_submatrix(
+        self, local_indices, group: tuple[int, int], subgroup: tuple[int, int] = (0, 0)
+    ):
+        global_i, global_j = self.get_global_indices(
+            local_indices=local_indices, group=group, subgroup=subgroup
+        )
+        global_i, global_j = np.meshgrid(
+            global_i, global_j, sparse=True, indexing="ij", copy=False
+        )
+        return self.mat[global_i, global_j]
+
+    # Visualization
 
     def get_active_local_dofs(self, grouped=False):
 
@@ -179,47 +262,26 @@ class BlockMatrixStorage:
         col_names = inner(self.groups_col_names, self.active_groups[1])
         return row_names, col_names
 
-    def color_spy(self, groups=True, show=True, aspect: Literal['equal', 'auto'] = 'equal'):
+    def color_spy(
+        self, groups=True, show=True, aspect: Literal["equal", "auto"] = "equal"
+    ):
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         if not groups:
             row_names = col_names = None
         else:
             row_names, col_names = self.get_active_group_names()
-        color_spy(self.mat, row_idx, col_idx, row_names=row_names, col_names=col_names, show=show, aspect=aspect)
-
-    def slice_domain(self, i, j):
-        row_idx = [x for x in self.local_row_idx if x is not None][i]
-        col_idx = [x for x in self.local_col_idx if x is not None][j]
-        I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij")
-        return self.mat[I, J]
+        color_spy(
+            self.mat,
+            row_idx,
+            col_idx,
+            row_names=row_names,
+            col_names=col_names,
+            show=show,
+            aspect=aspect,
+        )
 
     def matshow(self, log=True, show=True):
         plot_mat(self.mat, log=log, show=show)
-
-    def copy(self):
-        return BlockMatrixStorage(
-            mat=self.mat.copy(),
-            row_idx=self.local_row_idx,
-            col_idx=self.local_col_idx,
-            groups_row=self.groups_row,
-            groups_col=self.groups_col,
-            active_groups_row=self.active_groups[0],
-            active_groups_col=self.active_groups[1],
-            group_col_names=self.groups_col_names,
-            group_row_names=self.groups_row_names,
-        )
-
-    def local_rhs(self, rhs):
-        row_idx = [x for x in self.local_row_idx if x is not None]
-        row_idx = np.concatenate(row_idx)
-        perm = np.zeros_like(row_idx)
-        perm[row_idx] = np.arange(row_idx.size)
-        return rhs[perm]
-
-    def reverse_transform_solution(self, x):
-        col_idx = [x for x in self.local_col_idx if x is not None]
-        col_idx = np.concatenate(col_idx)
-        return x[col_idx]
 
     def plot_max(self, group=True):
         row_idx, col_idx = self.get_active_local_dofs(grouped=group)
@@ -228,7 +290,7 @@ class BlockMatrixStorage:
         for row in row_idx:
             row_data = []
             for col in col_idx:
-                I, J = np.meshgrid(row, col, sparse=True, indexing="ij")
+                I, J = np.meshgrid(row, col, sparse=True, indexing="ij", copy=False)
                 submat = self.mat[I, J]
                 if submat.data.size == 0:
                     row_data.append(np.nan)
@@ -256,8 +318,6 @@ class BlockMatrixStorage:
             cbar=False,
             cmap=sns.color_palette("coolwarm", as_cmap=True),
         )
-        # ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
-        # ax.set_title(key)
 
 
 @dataclass
