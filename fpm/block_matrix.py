@@ -91,10 +91,17 @@ class BlockMatrixStorage:
     def shape(self):
         return self.mat.shape
 
+    @property
+    def active_subgroups(self):
+        return (
+            [i for i, x in enumerate(self.local_row_idx) if x is not None],
+            [j for j, x in enumerate(self.local_col_idx) if x is not None],
+        )
+
     def __repr__(self) -> str:
         return f"BlockMatrixStorage of shape {self.shape} with {self.mat.nnz} elements"
 
-    def __getitem__(self, key):
+    def _correct_getitem_key(self, key):
         if isinstance(key, list):
             key = key, key
         if isinstance(key, slice):
@@ -117,9 +124,13 @@ class BlockMatrixStorage:
         groups_i, groups_j = key
         groups_i = correct_key(groups_i, total=len(self.groups_row))
         groups_j = correct_key(groups_j, total=len(self.groups_col))
+        return groups_i, groups_j
+
+    def __getitem__(self, key):
+        groups_i, groups_j = self._correct_getitem_key(key)
 
         def inner(input_dofs_idx, take_groups, all_groups):
-            dofs_idx = []
+            dofs_global_idx = []
             dofs_local_idx = [None] * len(input_dofs_idx)
             offset = 0
             for group in take_groups:
@@ -127,12 +138,12 @@ class BlockMatrixStorage:
                     assert (
                         input_dofs_idx[dof_idx] is not None
                     ), f"Taking inactive row {group}"
-                    dofs_idx.append(input_dofs_idx[dof_idx])
+                    dofs_global_idx.append(input_dofs_idx[dof_idx])
                     dofs_local_idx[dof_idx] = (
                         np.arange(len(input_dofs_idx[dof_idx])) + offset
                     )
                     offset += len(input_dofs_idx[dof_idx])
-            return np.concatenate(dofs_idx), dofs_local_idx
+            return np.concatenate(dofs_global_idx), dofs_local_idx
 
         row_idx, local_row_idx = inner(self.local_row_idx, groups_i, self.groups_row)
         col_idx, local_col_idx = inner(self.local_col_idx, groups_j, self.groups_col)
@@ -151,9 +162,31 @@ class BlockMatrixStorage:
             group_row_names=self.groups_row_names,
         )
 
+    def __setitem__(self, key, value):
+        groups_i, groups_j = self._correct_getitem_key(key)
+
+        if isinstance(value, BlockMatrixStorage):
+            value = value.mat
+
+        def inner(input_dofs_idx, take_groups, all_groups):
+            dofs_idx = []
+            for group in take_groups:
+                for dof_idx in all_groups[group]:
+                    assert (
+                        input_dofs_idx[dof_idx] is not None
+                    ), f"Taking inactive row {group}"
+                    dofs_idx.append(input_dofs_idx[dof_idx])
+            return np.concatenate(dofs_idx)
+
+        row_idx = inner(self.local_row_idx, groups_i, self.groups_row)
+        col_idx = inner(self.local_col_idx, groups_j, self.groups_col)
+        I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
+        self.mat[I, J] = value
+
     def slice_domain(self, i, j):
-        row_idx = [x for x in self.local_row_idx if x is not None][i]
-        col_idx = [x for x in self.local_col_idx if x is not None][j]
+        active_subgroups_i, active_subgroups_j = self.active_subgroups
+        row_idx = self.local_row_idx[active_subgroups_i[i]]
+        col_idx = self.local_col_idx[active_subgroups_j[j]]
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         return self.mat[I, J]
 
@@ -323,7 +356,7 @@ class BlockMatrixStorage:
 @dataclass
 class SolveSchema:
     groups: list[int]
-    solve: callable | Literal["direct"] = "direct"
+    solve: callable | Literal["direct", "use_invertor"] = "direct"
     invertor: callable | Literal["use_solve", "direct"] = "use_solve"
     invertor_type: Literal["physical", "algebraic"] = "algebraic"
     complement: Optional["SolveSchema"] = None
@@ -355,6 +388,10 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
     if schema.compute_cond:
         print(f"Blocks: {submat_00.active_groups[0]} cond: {cond(submat_00.mat):.2e}")
     solve = schema.solve
+    invertor = schema.invertor
+    if solve == "use_invertor":
+        solve = schema.invertor
+        invertor = "use_solve"
     if solve == "direct":
         submat_00_solve = inv(submat_00.mat)
     else:
@@ -371,12 +408,12 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         submat_11.mat += schema.invertor()
 
     elif schema.invertor_type == "algebraic":
-        if schema.invertor == "use_solve":
+        if invertor == "use_solve":
             submat_00_inv = submat_00_solve
-        elif schema.invertor == "direct":
+        elif invertor == "direct":
             submat_00_inv = inv(submat_00.mat)
         else:
-            submat_00_inv = schema.invertor(submat_00)
+            submat_00_inv = invertor(submat_00)
         submat_11.mat -= submat_10.mat @ submat_00_inv @ submat_01.mat
 
     else:

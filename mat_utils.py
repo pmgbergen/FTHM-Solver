@@ -51,27 +51,6 @@ def condest(mat):
     return data.max() / data.min()
 
 
-# def slice_matrix(mat, row_dofs, col_dofs, row_id, col_id):
-#     rows = row_dofs[row_id]
-#     cols = col_dofs[col_id]
-#     rows, cols = np.meshgrid(rows, cols, sparse=True, copy=True, indexing="ij")
-#     return mat[rows, cols]
-
-
-def concatenate_blocks(block_matrix, rows=None, cols=None):
-    if rows is None:
-        rows = range(block_matrix.shape[0])
-    if cols is None:
-        cols = range(block_matrix.shape[1])
-    result = []
-    for i in rows:
-        res_row = []
-        for j in cols:
-            res_row.append(block_matrix[i][j])
-        result.append(res_row)
-    return scipy.sparse.bmat(result)
-
-
 class UpperBlockPreconditioner:
 
     def __init__(self, F_inv, Omega_inv, Phi):
@@ -229,6 +208,7 @@ class PetscGMRES:
         options.setValue("ksp_max_it", 20 * restart)
         options.setValue("ksp_norm_type", "unpreconditioned")
         options.setValue("ksp_gmres_restart", restart)
+        # options.setValue("ksp_pc_side", "left")
         if pc is None:
             options.setValue("pc_type", "none")
 
@@ -293,12 +273,21 @@ def extract_diag_inv(mat):
     return ones
 
 
-def inv_block_diag_2x2(tmp):
-    ad = tmp.diagonal()
+def inv_block_diag(mat, nd: int = 1):
+    if nd == 1:
+        return extract_diag_inv(mat)
+    if nd == 2:
+        return inv_block_diag_2x2(mat)
+    print(f'{nd = } not implemented, using direct inverse')
+    return inv(mat)
+
+
+def inv_block_diag_2x2(mat):
+    ad = mat.diagonal()
     a = ad[::2]
     d = ad[1::2]
-    b = tmp.diagonal(k=1)[::2]
-    c = tmp.diagonal(k=-1)[::2]
+    b = mat.diagonal(k=1)[::2]
+    c = mat.diagonal(k=-1)[::2]
 
     det = a * d - b * c
 
@@ -315,6 +304,22 @@ def inv_block_diag_2x2(tmp):
     return scipy.sparse.diags([lower, diag, upper], offsets=[-1, 0, 1]).tocsr()
 
 
+def lump_nd(mat, nd: int):
+    result = scipy.sparse.lil_matrix(mat.shape)
+    indices = np.arange(0, mat.shape[0], nd)
+    for i in range(nd):
+        for j in range(nd):
+            indices_i = indices + i
+            indices_j = indices + j
+            I, J = np.meshgrid(
+                indices_i, indices_j, copy=False, sparse=True, indexing="ij"
+            )
+            submat = mat[I, J]
+            lump = np.array(submat.sum(axis=1)).ravel()
+            result[indices_i, indices_j] = lump
+    return result.tocsr()
+
+
 def extract_rowsum_inv(mat):
     rowsum = np.array((mat).sum(axis=1)).squeeze()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
@@ -328,16 +333,3 @@ def reverse_cuthill_mckee(mat):
 
     reorder = reverse_cuthill_mckee(mat)
     return mat[reorder][:, reorder]
-
-
-class Permutation:
-
-    def __init__(self, operator, perm_rows) -> None:
-        self.operator = operator
-        self.perm_rows = perm_rows
-        self.shape = operator.shape
-
-    def dot(self, x):
-        x = x[self.perm_rows]
-        res = self.operator.dot(x)
-        return res
