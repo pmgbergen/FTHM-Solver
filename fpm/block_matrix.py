@@ -19,9 +19,10 @@ def color_spy(
     col_names=None,
     aspect: Literal["equal", "auto"] = "equal",
     show: bool = False,
+    marker=None
 ):
 
-    spy(mat, show=False, aspect=aspect)
+    spy(mat, show=False, aspect=aspect, marker=marker)
 
     row_sep = [0]
     for row in row_idx:
@@ -296,7 +297,7 @@ class BlockMatrixStorage:
         return row_names, col_names
 
     def color_spy(
-        self, groups=True, show=True, aspect: Literal["equal", "auto"] = "equal"
+        self, groups=True, show=True, aspect: Literal["equal", "auto"] = "equal", marker=None
     ):
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         if not groups:
@@ -311,6 +312,7 @@ class BlockMatrixStorage:
             col_names=col_names,
             show=show,
             aspect=aspect,
+            marker=marker,
         )
 
     def matshow(self, log=True, show=True):
@@ -360,6 +362,8 @@ class SolveSchema:
     invertor: callable | Literal["use_solve", "direct"] = "use_solve"
     invertor_type: Literal["physical", "algebraic"] = "algebraic"
     complement: Optional["SolveSchema"] = None
+
+    transform_nondiagonal_blocks: callable = lambda mat10, mat01: (mat10, mat01)
 
     compute_cond: bool = False
     color_spy: bool = False
@@ -414,7 +418,8 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
             submat_00_inv = inv(submat_00.mat)
         else:
             submat_00_inv = invertor(submat_00)
-        submat_11.mat -= submat_10.mat @ submat_00_inv @ submat_01.mat
+        submat_10_m, submat_01_m = schema.transform_nondiagonal_blocks(submat_10, submat_01)
+        submat_11.mat -= submat_10_m.mat @ submat_00_inv @ submat_01_m.mat
 
     else:
         raise ValueError(f"{schema.invertor_type=}")

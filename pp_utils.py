@@ -487,8 +487,8 @@ def make_reorder_contact(model):
     elif model.nd == 3:
         div = len(dofs_contact) // model.nd
         dofs_contact_0 = dofs_contact[:div]
-        dofs_contact_1 = dofs_contact[div ::2]
-        dofs_contact_2 = dofs_contact[div + 1::2]
+        dofs_contact_1 = dofs_contact[div::2]
+        dofs_contact_2 = dofs_contact[div + 1 :: 2]
         reorder[dofs_contact_start:dofs_contact_end] = np.stack(
             [dofs_contact_0, dofs_contact_1, dofs_contact_2]
         ).ravel("f")
@@ -505,3 +505,32 @@ def reorder_J44(model):
     reorder[1::2] = np.arange(half)
     reorder[::2] = np.arange(half) + half
     return reorder
+
+
+def correct_eq_groups(model):
+    """We reindex eq_dofs and model._equation_groups to put together normal and
+    tangential components of the contact equation for each dof."""
+    eq_dofs_corrected = [x.copy() for x in model.eq_dofs]
+    eq_groups_corrected = [x.copy() for x in model._equation_groups]
+
+    end_normal = len(model._equation_groups[4]) // 2
+    normal_subgroups = model._equation_groups[4][:end_normal]
+
+    eq_dofs_corrected = []
+    for i, x in enumerate(model.eq_dofs):
+        if i not in model._equation_groups[4]:
+            eq_dofs_corrected.append(x)
+        else:
+            if i in normal_subgroups:
+                eq_dofs_corrected.append(None)
+
+    i = model.eq_dofs[normal_subgroups[0]][0]
+    for normal in normal_subgroups:
+        res = i + np.arange(model.eq_dofs[normal].size * model.nd)
+        i = res[-1] + 1
+        eq_dofs_corrected[normal] = np.array(res)
+
+    eq_groups_corrected[4] = normal_subgroups
+    eq_groups_corrected[5] = (np.array(model._equation_groups[5]) - end_normal).tolist()
+
+    return eq_dofs_corrected, eq_groups_corrected

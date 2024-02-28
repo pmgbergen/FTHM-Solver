@@ -31,10 +31,11 @@ def trim_label(label: str) -> str:
     return label[:trim] + "..."
 
 
-def spy(mat, show=True, aspect: Literal["equal", "auto"] = "equal"):
-    marker = "+"
-    if max(*mat.shape) > 300:
-        marker = ","
+def spy(mat, show=True, aspect: Literal["equal", "auto"] = "equal", marker=None):
+    if marker is None:
+        marker = "+"
+        if max(*mat.shape) > 300:
+            marker = ","
     plt.spy(mat, marker=marker, markersize=4, color="black", aspect=aspect)
     if show:
         plt.show()

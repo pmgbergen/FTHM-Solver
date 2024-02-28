@@ -278,8 +278,11 @@ def inv_block_diag(mat, nd: int = 1):
         return extract_diag_inv(mat)
     if nd == 2:
         return inv_block_diag_2x2(mat)
-    print(f'{nd = } not implemented, using direct inverse')
-    return inv(mat)
+    if nd == 3:
+        return inv(diag_nd(mat, nd=3))
+    raise ValueError
+    # print(f"{nd = } not implemented, using direct inverse")
+    # return inv(mat)
 
 
 def inv_block_diag_2x2(mat):
@@ -317,6 +320,17 @@ def lump_nd(mat, nd: int):
             submat = mat[I, J]
             lump = np.array(submat.sum(axis=1)).ravel()
             result[indices_i, indices_j] = lump
+    return result.tocsr()
+
+
+def diag_nd(mat, nd: int):
+    result = scipy.sparse.lil_matrix(mat.shape)
+    indices = np.arange(0, mat.shape[0], nd)
+    for i in range(nd):
+        for j in range(nd):
+            indices_i = indices + i
+            indices_j = indices + j
+            result[indices_i, indices_j] = mat[indices_i, indices_j]
     return result.tocsr()
 
 

@@ -29,8 +29,8 @@ MEGA = 1
 class PoroMech(
     MyPetscSolver,
     TimeStepping,
-    BCMechanicsOpen,
-    # BCMechanicsSticking,
+    # BCMechanicsOpen,
+    BCMechanicsSticking,
     # BCMechanicsSliding,
     BCFlow,
     Permeability,
@@ -53,7 +53,6 @@ class PoroMech(
     def set_fractures(self) -> None:
         # self._fractures = fracture_sets.orthogonal_fractures_3d(size=1)
         self._fractures = fracture_sets.orthogonal_fractures_3d(size=1)[:1]
-
 
     def grid_type(self) -> Literal["simplex", "cartesian", "tensor_grid"]:
         return "simplex"
@@ -120,14 +119,11 @@ if __name__ == "__main__":
 
     model = make_model()
     model.prepare_simulation()
-
-    model.time_manager.increase_time()
-    model.time_manager.increase_time_index()
     model.before_nonlinear_loop()
     model.before_nonlinear_iteration()
     model.assemble_linear_system()
-    model.plot_diagnostics(model.run_diagnostics(), "max")
-    plt.show()
+    # model.plot_diagnostics(model.run_diagnostics(), "max")
+    # plt.show()
 
     pp.run_time_dependent_model(
         model,
@@ -138,12 +134,12 @@ if __name__ == "__main__":
         },
     )
 
-    pp.plot_grid(
-        model.mdg,
-        cell_value=model.pressure_variable,
-        vector_value=model.displacement_variable,
-        alpha=0.5,
-    )
+    # pp.plot_grid(
+    #     model.mdg,
+    #     cell_value=model.pressure_variable,
+    #     vector_value=model.displacement_variable,
+    #     alpha=0.5,
+    # )
 
     print(model.simulation_name)
 
