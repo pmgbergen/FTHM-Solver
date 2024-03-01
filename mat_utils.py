@@ -38,7 +38,7 @@ def cond(mat):
 
 
 def inv(mat):
-    return scipy.sparse.linalg.inv(mat.tocsc())
+    return scipy.sparse.linalg.inv(scipy.sparse.csc_matrix(mat))
 
 
 def pinv(mat):

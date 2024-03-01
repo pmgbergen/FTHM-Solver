@@ -125,3 +125,84 @@ def build_mechanics_stabilization(
                     build_schur=build_schur,
                 )
     return result.tocsr()
+
+
+def make_local_fracture_dofs(model):
+    matrices = model.mdg.subdomains(dim=model.nd)
+    assert len(matrices) == 1
+    matrix = matrices[0]
+    fractures = model.mdg.subdomains(dim=model.nd - 1)
+
+    faces_to_cells = sparse_kronecker_product(matrix.cell_faces.T, nd=model.nd).tocsc()
+
+    frac_dofs = []
+    intf_dofs = []
+    matrix_dofs = []
+    intf_offset = 0
+    frac_offset = 0
+
+    for frac in fractures:
+        intfs = model.mdg.subdomain_to_interfaces(sd=frac)
+        intf = intfs[0]
+        assert all(intf.dim < frac.dim for intf in intfs[1:])
+
+        secondary_to_mortar = intf.secondary_to_mortar_avg(nd=model.nd).tocsc()
+        mortar_to_primary = intf.mortar_to_primary_avg(nd=model.nd).tocsc()
+        sign_to_mortar_side = intf.sign_of_mortar_sides(nd=model.nd).diagonal()
+        secondary_to_mortar.eliminate_zeros()
+        mortar_to_primary.eliminate_zeros()
+        faces_to_cells.eliminate_zeros()
+
+        intf_to_mat_cells = faces_to_cells @ mortar_to_primary
+
+        for frac_cell_id in range(frac.num_cells):
+            frac_cells = frac_cell_id * model.nd + np.arange(model.nd)
+            intf_cells = secondary_to_mortar[:, frac_cells].indices
+
+            # One fracture cell for two interface sides
+            frac_dofs.append(frac_cells + frac_offset)
+            frac_dofs.append(frac_cells + frac_offset)
+
+            signs = sign_to_mortar_side[intf_cells]
+            for sign_val in (1, -1):
+                sign_idx = signs == sign_val
+                intf_cells_side = intf_cells[sign_idx]
+
+                mat_cells_side = intf_to_mat_cells[:, intf_cells_side].indices
+                matrix_dofs.append(mat_cells_side)
+                intf_dofs.append(intf_cells_side + intf_offset)
+
+        intf_offset += secondary_to_mortar.shape[0]
+        frac_offset += secondary_to_mortar.shape[1]
+
+    return np.array(matrix_dofs), np.array(frac_dofs), np.array(intf_dofs)
+
+
+# def make_local_matrix(i_dofs, j_dofs, src=None):
+#     i_dofs = np.repeat(i_dofs, repeats=i_dofs.shape[1], axis=1).ravel()
+#     j_dofs = np.concatenate([j_dofs] * j_dofs.shape[1], axis=1).ravel()
+#     data = np.ones(i_dofs.shape)
+#     return scipy.sparse.coo_matrix((data, (i_dofs, j_dofs)))
+
+
+def take_local_values(src, i_dofs, j_dofs):
+    res = scipy.sparse.lil_matrix(src.shape)
+    for i_dof, j_dof in zip(i_dofs, j_dofs):
+        I, J = np.meshgrid(i_dof, j_dof, copy=False, sparse=True, indexing="ij")
+        res[I, J] = src[I, J]
+    return res.asformat(src.format)
+
+
+def lump_rect(src, idofs_target, jdofs_target, axis=1):
+    nd = idofs_target.shape[1]
+    res = scipy.sparse.lil_matrix(src.shape)
+    for idof_target, jdof_target in zip(idofs_target, jdofs_target):
+        for i in range(nd):
+            for j in range(nd):
+                if axis == 1:
+                    data = src[idof_target[i], jdof_target[j] % nd::nd]
+                else:
+                    data = src[idof_target[i] % nd::nd, jdof_target[j]]
+                data = np.array(data.sum(axis=axis)).ravel()
+                res[idof_target[i], jdof_target[j]] = data
+    return res.asformat(src.format)

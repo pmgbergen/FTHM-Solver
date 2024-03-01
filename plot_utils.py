@@ -100,6 +100,8 @@ def plot_mat(mat, log=True, show=True):
         pass
     if log:
         mat = np.log10(abs(mat))
+    else:
+        mat[mat == 0] = np.nan
     plt.matshow(mat, fignum=0)
     plt.colorbar()
     if show:
