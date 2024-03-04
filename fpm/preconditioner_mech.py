@@ -1,8 +1,8 @@
 from porepy.numerics.linalg.matrix_operations import sparse_kronecker_product
-from block_matrix import BlockMatrixStorage
+from block_matrix import BlockMatrixStorage, SolveSchema
 import scipy.sparse
 import numpy as np
-from mat_utils import lump_nd
+from mat_utils import PetscAMGMechanics, lump_nd
 
 
 def build_local_stabilization(
@@ -178,31 +178,46 @@ def make_local_fracture_dofs(model):
     return np.array(matrix_dofs), np.array(frac_dofs), np.array(intf_dofs)
 
 
-# def make_local_matrix(i_dofs, j_dofs, src=None):
-#     i_dofs = np.repeat(i_dofs, repeats=i_dofs.shape[1], axis=1).ravel()
-#     j_dofs = np.concatenate([j_dofs] * j_dofs.shape[1], axis=1).ravel()
-#     data = np.ones(i_dofs.shape)
-#     return scipy.sparse.coo_matrix((data, (i_dofs, j_dofs)))
+# def take_local_values(src, i_dofs, j_dofs):
+#     res = scipy.sparse.lil_matrix(src.shape)
+#     for i_dof, j_dof in zip(i_dofs, j_dofs):
+#         I, J = np.meshgrid(i_dof, j_dof, copy=False, sparse=True, indexing="ij")
+#         res[I, J] = src[I, J]
+#     return res.asformat(src.format)
 
 
-def take_local_values(src, i_dofs, j_dofs):
-    res = scipy.sparse.lil_matrix(src.shape)
-    for i_dof, j_dof in zip(i_dofs, j_dofs):
-        I, J = np.meshgrid(i_dof, j_dof, copy=False, sparse=True, indexing="ij")
-        res[I, J] = src[I, J]
-    return res.asformat(src.format)
+# def lump_rect(src, idofs_target, jdofs_target, axis=1):
+#     nd = idofs_target.shape[1]
+#     res = scipy.sparse.lil_matrix(src.shape)
+#     for idof_target, jdof_target in zip(idofs_target, jdofs_target):
+#         for i in range(nd):
+#             for j in range(nd):
+#                 if axis == 1:
+#                     data = src[idof_target[i], jdof_target[j] % nd::nd]
+#                 else:
+#                     data = src[idof_target[i] % nd::nd, jdof_target[j]]
+#                 data = np.array(data.sum(axis=axis)).ravel()
+#                 res[idof_target[i], jdof_target[j]] = data
+#     return res.asformat(src.format)
 
 
-def lump_rect(src, idofs_target, jdofs_target, axis=1):
-    nd = idofs_target.shape[1]
-    res = scipy.sparse.lil_matrix(src.shape)
-    for idof_target, jdof_target in zip(idofs_target, jdofs_target):
-        for i in range(nd):
-            for j in range(nd):
-                if axis == 1:
-                    data = src[idof_target[i], jdof_target[j] % nd::nd]
-                else:
-                    data = src[idof_target[i] % nd::nd, jdof_target[j]]
-                data = np.array(data.sum(axis=axis)).ravel()
-                res[idof_target[i], jdof_target[j]] = data
-    return res.asformat(src.format)
+def make_J44_inv(model, bmat: BlockMatrixStorage, lump=False):
+    J4_shape = bmat.group_shape([4])
+    mech_stab = build_mechanics_stabilization(
+        model=model, bmat=bmat, build_schur=False, lump=lump
+    )
+    return mech_stab[: J4_shape[0], : J4_shape[1]]
+
+
+def make_mech_schema(
+    model, J: BlockMatrixStorage, inner: SolveSchema = None
+) -> SolveSchema:
+    return SolveSchema(
+        groups=[4],
+        solve=lambda bmat: make_J44_inv(model=model, bmat=J),
+        complement=SolveSchema(
+            groups=[1, 5],
+            solve=lambda bmat: PetscAMGMechanics(dim=model.nd, mat=bmat.mat),
+            complement=inner,
+        ),
+    )

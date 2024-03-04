@@ -11,8 +11,9 @@ import scipy.linalg
 from matplotlib import pyplot as plt
 from numpy.linalg import norm
 from scipy.sparse import bmat
-from scipy.sparse.linalg import LinearOperator, gmres
+from scipy.sparse.linalg import LinearOperator  # , gmres, bicgstab
 from stats import LinearSolveStats
+from pyamg.krylov import gmres
 
 from mat_utils import PetscGMRES, condest
 from stats import TimeStepStats
@@ -124,18 +125,20 @@ def plot_eigs(mat, label="", logx=False):
 def solve(
     mat,
     prec=None,
+    rhs=None,
     label="",
-    callback_type: Literal["pr_norm", "x"] = "pr_norm",
+    plot_residuals=True,
     tol=1e-10,
 ):
     residuals = []
-    rhs = np.ones(mat.shape[0])
+    residual_vectors = []
+    if rhs is None:
+        rhs = np.ones(mat.shape[0])
 
     def callback(x):
-        if callback_type == "pr_norm":
-            residuals.append(float(x))
-        else:
-            residuals.append(norm(mat.dot(x) - rhs))
+        res = mat.dot(x) - rhs
+        residual_vectors.append(res)
+        residuals.append(float(norm(res)))
 
     if prec is not None:
         prec = LinearOperator(shape=prec.shape, matvec=prec.dot)
@@ -147,26 +150,35 @@ def solve(
         rhs,
         M=prec,
         tol=tol,
-        restart=restart,
+        # atol=0,
+        restrt=restart,
         callback=callback,
-        callback_type=callback_type,
+        # callback_type=callback_type,
+        # maxiter=20,
         maxiter=20,
     )
     print("Solve", label, "took:", round(time.time() - t0, 2))
-
-    inner = np.arange(len(residuals))
-    if callback_type == "x":
-        inner *= restart
 
     linestyle = "-"
     if info != 0:
         linestyle = "--"
 
-    plt.plot(inner, residuals, label=label, marker=".", linestyle=linestyle)
+    plt.plot(residuals, label=label, marker=".", linestyle=linestyle)
     plt.yscale("log")
     plt.ylabel("pr. residual")
     plt.xlabel("gmres iter.")
     plt.grid(True)
+
+    if plot_residuals:
+        plt.figure()
+        num = len(residual_vectors)
+        show_vectors = np.arange(0, num, num // 4)
+        residual_vectors = np.array(residual_vectors)
+        residual_vectors = abs(residual_vectors)
+        for iter in show_vectors:
+            plt.plot(residual_vectors[iter], label=iter, alpha=0.7)
+        plt.legend()
+        plt.yscale("log")
 
 
 def color_spy(block_mat, row_idx=None, col_idx=None, row_names=None, col_names=None):
@@ -406,6 +418,17 @@ def load_matrix_rhs(data: Sequence[TimeStepStats], idx: int):
     mat = scipy.sparse.load_npz(load_dir / flat_data[idx].matrix_id)
     rhs = np.load(load_dir / flat_data[idx].rhs_id)
     return mat, rhs
+
+
+def load_matrix_rhs_state_iterate_dt(data: Sequence[TimeStepStats], idx: int):
+    flat_data: list[LinearSolveStats] = [y for x in data for y in x.linear_solves]
+    load_dir = Path("../matrices")
+    mat = scipy.sparse.load_npz(load_dir / flat_data[idx].matrix_id)
+    rhs = np.load(load_dir / flat_data[idx].rhs_id)
+    iterate = np.load(load_dir / flat_data[idx].iterate_id)
+    state = np.load(load_dir / flat_data[idx].state_id)
+    dt = flat_data[idx].simulation_dt
+    return mat, rhs, state, iterate, dt
 
 
 def load_data(path) -> Sequence[TimeStepStats]:

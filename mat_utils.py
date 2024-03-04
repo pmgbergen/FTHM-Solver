@@ -273,13 +273,16 @@ def extract_diag_inv(mat):
     return ones
 
 
-def inv_block_diag(mat, nd: int = 1):
+def inv_block_diag(mat, nd: int):
     if nd == 1:
         return extract_diag_inv(mat)
     if nd == 2:
         return inv_block_diag_2x2(mat)
     if nd == 3:
-        return inv(diag_nd(mat, nd=3))
+        diag = diag_nd(mat, nd=3)
+        if diag.nnz != mat.nnz:
+            print('Matrix contained nondiagonal elements')
+        return inv(diag)
     raise ValueError
     # print(f"{nd = } not implemented, using direct inverse")
     # return inv(mat)

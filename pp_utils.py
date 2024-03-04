@@ -283,6 +283,9 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         self._linear_solve_stats.num_sticking_sliding_open = tuple(
             int(sum(x)) for x in data
         )
+        self._linear_solve_stats.sticking = data[0].tolist()
+        self._linear_solve_stats.sliding = data[1].tolist()
+        self._linear_solve_stats.open_ = data[2].tolist()
 
     def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
         save_path = Path("./matrices")
@@ -291,11 +294,23 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         name = f"{self.simulation_name}_{int(time.time() * 1000)}"
         mat_id = f"{name}.npz"
         rhs_id = f"{name}_rhs.npy"
+        state_id = f"{name}_state.npy"
+        iterate_id = f"{name}_iterate.npy"
         scipy.sparse.save_npz(save_path / mat_id, mat)
         np.save(save_path / rhs_id, rhs)
+        np.save(
+            save_path / state_id,
+            self.equation_system.get_variable_values(time_step_index=0),
+        )
+        np.save(
+            save_path / iterate_id,
+            self.equation_system.get_variable_values(iterate_index=0),
+        )
+        self._linear_solve_stats.iterate_id = iterate_id
+        self._linear_solve_stats.state_id = state_id
         self._linear_solve_stats.matrix_id = mat_id
         self._linear_solve_stats.rhs_id = rhs_id
-
+        self._linear_solve_stats.simulation_dt = self.time_manager.dt
         self._time_step_stats.linear_solves.append(self._linear_solve_stats)
         super().after_nonlinear_iteration(solution_vector)
 
@@ -418,8 +433,8 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
             mat, _ = self.linear_system
             bmat = BlockMatrixStorage(
                 mat=mat,
-                row_idx=self.eq_dofs,
-                col_idx=self.var_dofs,
+                global_row_idx=self.eq_dofs,
+                global_col_idx=self.var_dofs,
                 groups_row=self._equation_groups,
                 groups_col=self._variable_groups,
             )

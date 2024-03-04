@@ -5,6 +5,7 @@ import seaborn as sns
 import numpy as np
 import matplotlib
 import scipy.sparse
+from scipy.sparse import spmatrix
 from matplotlib import pyplot as plt
 
 from mat_utils import OmegaInv, inv, cond
@@ -19,7 +20,7 @@ def color_spy(
     col_names=None,
     aspect: Literal["equal", "auto"] = "equal",
     show: bool = False,
-    marker=None
+    marker=None,
 ):
 
     spy(mat, show=False, aspect=aspect, marker=marker)
@@ -63,33 +64,49 @@ def color_spy(
 class BlockMatrixStorage:
     def __init__(
         self,
-        mat,
-        row_idx,
-        col_idx,
-        groups_row,
-        groups_col,
+        mat: spmatrix,
+        global_row_idx: Sequence[np.ndarray],
+        global_col_idx: Sequence[np.ndarray],
+        groups_row: list[list[int]],
+        groups_col: list[list[int]],
+        local_row_idx: Sequence[np.ndarray] = None,
+        local_col_idx: Sequence[np.ndarray] = None,
         active_groups_col=None,
         active_groups_row=None,
         group_row_names: Sequence[str] = None,
         group_col_names: Sequence[str] = None,
     ):
-        self.mat = mat
-        self.local_row_idx = [np.atleast_1d(x) if x is not None else x for x in row_idx]
-        self.local_col_idx = [np.atleast_1d(x) if x is not None else x for x in col_idx]
-        self.groups_row = groups_row
-        self.groups_col = groups_col
-
-        if active_groups_row is None:
-            active_groups_row = tuple(np.argsort([x[0] for x in groups_row]))
-        if active_groups_col is None:
-            active_groups_col = tuple(np.argsort([x[0] for x in groups_col]))
-        self.active_groups = active_groups_row, active_groups_col
-
+        self.mat: spmatrix = mat
+        self.groups_row: list[list[int]] = groups_row
+        self.groups_col: list[list[int]] = groups_col
         self.groups_row_names: Optional[Sequence[str]] = group_row_names
         self.groups_col_names: Optional[Sequence[str]] = group_col_names
 
+        if local_row_idx is None:
+            local_row_idx = global_row_idx
+        if local_col_idx is None:
+            local_col_idx = global_col_idx
+        self.local_row_idx: list[np.ndarray] = [
+            np.atleast_1d(x) if x is not None else x for x in local_row_idx
+        ]
+        self.local_col_idx: list[np.ndarray] = [
+            np.atleast_1d(x) if x is not None else x for x in local_col_idx
+        ]
+        self.global_row_idx: list[np.ndarray] = [
+            np.atleast_1d(x) for x in global_row_idx
+        ]
+        self.global_col_idx: list[np.ndarray] = [
+            np.atleast_1d(x) for x in global_col_idx
+        ]
+
+        if active_groups_row is None:
+            active_groups_row = list(np.argsort([x[0] for x in groups_row]))
+        if active_groups_col is None:
+            active_groups_col = list(np.argsort([x[0] for x in groups_col]))
+        self.active_groups = active_groups_row, active_groups_col
+
     @property
-    def shape(self):
+    def shape(self) -> tuple[int, int]:
         return self.mat.shape
 
     @property
@@ -102,7 +119,7 @@ class BlockMatrixStorage:
     def __repr__(self) -> str:
         return f"BlockMatrixStorage of shape {self.shape} with {self.mat.nnz} elements"
 
-    def _correct_getitem_key(self, key):
+    def _correct_getitem_key(self, key) -> tuple[list[int], list[int]]:
         if isinstance(key, list):
             key = key, key
         if isinstance(key, slice):
@@ -127,7 +144,7 @@ class BlockMatrixStorage:
         groups_j = correct_key(groups_j, total=len(self.groups_col))
         return groups_i, groups_j
 
-    def __getitem__(self, key):
+    def __getitem__(self, key) -> "BlockMatrixStorage":
         groups_i, groups_j = self._correct_getitem_key(key)
 
         def inner(input_dofs_idx, take_groups, all_groups):
@@ -153,8 +170,10 @@ class BlockMatrixStorage:
         submat = self.mat[I, J]
         return BlockMatrixStorage(
             mat=submat,
-            row_idx=local_row_idx,
-            col_idx=local_col_idx,
+            local_row_idx=local_row_idx,
+            local_col_idx=local_col_idx,
+            global_row_idx=self.global_row_idx,
+            global_col_idx=self.global_col_idx,
             groups_col=self.groups_col,
             groups_row=self.groups_row,
             active_groups_row=tuple(groups_i),
@@ -184,14 +203,29 @@ class BlockMatrixStorage:
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         self.mat[I, J] = value
 
-    def slice_domain(self, i, j):
+    def group_shape(self, i, j=None) -> tuple[int, int]:
+        groups_i, groups_j = self._correct_getitem_key((i, j) if j is not None else i)
+
+        def inner(input_dofs_idx, take_groups, all_groups):
+            num_dofs = 0
+            for group in take_groups:
+                for dof_idx in all_groups[group]:
+                    if (dofs := input_dofs_idx[dof_idx]) is not None:
+                        num_dofs += dofs.size
+            return num_dofs
+
+        row_shape = inner(self.local_row_idx, groups_i, self.groups_row)
+        col_shape = inner(self.local_col_idx, groups_j, self.groups_col)
+        return row_shape, col_shape
+
+    def slice_domain(self, i, j) -> spmatrix:
         active_subgroups_i, active_subgroups_j = self.active_subgroups
         row_idx = self.local_row_idx[active_subgroups_i[i]]
         col_idx = self.local_col_idx[active_subgroups_j[j]]
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         return self.mat[I, J]
 
-    def block_diag_inv(self):
+    def block_diag_inv(self) -> spmatrix:
         active_idx = [x for x in self.local_row_idx if x is not None]
         bmats = []
         for active in active_idx:
@@ -199,11 +233,13 @@ class BlockMatrixStorage:
             bmats.append(inv(self.mat[I, J]))
         return scipy.sparse.block_diag(bmats, format="csr")
 
-    def copy(self):
+    def copy(self) -> "BlockMatrixStorage":
         return BlockMatrixStorage(
             mat=self.mat.copy(),
-            row_idx=self.local_row_idx,
-            col_idx=self.local_col_idx,
+            local_row_idx=self.local_row_idx,
+            local_col_idx=self.local_col_idx,
+            global_row_idx=self.global_row_idx,
+            global_col_idx=self.global_col_idx,
             groups_row=self.groups_row,
             groups_col=self.groups_col,
             active_groups_row=self.active_groups[0],
@@ -212,19 +248,26 @@ class BlockMatrixStorage:
             group_row_names=self.groups_row_names,
         )
 
-    def local_rhs(self, rhs):
-        # TODO: It must be global indices
-        row_idx = [x for x in self.local_row_idx if x is not None]
+    def local_rhs(self, rhs: np.ndarray) -> np.ndarray:
+        row_idx = [
+            self.global_row_idx[j]
+            for i in self.active_groups[0]
+            for j in self.groups_row[i]
+        ]
         row_idx = np.concatenate(row_idx)
-        perm = np.zeros_like(row_idx)
-        perm[row_idx] = np.arange(row_idx.size)
-        return rhs[perm]
+        return rhs[row_idx]
 
-    def reverse_transform_solution(self, x):
-        # TODO: It must be global indices
-        col_idx = [x for x in self.local_col_idx if x is not None]
+    def reverse_transform_solution(self, x: np.ndarray) -> np.ndarray:
+        col_idx = [
+            self.global_col_idx[j]
+            for i in self.active_groups[1]
+            for j in self.groups_col[i]
+        ]
         col_idx = np.concatenate(col_idx)
-        return x[col_idx]
+        total_size = sum(x.size for x in self.global_col_idx)
+        result = np.zeros(total_size)
+        result[col_idx] = x
+        return result
 
     def get_global_indices(
         self,
@@ -248,7 +291,7 @@ class BlockMatrixStorage:
 
     def slice_submatrix(
         self, local_indices, group: tuple[int, int], subgroup: tuple[int, int] = (0, 0)
-    ):
+    ) -> spmatrix:
         global_i, global_j = self.get_global_indices(
             local_indices=local_indices, group=group, subgroup=subgroup
         )
@@ -297,7 +340,11 @@ class BlockMatrixStorage:
         return row_names, col_names
 
     def color_spy(
-        self, groups=True, show=True, aspect: Literal["equal", "auto"] = "equal", marker=None
+        self,
+        groups=True,
+        show=True,
+        aspect: Literal["equal", "auto"] = "equal",
+        marker=None,
     ):
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         if not groups:
@@ -418,7 +465,9 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
             submat_00_inv = inv(submat_00.mat)
         else:
             submat_00_inv = invertor(submat_00)
-        submat_10_m, submat_01_m = schema.transform_nondiagonal_blocks(submat_10, submat_01)
+        submat_10_m, submat_01_m = schema.transform_nondiagonal_blocks(
+            submat_10, submat_01
+        )
         submat_11.mat -= submat_10_m.mat @ submat_00_inv @ submat_01_m.mat
 
     else:
