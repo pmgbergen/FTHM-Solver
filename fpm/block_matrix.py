@@ -330,7 +330,10 @@ class BlockMatrixStorage:
     def get_active_group_names(self):
         def inner(group_names, active_groups):
             if group_names is not None:
-                names = [f"{i}: {group_names[i]}" for i in active_groups]
+                names = [
+                    f"{i}: {group_names[i]}" if group_names[i] != "" else str(i)
+                    for i in active_groups
+                ]
             else:
                 names = active_groups
             return names

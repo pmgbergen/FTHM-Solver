@@ -1,10 +1,13 @@
-# 2D model, 1 fracture.
+# 3D model
+# Flow inlet boundary condition
 # Water and granite
 
-# %%
+from pathlib import Path
+import sys
 from typing import Literal
 import numpy as np
 import porepy as pp
+from porepy.applications.md_grids import fracture_sets
 from porepy.applications.md_grids.domains import nd_cube_domain
 from porepy.examples.flow_benchmark_2d_case_3 import Permeability
 from porepy.models.poromechanics import Poromechanics
@@ -29,8 +32,8 @@ class PoroMech(
     MyPetscSolver,
     TimeStepping,
     # BCMechanicsOpen,
-    BCMechanicsSticking,
-    # BCMechanicsSliding,
+    # BCMechanicsSticking,
+    BCMechanicsSliding,
     BCFlow,
     Permeability,
     DiagnosticsMixin,
@@ -44,23 +47,29 @@ class PoroMech(
         Ordering corresponds to definition of fractures in the geometry.
 
         """
-        return np.array([1, 1, 1, 1e-8, 1e-8, 1, 1, 1, 1, 1]) * MEGA
+        return [1] * 100
 
     def set_domain(self) -> None:
-        m = self.solid.units.m
-        # m = 1
-        self._domain = nd_cube_domain(2, 1 / m)
+        self._domain = nd_cube_domain(3, 1.0)
 
     def set_fractures(self) -> None:
-        m = self.solid.units.m
-        # m = 1
-        self._fractures = [pp.LineFracture(np.array([[0.25, 0.8], [0.3, 0.7]]) / m)]
+        size = 1
+        coords_a = [0.5, 0.5, 0.5, 0.5]
+        coords_b = [0.2, 0.2, 0.8, 0.8]
+        coords_c = [0.2, 0.8, 0.8, 0.2]
+        pts = []
+        pts.append(np.array([coords_a, coords_b, coords_c]) * size)
+        pts.append(np.array([coords_b, coords_a, coords_c]) * size)
+        pts.append(np.array([coords_b, coords_c, coords_a]) * size)
+        self._fractures = [pp.PlaneFracture(pts[i]) for i in range(3)]
+        # self._fractures = fracture_sets.orthogonal_fractures_3d(size=1)
 
     def grid_type(self) -> Literal["simplex", "cartesian", "tensor_grid"]:
         return "simplex"
+        # return 'cartesian'
 
 
-def make_model(cell_size=(1 / 20), a=False):
+def make_model():
     water = {
         "compressibility": 4.559 * 1e-10 * MEGA,  # [Pa^-1], isentropic compressibility
         "density": 998.2,  # [kg m^-3]
@@ -86,15 +95,14 @@ def make_model(cell_size=(1 / 20), a=False):
 
     dt = 1e-3
     time_manager = pp.TimeManager(
-        dt_init=dt, dt_min_max=(1e-10, 1e2), schedule=[0, 100 * dt], constant_dt=False
+        dt_init=dt, dt_min_max=(1e-10, 1e2), schedule=[0, 10 * dt], constant_dt=False
     )
 
-    units = pp.Units()
-    # units = pp.Units(kg=1e6)
+    cell_size = 1 / 8
+
     units = pp.Units(kg=1e9)
-    # units = pp.Units(m=1e6, kg=1e9)
     m = units.m
-    # m = 1
+
     params = {
         "material_constants": {
             "solid": pp.SolidConstants(
@@ -110,7 +118,8 @@ def make_model(cell_size=(1 / 20), a=False):
         },
         # "iterative_solver": False,
         "solver_type": "1",
-        "simulation_name": "fpm_0",
+        "simulation_name": Path(sys.argv[0]).name.removesuffix(".py"),
+        "refinement": 2,
     }
     return PoroMech(params)
 
@@ -122,21 +131,11 @@ if __name__ == "__main__":
     model = make_model()
     model.prepare_simulation()
 
-    model.time_manager.increase_time()
-    model.time_manager.increase_time_index()
     model.before_nonlinear_loop()
     model.before_nonlinear_iteration()
     model.assemble_linear_system()
-    # model.plot_diagnostics(model.run_diagnostics(), "max")
-    # plt.show()
-    model.aperture
-
-    pp.plot_grid(
-        model.mdg,
-        plot_2d=True,
-        fracturewidth_1d=3,
-        rgb=[0.5, 0.5, 1],
-    )
+    model.plot_diagnostics(model.run_diagnostics(), "max")
+    plt.show()
 
     pp.run_time_dependent_model(
         model,
@@ -145,14 +144,6 @@ if __name__ == "__main__":
             "progressbars": True,
             # "max_iterations": 25,
         },
-    )
-
-    pp.plot_grid(
-        model.mdg,
-        cell_value=model.pressure_variable,
-        plot_2d=True,
-        # vector_value=model.displacement_variable,
-        # alpha=0.5,
     )
 
     pp.plot_grid(

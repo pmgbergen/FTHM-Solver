@@ -1,3 +1,4 @@
+# %%
 # 2D model, 8 fractures, 1 intersection.
 # Flow inlet boundary condition
 # Water and granite
@@ -29,8 +30,8 @@ class PoroMech(
     MyPetscSolver,
     TimeStepping,
     # BCMechanicsOpen,
-    # BCMechanicsSticking,
-    BCMechanicsSliding,
+    BCMechanicsSticking,
+    # BCMechanicsSliding,
     BCFlow,
     Permeability,
     DiagnosticsMixin,
