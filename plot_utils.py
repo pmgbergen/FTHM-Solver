@@ -256,10 +256,13 @@ def solve_petsc(
     print("Solve", label, "took:", round(time.time() - t0, 2))
     residuals = gmres.get_residuals()
     info = gmres.ksp.getConvergedReason()
+    eigs = gmres.ksp.computeEigenvalues()
+    
     linestyle = "-"
     if info <= 0:
         linestyle = "--"
         print("PETSc Converged Reason:", info)
+        print("lambda min:", min(abs(eigs)))
 
     plt.gcf().set_size_inches(14, 4)
 
@@ -274,7 +277,6 @@ def solve_petsc(
     if label != "":
         ax.legend()
 
-    eigs = gmres.ksp.computeEigenvalues()
     ax = plt.subplot(1, 2, 2)
     if logx_eigs:
         eigs.real = abs(eigs.real)
@@ -294,6 +296,20 @@ def get_gmres_iterations(x: Sequence[TimeStepStats]) -> list[float]:
     for ts in x:
         for ls in ts.linear_solves:
             result.append(ls.gmres_iters)
+    return result
+
+
+def get_newton_iterations(x: Sequence[TimeStepStats]) -> list[float]:
+    result = []
+    for ts in x:
+        result.append(len(ts.linear_solves))
+    return result
+
+
+def get_time_steps(x: Sequence[TimeStepStats]) -> list[float]:
+    result = []
+    for ts in x:
+        result.append(ts.linear_solves[0].simulation_dt)
     return result
 
 

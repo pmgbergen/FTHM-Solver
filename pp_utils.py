@@ -13,6 +13,8 @@ from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
 from stats import LinearSolveStats, TimeStepStats
 from fpm.block_matrix import BlockMatrixStorage, make_solver, SolveSchema
 
+from invert import USE_NUMBA
+
 from mat_utils import (
     PetscAMGFlow,
     PetscAMGMechanics,
@@ -252,13 +254,25 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
     def simulation_name(self) -> str:
         sim_name = self.params.get("simulation_name", "simulation")
         sim_name = f"{sim_name}_{self.bc_name}"
-        solver_type = self.params.get("solver_type", "baseline")
-        if solver_type != "baseline":
+        use_direct = not self.params.get('iterative_solver', True)
+        if use_direct:
+            sim_name = f'{sim_name}_direct'
+        else:
+            solver_type = self.params.get("solver_type", "baseline")
             sim_name = f"{sim_name}_solver_{solver_type}"
+
+        if USE_NUMBA:
+            sim_name = f"{sim_name}_numba"
+        else:
+            sim_name = f"{sim_name}_python"
+
         return sim_name
 
     def before_nonlinear_loop(self) -> None:
+        if not self._solver_initialized:
+            self._initialize_solver()
         self._time_step_stats = TimeStepStats()
+        self.nonlinear_residual_0 = self.compute_nonlinear_residual(replace_zeros=True)
         return super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(
@@ -276,8 +290,14 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         super().after_nonlinear_failure(solution, errors, iteration_counter)
 
     def before_nonlinear_iteration(self) -> None:
+        from invert import SIZE_MECH, POINTER_FLOW, POINTER_MECH, SIZE_FLOW
+        from messing_with_memory import compare_to_expected
+
+        # compare_to_expected('flow', POINTER_FLOW[0], SIZE_FLOW[0])
+        # compare_to_expected('mech', POINTER_MECH[0], SIZE_MECH[0])
         self._linear_solve_stats = LinearSolveStats()
         super().before_nonlinear_iteration()
+        self.discretize()
 
         data = self.sticking_sliding_open()
         self._linear_solve_stats.num_sticking_sliding_open = tuple(
@@ -314,19 +334,43 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         self._time_step_stats.linear_solves.append(self._linear_solve_stats)
         super().after_nonlinear_iteration(solution_vector)
 
-    def check_convergence(
-        self,
-        solution: np.ndarray,
-        prev_solution: np.ndarray,
-        init_solution: np.ndarray,
-        nl_params,
-    ) -> tuple[float, bool, bool]:
-        return super().check_convergence(
-            solution=solution,
-            prev_solution=prev_solution,
-            init_solution=init_solution,
-            nl_params=nl_params,
-        )
+    def compute_nonlinear_residual(self, replace_zeros: bool = False):
+        nonlinear_residual = self.equation_system.assemble(evaluate_jacobian=False)
+        group_residuals = []
+        for group in self._equation_groups:
+            dofs = np.concatenate([self.eq_dofs[block] for block in group])
+            nrm = np.linalg.norm(nonlinear_residual[dofs])
+            group_residuals.append(nrm)
+
+        group_residuals = np.array(group_residuals)
+
+        atol = 1e-16
+        group_residuals[group_residuals < atol] = 0
+
+        if replace_zeros:
+            group_residuals[group_residuals == 0] = 1
+        return group_residuals
+
+    # def check_convergence(
+    #     self,
+    #     solution: np.ndarray,
+    #     prev_solution: np.ndarray,
+    #     init_solution: np.ndarray,
+    #     nl_params,
+    # ) -> tuple[float, bool, bool]:
+        # if np.any(np.isnan(solution)):
+        #     # If the solution contains nan values, we have diverged.
+        #     return np.nan, False, True
+        
+        # nonlinear_residual = self.compute_nonlinear_residual(replace_zeros=False)
+        # # print([np.format_float_scientific(x, precision=2) for x in nonlinear_residual])
+        # residual_drop = nonlinear_residual / self.nonlinear_residual_0
+        # residual_drop_sum = sum(residual_drop)
+        # converged = False
+        # diverged = False
+        # if residual_drop_sum < nl_params["nl_convergence_tol"]:
+        #     converged = True
+        # return residual_drop_sum, converged, diverged
 
     def _initialize_solver(self):
         self.eq_dofs, self.var_dofs = make_row_col_dofs(self)
@@ -428,7 +472,6 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
     def _prepare_solver(self):
         if not self._solver_initialized:
             self._initialize_solver()
-
         with TimerContext() as t_prepare_solver:
             mat, _ = self.linear_system
             bmat = BlockMatrixStorage(

@@ -3,6 +3,14 @@
 # Flow inlet boundary condition
 # Water and granite
 
+import os
+N_THREADS = '1'
+os.environ["MKL_NUM_THREADS"] = N_THREADS
+os.environ["NUMEXPR_NUM_THREADS"] = N_THREADS
+os.environ["OMP_NUM_THREADS"] = N_THREADS
+os.environ['OPENBLAS_NUM_THREADS'] = N_THREADS
+
+
 from typing import Literal
 import numpy as np
 import porepy as pp
@@ -52,6 +60,7 @@ class PoroMech(
 
     def set_fractures(self) -> None:
         self._fractures = fracture_sets.seven_fractures_one_L_intersection()
+        # self._fractures = []
 
     def grid_type(self) -> Literal["simplex", "cartesian", "tensor_grid"]:
         return "simplex"
@@ -86,6 +95,8 @@ def make_model(cell_size=(1 / 20)):
         dt_init=dt, dt_min_max=(1e-10, 1e2), schedule=[0, 10 * dt], constant_dt=False
     )
 
+    # cell_size = 1 / 40
+
     units = pp.Units()
     # units = pp.Units(kg=1e6)
     units = pp.Units(kg=1e9)
@@ -105,9 +116,10 @@ def make_model(cell_size=(1 / 20)):
         "meshing_arguments": {
             "cell_size": cell_size / m,
         },
-        # "iterative_solver": False,
-        "simulation_name": "fpm_1",
         'solver_type': '1',
+        "simulation_name": "fpm_1",
+
+        # "iterative_solver": False,
     }
     return PoroMech(params)
 
@@ -117,6 +129,8 @@ if __name__ == "__main__":
     from matplotlib import pyplot as plt
 
     model = make_model()
+    print(model.simulation_name)
+
     model.prepare_simulation()
 
     model.time_manager.increase_time()
@@ -124,15 +138,15 @@ if __name__ == "__main__":
     model.before_nonlinear_loop()
     model.before_nonlinear_iteration()
     model.assemble_linear_system()
-    model.plot_diagnostics(model.run_diagnostics(), "max")
-    plt.show()
+    # model.plot_diagnostics(model.run_diagnostics(), "max")
+    # plt.show()
 
-    pp.plot_grid(
-        model.mdg,
-        plot_2d=True,
-        fracturewidth_1d=3,
-        rgb=[0.5, 0.5, 1],
-    )
+    # pp.plot_grid(
+    #     model.mdg,
+    #     plot_2d=True,
+    #     fracturewidth_1d=3,
+    #     rgb=[0.5, 0.5, 1],
+    # )
 
     pp.run_time_dependent_model(
         model,
