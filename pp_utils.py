@@ -290,11 +290,6 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         super().after_nonlinear_failure(solution, errors, iteration_counter)
 
     def before_nonlinear_iteration(self) -> None:
-        from invert import SIZE_MECH, POINTER_FLOW, POINTER_MECH, SIZE_FLOW
-        from messing_with_memory import compare_to_expected
-
-        # compare_to_expected('flow', POINTER_FLOW[0], SIZE_FLOW[0])
-        # compare_to_expected('mech', POINTER_MECH[0], SIZE_MECH[0])
         self._linear_solve_stats = LinearSolveStats()
         super().before_nonlinear_iteration()
         self.discretize()
