@@ -21,6 +21,7 @@ class LinearSolveStats:
     sticking: list[int] = field(default_factory=list)
     sliding: list[int] = field(default_factory=list)
     open_: list[int] = field(default_factory=list)
+    transition_sticking_sliding: list[int] = field(default=list)
 
 
 @dataclass

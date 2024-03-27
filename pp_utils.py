@@ -302,6 +302,10 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         self._linear_solve_stats.sliding = data[1].tolist()
         self._linear_solve_stats.open_ = data[2].tolist()
 
+        characteristic = self._characteristic.value(self.equation_system).tolist()
+        self._linear_solve_stats.transition_sticking_sliding = characteristic
+
+
     def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
         save_path = Path("./matrices")
         save_path.mkdir(exist_ok=True)

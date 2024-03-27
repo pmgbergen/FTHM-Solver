@@ -383,6 +383,14 @@ def get_num_sticking_sliding_open(
     return sticking, sliding, open_
 
 
+def get_num_transition_cells(x: Sequence[TimeStepStats]) -> list[int]:
+    transition = []
+    for ts in x:
+        for ls in ts.linear_solves:
+            transition.append(sum(ls.transition_sticking_sliding))
+    return transition
+
+
 def group_intervals(arr):
     diffs = np.diff(arr)
     change_positions = np.where(diffs != 0)[0] + 1
