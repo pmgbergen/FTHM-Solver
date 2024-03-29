@@ -292,7 +292,7 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
     def before_nonlinear_iteration(self) -> None:
         self._linear_solve_stats = LinearSolveStats()
         super().before_nonlinear_iteration()
-        self.discretize()
+        # self.discretize()
 
         data = self.sticking_sliding_open()
         self._linear_solve_stats.num_sticking_sliding_open = tuple(

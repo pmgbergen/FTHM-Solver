@@ -2,7 +2,7 @@ from porepy.numerics.linalg.matrix_operations import sparse_kronecker_product
 from block_matrix import BlockMatrixStorage, SolveSchema
 import scipy.sparse
 import numpy as np
-from mat_utils import PetscAMGMechanics, lump_nd
+from mat_utils import PetscAMGMechanics, lump_nd, inv_block_diag
 
 
 def build_local_stabilization(
@@ -207,6 +207,14 @@ def make_J44_inv(model, bmat: BlockMatrixStorage, lump=False):
         model=model, bmat=bmat, build_schur=False, lump=lump
     )
     return mech_stab[: J4_shape[0], : J4_shape[1]]
+
+
+def make_J44_inv_bdiag(model, bmat: BlockMatrixStorage):
+    S44 = (
+        bmat[4, 4].mat
+        - bmat[4, 5].mat @ inv_block_diag(bmat[5, 5].mat, nd=model.nd) @ bmat[5, 4].mat
+    )
+    return inv_block_diag(S44, nd=model.nd)
 
 
 def make_mech_schema(
