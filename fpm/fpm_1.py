@@ -116,10 +116,10 @@ def make_model(cell_size=(1 / 20)):
         "meshing_arguments": {
             "cell_size": cell_size / m,
         },
-        'solver_type': '1',
+        # 'solver_type': '1',
         "simulation_name": "fpm_1",
 
-        # "iterative_solver": False,
+        "iterative_solver": False,
     }
     return PoroMech(params)
 

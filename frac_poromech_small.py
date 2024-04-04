@@ -140,12 +140,12 @@ if __name__ == "__main__":
     S_A_inv = inv(S_A)
 
     Omega_inv = inv(Omega)
-    Omega_inv_op = OmegaInv(solve_momentum=D_inv, solve_mass=S_A_inv, C1=B, C2=C)
+    Omega_inv_op = FieldSplit(solve_momentum=D_inv, solve_mass=S_A_inv, C1=B, C2=C)
 
-    Omega_inv_fixed_strain = OmegaInv(solve_momentum=D_inv, solve_mass=inv(A), C1=B, C2=C)
+    Omega_inv_fixed_strain = FieldSplit(solve_momentum=D_inv, solve_mass=inv(A), C1=B, C2=C)
 
     fs = get_fixed_stress_stabilization(model)
-    Omega_inv_fixed_stress = OmegaInv(solve_momentum=D_inv, solve_mass=inv(A + fs), C1=B, C2=C)
+    Omega_inv_fixed_stress = FieldSplit(solve_momentum=D_inv, solve_mass=inv(A + fs), C1=B, C2=C)
 
     ones = np.ones(Omega.shape[0])
     expected = Omega_inv.dot(ones)

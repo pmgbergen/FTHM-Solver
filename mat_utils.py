@@ -12,24 +12,24 @@ petsc4py.init(sys.argv)
 from petsc4py import PETSc
 
 
-class OmegaInv:
+class FieldSplit:
     def __init__(self, solve_momentum, solve_mass, C1, C2):
-        self.B_inv = solve_momentum
-        self.S_A_inv = solve_mass
-        self.C1 = C1
-        self.C2 = C2
+        self.J00_inv = solve_momentum
+        self.S11_inv = solve_mass
+        self.J01 = C1
+        self.J10 = C2
         self.sep = solve_momentum.shape[0]
         shape = solve_momentum.shape[0] + solve_mass.shape[0]
         self.shape = shape, shape
 
     def dot(self, x):
-        x_B, x_A = x[: self.sep], x[self.sep :]
-        tmp_B = self.B_inv.dot(x_B)
-        tmp_A = x_A - self.C1.dot(tmp_B)
-        y_A = self.S_A_inv.dot(tmp_A)
+        x_0, x_1 = x[: self.sep], x[self.sep :]
+        tmp_0 = self.J00_inv.dot(x_0)
+        tmp_1 = x_1 - self.J01.dot(tmp_0)
+        y_1 = self.S11_inv.dot(tmp_1)
         y = np.zeros_like(x)
-        y[self.sep :] = y_A
-        y[: self.sep] = self.B_inv.dot(x_B - self.C2.dot(y_A))
+        y[self.sep :] = y_1
+        y[: self.sep] = self.J00_inv.dot(x_0 - self.J10.dot(y_1))
         return y
 
 
@@ -43,6 +43,15 @@ def inv(mat):
 
 def pinv(mat):
     return scipy.sparse.csr_matrix(np.linalg.pinv(mat.A))
+
+
+def csr_zeros(shape) -> scipy.sparse.csr_matrix:
+    return scipy.sparse.csr_matrix(shape)
+
+
+def csr_ones(shape) -> scipy.sparse.csr_matrix:
+    assert shape[0] == shape[1]
+    return scipy.sparse.eye(shape[0], format='csr')
 
 
 def condest(mat):
@@ -281,7 +290,7 @@ def inv_block_diag(mat, nd: int):
     if nd == 3:
         diag = diag_nd(mat, nd=3)
         if diag.nnz != mat.nnz:
-            print('Matrix contained nondiagonal elements')
+            print("Matrix contained nondiagonal elements")
         return inv(diag)
     raise ValueError
     # print(f"{nd = } not implemented, using direct inverse")

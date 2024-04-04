@@ -8,7 +8,7 @@ import scipy.sparse
 from scipy.sparse import spmatrix
 from matplotlib import pyplot as plt
 
-from mat_utils import OmegaInv, inv, cond
+from mat_utils import FieldSplit, inv, cond
 from plot_utils import plot_mat, spy
 
 
@@ -117,7 +117,11 @@ class BlockMatrixStorage:
         )
 
     def __repr__(self) -> str:
-        return f"BlockMatrixStorage of shape {self.shape} with {self.mat.nnz} elements"
+        return (
+            f"BlockMatrixStorage of shape {self.shape} with {self.mat.nnz} elements "
+            f"with {len(self.active_groups[0])}x{len(self.active_groups[1])} "
+            "active groups"
+        )
 
     def _correct_getitem_key(self, key) -> tuple[list[int], list[int]]:
         if isinstance(key, list):
@@ -410,7 +414,7 @@ class SolveSchema:
     groups: list[int]
     solve: callable | Literal["direct", "use_invertor"] = "direct"
     invertor: callable | Literal["use_solve", "direct"] = "use_solve"
-    invertor_type: Literal["physical", "algebraic"] = "algebraic"
+    invertor_type: Literal["physical", "algebraic", "substitute"] = "algebraic"
     complement: Optional["SolveSchema"] = None
 
     transform_nondiagonal_blocks: callable = lambda mat10, mat01: (mat10, mat01)
@@ -459,7 +463,13 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
     submat_11 = mat_orig[groups_1, groups_1]
 
     if schema.invertor_type == "physical":
-        submat_11.mat += schema.invertor()
+        try:
+            submat_11.mat += invertor()
+        except TypeError:
+            submat_11.mat += invertor(mat_orig)
+
+    elif schema.invertor_type == "substitute":
+        submat_11.mat = invertor(mat_orig)
 
     elif schema.invertor_type == "algebraic":
         if invertor == "use_solve":
@@ -484,7 +494,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         return complement_mat, complement_solve
 
     mat_permuted = mat_orig[groups_0 + groups_1, groups_0 + groups_1]
-    prec = OmegaInv(
+    prec = FieldSplit(
         solve_momentum=submat_00_solve,
         solve_mass=complement_solve,
         C1=submat_10.mat,

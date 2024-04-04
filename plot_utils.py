@@ -171,13 +171,15 @@ def solve(
 
     if plot_residuals:
         plt.figure()
-        num = len(residual_vectors)
-        show_vectors = np.arange(0, num, num // 4)
         residual_vectors = np.array(residual_vectors)
         residual_vectors = abs(residual_vectors)
-        for iter in show_vectors:
-            plt.plot(residual_vectors[iter], label=iter, alpha=0.7)
-        plt.legend()
+
+        # num = len(residual_vectors)
+        # show_vectors = np.arange(0, num, num // 2)
+        # for iter in show_vectors:
+        #     plt.plot(residual_vectors[iter], label=iter, alpha=0.7)
+        # plt.legend()
+        plt.plot(residual_vectors[-1] / residual_vectors[0], alpha=0.7)
         plt.yscale("log")
 
 
@@ -257,7 +259,7 @@ def solve_petsc(
     residuals = gmres.get_residuals()
     info = gmres.ksp.getConvergedReason()
     eigs = gmres.ksp.computeEigenvalues()
-    
+
     linestyle = "-"
     if info <= 0:
         linestyle = "--"
@@ -276,6 +278,7 @@ def solve_petsc(
     ax.grid(True)
     if label != "":
         ax.legend()
+    ax.set_title("GMRES Convergence")
 
     ax = plt.subplot(1, 2, 2)
     if logx_eigs:
@@ -289,6 +292,7 @@ def solve_petsc(
         ax.legend()
     if logx_eigs:
         plt.xscale("log")
+    ax.set_title("Eigenvalues estimate")
 
 
 def get_gmres_iterations(x: Sequence[TimeStepStats]) -> list[float]:
@@ -383,12 +387,36 @@ def get_num_sticking_sliding_open(
     return sticking, sliding, open_
 
 
-def get_num_transition_cells(x: Sequence[TimeStepStats]) -> list[int]:
+def get_num_transition_cells(x: Sequence[TimeStepStats]) -> np.ndarray:
     transition = []
     for ts in x:
         for ls in ts.linear_solves:
             transition.append(sum(ls.transition_sticking_sliding))
-    return transition
+    return np.array(transition)
+
+
+def get_transition(x: Sequence[TimeStepStats], idx: int):
+    linear_solve_data = [ls for ts in x for ls in ts.linear_solves][idx]
+    return np.array(linear_solve_data.transition_sticking_sliding)
+
+
+def get_sticking(x: Sequence[TimeStepStats], idx: int):
+    linear_solve_data = [ls for ts in x for ls in ts.linear_solves][idx]
+    return np.array(linear_solve_data.sticking)
+
+
+def get_sliding(x: Sequence[TimeStepStats], idx: int):
+    linear_solve_data = [ls for ts in x for ls in ts.linear_solves][idx]
+    return np.array(linear_solve_data.sliding)
+
+
+def get_open(x: Sequence[TimeStepStats], idx: int):
+    linear_solve_data = [ls for ts in x for ls in ts.linear_solves][idx]
+    return np.array(linear_solve_data.open_)
+
+
+def get_sticking_sliding_open(x: Sequence[TimeStepStats], idx: int):
+    return get_sticking(x, idx), get_sliding(x, idx), get_open(x, idx)
 
 
 def group_intervals(arr):
