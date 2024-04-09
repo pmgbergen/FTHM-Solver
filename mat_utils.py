@@ -45,13 +45,14 @@ def pinv(mat):
     return scipy.sparse.csr_matrix(np.linalg.pinv(mat.A))
 
 
-def csr_zeros(shape) -> scipy.sparse.csr_matrix:
-    return scipy.sparse.csr_matrix(shape)
+def csr_zeros(n, m=None) -> scipy.sparse.csr_matrix:
+    if m is None:
+        m = n
+    return scipy.sparse.csr_matrix((n, m))
 
 
-def csr_ones(shape) -> scipy.sparse.csr_matrix:
-    assert shape[0] == shape[1]
-    return scipy.sparse.eye(shape[0], format='csr')
+def csr_ones(n) -> scipy.sparse.csr_matrix:
+    return scipy.sparse.eye(n, format='csr')
 
 
 def condest(mat):

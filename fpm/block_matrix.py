@@ -414,7 +414,9 @@ class SolveSchema:
     groups: list[int]
     solve: callable | Literal["direct", "use_invertor"] = "direct"
     invertor: callable | Literal["use_solve", "direct"] = "use_solve"
-    invertor_type: Literal["physical", "algebraic", "substitute"] = "algebraic"
+    invertor_type: Literal["physical", "algebraic", "substitute", "test_vector"] = (
+        "algebraic"
+    )
     complement: Optional["SolveSchema"] = None
 
     transform_nondiagonal_blocks: callable = lambda mat10, mat01: (mat10, mat01)
@@ -482,6 +484,20 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
             submat_10, submat_01
         )
         submat_11.mat -= submat_10_m.mat @ submat_00_inv @ submat_01_m.mat
+
+    elif schema.invertor_type == "test_vector":
+        if invertor == "use_solve":
+            submat_00_inv = submat_00_solve
+        elif invertor == "direct":
+            submat_00_inv = inv(submat_00.mat)
+        else:
+            submat_00_inv = invertor(submat_00)
+
+        test_vector = np.ones(submat_11.shape[0])
+        diag_approx = submat_10.mat @ submat_00_inv.dot(submat_01.mat @ test_vector)
+        submat_11.mat -= scipy.sparse.diags(diag_approx)
+
+    # elif schme.invertor_type == 'block_test_vector'
 
     else:
         raise ValueError(f"{schema.invertor_type=}")

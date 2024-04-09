@@ -121,7 +121,9 @@ class BCFlow(BoundaryConditionsSinglePhaseFlow):
     def bc_values_pressure(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         bounds = self.domain_boundary_sides(boundary_grid)
         values = np.zeros(boundary_grid.num_cells)
-        values[bounds.north] = self.fluid.convert_units(2e5, "Pa")
+        # values[bounds.north] = self.fluid.convert_units(2e5, "Pa")
+        values[bounds.north] = self.fluid.convert_units(2e10, "Pa")
+
         return values
 
 
