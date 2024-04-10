@@ -36,6 +36,14 @@ class PoroMech(
     DiagnosticsMixin,
     Poromechanics,
 ):
+    
+    def bc_type_mechanics(self, sd):
+        boundary_faces = self.domain_boundary_sides(sd)
+        bc = pp.BoundaryConditionVectorial(
+            sd, boundary_faces.south, "dir"
+        )
+        bc.internal_to_dirichlet(sd)
+        return bc
 
     @property
     def fracture_permeabilities(self) -> np.ndarray:
@@ -54,10 +62,17 @@ class PoroMech(
     def set_fractures(self) -> None:
         m = self.solid.units.m
         # m = 1
-        self._fractures = [pp.LineFracture(np.array([[0.25, 1.1], [0.3, 0.7]]) / m)]
+        self._fractures = [pp.LineFracture(np.array([[0.2, 1.1], [0.8, 0.9]]) / m)]
 
     def grid_type(self) -> Literal["simplex", "cartesian", "tensor_grid"]:
         return "simplex"
+
+    def after_nonlinear_convergence(
+        self, solution: np.ndarray, errors: float, iteration_counter: int
+    ) -> None:
+        open_ = self.sticking_sliding_open()[2]
+        print("open cells:", sum(open_) / len(open_))
+        super().after_nonlinear_convergence(solution, errors, iteration_counter)
 
 
 def make_model(cell_size=(1 / 20), a=False):
@@ -107,6 +122,7 @@ def make_model(cell_size=(1 / 20), a=False):
         "units": units,
         "meshing_arguments": {
             "cell_size": cell_size / m,
+            'cell_size_fracture': (cell_size / m / 2),
         },
         # "iterative_solver": False,
         "solver_type": "1",
