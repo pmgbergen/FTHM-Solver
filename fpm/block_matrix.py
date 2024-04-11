@@ -252,6 +252,21 @@ class BlockMatrixStorage:
             group_row_names=self.groups_row_names,
         )
 
+    def empty_container(self) -> "BlockMatrixStorage":
+        return BlockMatrixStorage(
+            mat=scipy.sparse.csr_matrix(self.mat.shape),
+            local_row_idx=self.local_row_idx,
+            local_col_idx=self.local_col_idx,
+            global_row_idx=self.global_row_idx,
+            global_col_idx=self.global_col_idx,
+            groups_row=self.groups_row,
+            groups_col=self.groups_col,
+            active_groups_row=self.active_groups[0],
+            active_groups_col=self.active_groups[1],
+            group_col_names=self.groups_col_names,
+            group_row_names=self.groups_row_names,
+        )
+
     def local_rhs(self, rhs: np.ndarray) -> np.ndarray:
         row_idx = [
             self.global_row_idx[j]
