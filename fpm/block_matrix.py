@@ -414,7 +414,7 @@ class SolveSchema:
     groups: list[int]
     solve: callable | Literal["direct", "use_invertor"] = "direct"
     invertor: callable | Literal["use_solve", "direct"] = "use_solve"
-    invertor_type: Literal["physical", "algebraic", "substitute", "test_vector"] = (
+    invertor_type: Literal["physical", "algebraic", "operator", "test_vector"] = (
         "algebraic"
     )
     complement: Optional["SolveSchema"] = None
@@ -470,7 +470,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         except TypeError:
             submat_11.mat += invertor(mat_orig)
 
-    elif schema.invertor_type == "substitute":
+    elif schema.invertor_type == "operator":
         submat_11.mat = invertor(mat_orig)
 
     elif schema.invertor_type == "algebraic":
