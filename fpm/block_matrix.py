@@ -470,7 +470,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
     if solve == "direct":
         submat_00_solve = inv(submat_00.mat)
     else:
-        submat_00_solve = solve(submat_00)
+        submat_00_solve = solve(mat_orig)
 
     if len(groups_1) == 0:
         return submat_00, submat_00_solve
@@ -480,10 +480,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
     submat_11 = mat_orig[groups_1, groups_1]
 
     if schema.invertor_type == "physical":
-        try:
-            submat_11.mat += invertor()
-        except TypeError:
-            submat_11.mat += invertor(mat_orig)
+        submat_11.mat += invertor(mat_orig)
 
     elif schema.invertor_type == "operator":
         submat_11.mat = invertor(mat_orig)
@@ -494,7 +491,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         elif invertor == "direct":
             submat_00_inv = inv(submat_00.mat)
         else:
-            submat_00_inv = invertor(submat_00)
+            submat_00_inv = invertor(mat_orig)
         submat_10_m, submat_01_m = schema.transform_nondiagonal_blocks(
             submat_10, submat_01
         )
@@ -506,7 +503,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         elif invertor == "direct":
             submat_00_inv = inv(submat_00.mat)
         else:
-            submat_00_inv = invertor(submat_00)
+            submat_00_inv = invertor(mat_orig)
 
         test_vector = np.ones(submat_11.shape[0])
         diag_approx = submat_10.mat @ submat_00_inv.dot(submat_01.mat @ test_vector)

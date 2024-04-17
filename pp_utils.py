@@ -439,12 +439,12 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
         schema_fixed_stress = SolveSchema(
             groups=[1],
-            invertor=lambda: get_fixed_stress_stabilization(self),
+            invertor=lambda bmat: get_fixed_stress_stabilization(self),
             invertor_type="physical",
-            solve=lambda bmat: PetscAMGMechanics(dim=self.nd, mat=bmat.mat),
+            solve=lambda bmat: PetscAMGMechanics(dim=self.nd, mat=bmat[[1]].mat),
             complement=SolveSchema(
                 groups=[0],
-                solve=lambda bmat: PetscAMGFlow(mat=bmat.mat),
+                solve=lambda bmat: PetscAMGFlow(mat=bmat[[0]].mat),
             ),
         )
         if solver_type == "baseline":

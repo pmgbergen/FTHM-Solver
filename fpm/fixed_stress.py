@@ -56,15 +56,15 @@ def assemble_localization_matrices_mechanics(
     return restrictions
 
 
-def make_local_inverse_15(bmat: BlockMatrixStorage, base, nd):
+def make_local_inverse_15(bmat: BlockMatrixStorage, base: int, nd: int):
     localization_mats = assemble_localization_matrices_mechanics(bmat, base=base, nd=nd)
 
     J_15 = bmat[[1, 5]].mat
     J15_inv = csr_zeros(J_15.shape[0])
 
     for R in localization_mats:
-        j15 = R @ J_15 @ R.T
-        # j15 = R @ R.T
+        # j15 = R @ J_15 @ R.T
+        j15 = R @ R.T
 
         j15_inv = scipy.sparse.linalg.inv(j15)
         J15_inv += R.T @ j15_inv @ R
