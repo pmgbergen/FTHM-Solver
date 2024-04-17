@@ -197,7 +197,7 @@ if __name__ == "__main__":
     pp.plot_grid(
         model.mdg,
         plot_2d=True,
-        fracturewidth_1d=3,
+        fracturewidth_1d=10,
         rgb=[0.5, 0.5, 1],
     )
 
@@ -214,6 +214,7 @@ if __name__ == "__main__":
         model.mdg,
         cell_value=model.pressure_variable,
         plot_2d=True,
+        fracturewidth_1d=10,
         # vector_value=model.displacement_variable,
         # alpha=0.5,
     )
@@ -225,6 +226,6 @@ if __name__ == "__main__":
     #     alpha=0.5,
     # )
 
-    print(model.simulation_name)
+    # print(model.simulation_name)
 
 # %%

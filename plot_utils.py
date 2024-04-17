@@ -95,6 +95,7 @@ def plot_jacobian(model, equations=None):
 
 
 def plot_mat(mat, log=True, show=True):
+    mat = mat.copy()
     try:
         mat = mat.A
     except AttributeError:
@@ -248,10 +249,11 @@ def solve_petsc(
     label="",
     logx_eigs=False,
     normalize_residual=False,
+    tol=1e-10,
 ):
     if rhs is None:
         rhs = np.ones(mat.shape[0])
-    gmres = PetscGMRES(mat, pc=prec)
+    gmres = PetscGMRES(mat, pc=prec, tol=tol)
 
     t0 = time.time()
     _ = gmres.solve(rhs)
@@ -268,6 +270,7 @@ def solve_petsc(
 
     plt.gcf().set_size_inches(14, 4)
 
+    # ax = plt.gca()
     ax = plt.subplot(1, 2, 1)
     if normalize_residual:
         residuals /= residuals[0]

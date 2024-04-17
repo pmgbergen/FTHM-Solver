@@ -34,7 +34,11 @@ class FieldSplit:
 
 
 def cond(mat):
-    return np.linalg.cond(mat.A)
+    try:
+        mat = mat.A
+    except AttributeError:
+        pass
+    return np.linalg.cond(mat)
 
 
 def inv(mat):
@@ -206,7 +210,7 @@ class PetscPythonPC:
 
 
 class PetscGMRES:
-    def __init__(self, mat, pc: PETSc.PC | None = None) -> None:
+    def __init__(self, mat, pc: PETSc.PC | None = None, tol=1e-10) -> None:
         self.shape = mat.shape
         restart = 50
 
@@ -214,7 +218,7 @@ class PetscGMRES:
         options = PETSc.Options()
         options.setValue("ksp_type", "gmres")
         # options.setValue("ksp_type", "bcgs")
-        options.setValue("ksp_rtol", 1e-10)
+        options.setValue("ksp_rtol", tol)
         options.setValue("ksp_max_it", 20 * restart)
         options.setValue("ksp_norm_type", "unpreconditioned")
         options.setValue("ksp_gmres_restart", restart)

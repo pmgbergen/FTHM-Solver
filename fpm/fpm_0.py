@@ -129,7 +129,7 @@ if __name__ == "__main__":
     model.assemble_linear_system()
     # model.plot_diagnostics(model.run_diagnostics(), "max")
     # plt.show()
-    model.aperture
+    model.interface_flux_equation(model.mdg.interfaces())
 
     pp.plot_grid(
         model.mdg,
