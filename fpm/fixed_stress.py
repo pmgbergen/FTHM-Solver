@@ -59,14 +59,14 @@ def assemble_localization_matrices_mechanics(
 def make_local_inverse_15(bmat: BlockMatrixStorage, base: int, nd: int):
     localization_mats = assemble_localization_matrices_mechanics(bmat, base=base, nd=nd)
 
-    J_15 = bmat[[1, 5]].mat
+    J_15 = bmat[[1, 5]].mat.tocsr()
     J15_inv = csr_zeros(J_15.shape[0])
 
     for R in localization_mats:
-        # j15 = R @ J_15 @ R.T
-        j15 = R @ R.T
+        j15 = R @ J_15 @ R.T
+        # j15 = R @ R.T
 
-        j15_inv = scipy.sparse.linalg.inv(j15)
+        j15_inv = scipy.sparse.linalg.inv(j15.tocsc())
         J15_inv += R.T @ j15_inv @ R
 
     return J15_inv
@@ -78,7 +78,10 @@ def make_local_stab_15(bmat: BlockMatrixStorage, base: int, nd: int):
 
 
 def make_fs(model, J: BlockMatrixStorage):
+    diag = [
+        get_fixed_stress_stabilization(model),
+        make_local_stab_15(bmat=J, base=2, nd=1),
+    ]
     result = J.empty_container()[[0, 2]]
-    result[0, 0] = get_fixed_stress_stabilization(model)
-    result[2, 2] = make_local_stab_15(bmat=J, base=2, nd=1)
+    result.mat = scipy.sparse.block_diag(diag, format="csr")
     return result

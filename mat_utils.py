@@ -220,9 +220,9 @@ class PetscGMRES:
         # options.setValue("ksp_type", "bcgs")
         options.setValue("ksp_rtol", tol)
         options.setValue("ksp_max_it", 20 * restart)
-        options.setValue("ksp_norm_type", "unpreconditioned")
+        # options.setValue("ksp_norm_type", "unpreconditioned")
         options.setValue("ksp_gmres_restart", restart)
-        # options.setValue("ksp_pc_side", "left")
+        options.setValue("ksp_pc_side", "left")
         if pc is None:
             options.setValue("pc_type", "none")
 

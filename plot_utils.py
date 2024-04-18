@@ -276,7 +276,8 @@ def solve_petsc(
         residuals /= residuals[0]
     ax.plot(residuals, label=label, marker=".", linestyle=linestyle)
     ax.set_yscale("log")
-    ax.set_ylabel("true residual")
+    # ax.set_ylabel("true residual")
+    ax.set_ylabel("preconditioned residual")
     ax.set_xlabel("gmres iter.")
     ax.grid(True)
     if label != "":
