@@ -256,7 +256,7 @@ def solve_petsc(
     gmres = PetscGMRES(mat, pc=prec, tol=tol)
 
     t0 = time.time()
-    _ = gmres.solve(rhs)
+    sol = gmres.solve(rhs)
     print("Solve", label, "took:", round(time.time() - t0, 2))
     residuals = gmres.get_residuals()
     info = gmres.ksp.getConvergedReason()
@@ -267,6 +267,10 @@ def solve_petsc(
         linestyle = "--"
         print("PETSc Converged Reason:", info)
         print("lambda min:", min(abs(eigs)))
+    elif info > 0:
+        rhs_norm = norm(rhs)
+        res_norm = norm(mat @ sol - rhs)
+        print('True residual decrease:', res_norm / rhs_norm)
 
     plt.gcf().set_size_inches(14, 4)
 

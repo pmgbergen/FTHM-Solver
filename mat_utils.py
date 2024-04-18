@@ -216,8 +216,8 @@ class PetscGMRES:
 
         self.ksp = PETSc.KSP().create()
         options = PETSc.Options()
-        options.setValue("ksp_type", "gmres")
-        # options.setValue("ksp_type", "bcgs")
+        # options.setValue("ksp_type", "gmres")
+        options.setValue("ksp_type", "bcgs")
         options.setValue("ksp_rtol", tol)
         options.setValue("ksp_max_it", 20 * restart)
         # options.setValue("ksp_norm_type", "unpreconditioned")
