@@ -250,10 +250,11 @@ def solve_petsc(
     logx_eigs=False,
     normalize_residual=False,
     tol=1e-10,
+    pc_side: Literal["left", "right"] = "left",
 ):
     if rhs is None:
         rhs = np.ones(mat.shape[0])
-    gmres = PetscGMRES(mat, pc=prec, tol=tol)
+    gmres = PetscGMRES(mat, pc=prec, tol=tol, pc_side=pc_side)
 
     t0 = time.time()
     sol = gmres.solve(rhs)
@@ -262,15 +263,16 @@ def solve_petsc(
     info = gmres.ksp.getConvergedReason()
     eigs = gmres.ksp.computeEigenvalues()
 
+    rhs_norm = norm(rhs)
+    res_norm = norm(mat @ sol - rhs)
+    print("True residual decrease:", res_norm / rhs_norm)
+
     linestyle = "-"
     if info <= 0:
         linestyle = "--"
         print("PETSc Converged Reason:", info)
-        print("lambda min:", min(abs(eigs)))
-    elif info > 0:
-        rhs_norm = norm(rhs)
-        res_norm = norm(mat @ sol - rhs)
-        print('True residual decrease:', res_norm / rhs_norm)
+        if len(eigs) > 0:
+            print("lambda min:", min(abs(eigs)))
 
     plt.gcf().set_size_inches(14, 4)
 
@@ -280,8 +282,12 @@ def solve_petsc(
         residuals /= residuals[0]
     ax.plot(residuals, label=label, marker=".", linestyle=linestyle)
     ax.set_yscale("log")
-    # ax.set_ylabel("true residual")
-    ax.set_ylabel("preconditioned residual")
+
+    ksp_norm_type = gmres.options.getString("ksp_norm_type", "default")
+    if ksp_norm_type == "unpreconditioned":
+        ax.set_ylabel("true residual")
+    else:
+        ax.set_ylabel("preconditioned residual")
     ax.set_xlabel("gmres iter.")
     ax.grid(True)
     if label != "":

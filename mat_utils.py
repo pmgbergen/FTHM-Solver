@@ -1,5 +1,6 @@
 import sys
 import time
+from typing import Literal
 
 import numpy as np
 import petsc4py
@@ -56,7 +57,7 @@ def csr_zeros(n, m=None) -> scipy.sparse.csr_matrix:
 
 
 def csr_ones(n) -> scipy.sparse.csr_matrix:
-    return scipy.sparse.eye(n, format='csr')
+    return scipy.sparse.eye(n, format="csr")
 
 
 def condest(mat):
@@ -210,21 +211,39 @@ class PetscPythonPC:
 
 
 class PetscGMRES:
-    def __init__(self, mat, pc: PETSc.PC | None = None, tol=1e-10) -> None:
+    def __init__(
+        self,
+        mat,
+        pc: PETSc.PC | None = None,
+        tol=1e-10,
+        pc_side: Literal["left", "right"] = "left",
+    ) -> None:
         self.shape = mat.shape
         restart = 50
 
         self.ksp = PETSc.KSP().create()
         options = PETSc.Options()
-        # options.setValue("ksp_type", "gmres")
-        options.setValue("ksp_type", "bcgs")
+        options.setValue("ksp_type", "gmres")
+        # options.setValue("ksp_type", "bcgs")
         options.setValue("ksp_rtol", tol)
         options.setValue("ksp_max_it", 20 * restart)
-        # options.setValue("ksp_norm_type", "unpreconditioned")
         options.setValue("ksp_gmres_restart", restart)
-        options.setValue("ksp_pc_side", "left")
+
+        if pc_side == "left":
+            options.setValue("ksp_pc_side", "left")
+            options.setValue("ksp_norm_type", "preconditioned")
+        elif pc_side == "right":
+            options.setValue("ksp_pc_side", "right")
+            options.setValue("ksp_norm_type", "unpreconditioned")
+        else:
+            raise ValueError(pc_side)
+
         if pc is None:
             options.setValue("pc_type", "none")
+
+        # Seems that options is a singletone
+        # I'm not sure if it's a good idea to store it.
+        self.options = options
 
         self.ksp.setFromOptions()
         self.ksp.setComputeEigenvalues(True)

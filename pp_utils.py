@@ -507,7 +507,7 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
             rhs_permuted = mat_permuted.local_rhs(rhs)
 
-            gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec)
+            gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec, pc_side='right')
 
             with TimerContext() as t_gmres:
                 res_permuted = gmres_.solve(rhs_permuted)
