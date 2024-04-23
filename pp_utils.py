@@ -254,9 +254,9 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
     def simulation_name(self) -> str:
         sim_name = self.params.get("simulation_name", "simulation")
         sim_name = f"{sim_name}_{self.bc_name}"
-        use_direct = not self.params.get('iterative_solver', True)
+        use_direct = not self.params.get("iterative_solver", True)
         if use_direct:
-            sim_name = f'{sim_name}_direct'
+            sim_name = f"{sim_name}_direct"
         else:
             solver_type = self.params.get("solver_type", "baseline")
             sim_name = f"{sim_name}_solver_{solver_type}"
@@ -304,7 +304,6 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
         characteristic = self._characteristic.value(self.equation_system).tolist()
         self._linear_solve_stats.transition_sticking_sliding = characteristic
-
 
     def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
         save_path = Path("./matrices")
@@ -357,24 +356,28 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
     #     init_solution: np.ndarray,
     #     nl_params,
     # ) -> tuple[float, bool, bool]:
-        # if np.any(np.isnan(solution)):
-        #     # If the solution contains nan values, we have diverged.
-        #     return np.nan, False, True
-        
-        # nonlinear_residual = self.compute_nonlinear_residual(replace_zeros=False)
-        # # print([np.format_float_scientific(x, precision=2) for x in nonlinear_residual])
-        # residual_drop = nonlinear_residual / self.nonlinear_residual_0
-        # residual_drop_sum = sum(residual_drop)
-        # converged = False
-        # diverged = False
-        # if residual_drop_sum < nl_params["nl_convergence_tol"]:
-        #     converged = True
-        # return residual_drop_sum, converged, diverged
+    # if np.any(np.isnan(solution)):
+    #     # If the solution contains nan values, we have diverged.
+    #     return np.nan, False, True
+
+    # nonlinear_residual = self.compute_nonlinear_residual(replace_zeros=False)
+    # # print([np.format_float_scientific(x, precision=2) for x in nonlinear_residual])
+    # residual_drop = nonlinear_residual / self.nonlinear_residual_0
+    # residual_drop_sum = sum(residual_drop)
+    # converged = False
+    # diverged = False
+    # if residual_drop_sum < nl_params["nl_convergence_tol"]:
+    #     converged = True
+    # return residual_drop_sum, converged, diverged
 
     def _initialize_solver(self):
         self.eq_dofs, self.var_dofs = make_row_col_dofs(self)
         self._variable_groups = self.make_variables_groups()
         self._equation_groups = self.make_equations_groups()
+
+        # This is very important, iterative solver relies on this reindexing
+        self._reorder_contact = make_reorder_contact(self)
+        self._corrected_eq_dofs, self._corrected_eq_groups = correct_eq_groups(self)
         self._solver_initialized = True
 
     def make_variables_groups(self):
@@ -422,48 +425,58 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
             ],
         )
 
-    def prepare_solve_mass(self, S_A):
-        with TimerContext() as t:
-            res = PetscAMGFlow(S_A)
-        self._linear_solve_stats.time_prepare_mass = t.elapsed_time
-        return res
-
-    def prepare_solve_momentum(self, B):
-        with TimerContext() as t:
-            res = PetscAMGMechanics(mat=B, dim=self.mdg.dim_max())
-        self._linear_solve_stats.time_prepare_momentum = t.elapsed_time
-        return res
+    def assemble_linear_system(self) -> None:
+        super().assemble_linear_system()
+        mat, rhs = self.linear_system
+        mat = mat[self._reorder_contact]
+        rhs = rhs[self._reorder_contact]
+        self.linear_system = mat, rhs
 
     def make_solver_schema(self):
         solver_type = self.params.get("solver_type", "baseline")
 
-        schema_fixed_stress = SolveSchema(
-            groups=[1],
-            invertor=lambda bmat: get_fixed_stress_stabilization(self),
-            invertor_type="physical",
-            solve=lambda bmat: PetscAMGMechanics(dim=self.nd, mat=bmat[[1]].mat),
-            complement=SolveSchema(
-                groups=[0],
-                solve=lambda bmat: PetscAMGFlow(mat=bmat[[0]].mat),
-            ),
-        )
         if solver_type == "baseline":
             return SolveSchema(
                 groups=[2, 3, 4, 5],
-                complement=schema_fixed_stress,
+                complement=SolveSchema(
+                    groups=[1],
+                    invertor=lambda bmat: get_fixed_stress_stabilization(self),
+                    invertor_type="physical",
+                    solve=lambda bmat: PetscAMGMechanics(
+                        dim=self.nd, mat=bmat[[1]].mat
+                    ),
+                    complement=SolveSchema(
+                        groups=[0],
+                        solve=lambda bmat: PetscAMGFlow(mat=bmat[[0]].mat),
+                    ),
+                ),
             )
 
         if solver_type == "1":
-            schema_no_flow_intf = SolveSchema(
-                groups=[2, 4, 5],
-                complement=schema_fixed_stress,
-            )
+            from mat_utils import PetscILU, extract_diag_inv
+            from preconditioner_mech import make_J44_inv_bdiag
+            from fixed_stress import make_fs
 
             return SolveSchema(
                 groups=[3],
-                # solve=lambda bmat: PetscILU(bmat.mat),
-                # invertor=lambda bmat: extract_diag_inv(bmat.mat),
-                complement=schema_no_flow_intf,
+                solve=lambda bmat: PetscILU(bmat[[3]].mat),
+                invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                complement=SolveSchema(
+                    groups=[4],
+                    solve=lambda bmat: make_J44_inv_bdiag(self, bmat=bmat),
+                    complement=SolveSchema(
+                        groups=[1, 5],
+                        solve=lambda bmat: PetscAMGMechanics(
+                            mat=bmat[[1, 5]].mat, dim=self.nd
+                        ),
+                        invertor=lambda bmat: make_fs(self, bmat).mat,
+                        invertor_type="physical",
+                        complement=SolveSchema(
+                            groups=[0, 2],
+                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                        ),
+                    ),
+                ),
             )
 
         raise ValueError(f"{solver_type}")
@@ -472,12 +485,13 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         if not self._solver_initialized:
             self._initialize_solver()
         with TimerContext() as t_prepare_solver:
-            mat, _ = self.linear_system
+            mat, rhs = self.linear_system
+
             bmat = BlockMatrixStorage(
                 mat=mat,
-                global_row_idx=self.eq_dofs,
+                global_row_idx=self._corrected_eq_dofs,
                 global_col_idx=self.var_dofs,
-                groups_row=self._equation_groups,
+                groups_row=self._corrected_eq_groups,
                 groups_col=self._variable_groups,
             )
             self.bmat = bmat
@@ -507,7 +521,13 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
             rhs_permuted = mat_permuted.local_rhs(rhs)
 
-            gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec, pc_side='right')
+            tol = 1e-10
+            pc_side = "right"
+            solver_type = self.params.get("solver_type", "baseline")
+            if solver_type == "1":
+                tol = 1e-15
+                pc_side = "left"
+            gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec, pc_side=pc_side, tol=tol)
 
             with TimerContext() as t_gmres:
                 res_permuted = gmres_.solve(rhs_permuted)
@@ -529,6 +549,7 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
 
 def make_reorder_contact(model):
+    # Combines normal and tangential equations into one equation, AoS alignment
     dofs_contact = np.concatenate([model.eq_dofs[i] for i in model._equation_groups[4]])
     dofs_contact_start = dofs_contact[0]
     dofs_contact_end = dofs_contact[-1] + 1
@@ -566,10 +587,17 @@ def reorder_J44(model):
 
 def correct_eq_groups(model):
     """We reindex eq_dofs and model._equation_groups to put together normal and
-    tangential components of the contact equation for each dof."""
+    tangential components of the contact equation for each dof.
+    Previously, the groups were: [[f0_norm], [f1_norm], [f0_tang], [f1_tang]].
+    This returns new indices: [[f0_norm, f0_tang], [f1_norm, f1_tang]].
+    """
     eq_dofs_corrected = [x.copy() for x in model.eq_dofs]
     eq_groups_corrected = [x.copy() for x in model._equation_groups]
 
+    # assert model.nd == 2
+
+    # assume normal equations go first.
+    # 2 is hardcoded because both tangential component lay in the same group.
     end_normal = len(model._equation_groups[4]) // 2
     normal_subgroups = model._equation_groups[4][:end_normal]
 

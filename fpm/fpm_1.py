@@ -3,13 +3,6 @@
 # Flow inlet boundary condition
 # Water and granite
 
-import os
-N_THREADS = '1'
-os.environ["MKL_NUM_THREADS"] = N_THREADS
-os.environ["NUMEXPR_NUM_THREADS"] = N_THREADS
-os.environ["OMP_NUM_THREADS"] = N_THREADS
-os.environ['OPENBLAS_NUM_THREADS'] = N_THREADS
-
 
 from typing import Literal
 import numpy as np
@@ -38,8 +31,8 @@ class PoroMech(
     MyPetscSolver,
     TimeStepping,
     # BCMechanicsOpen,
-    BCMechanicsSticking,
-    # BCMechanicsSliding,
+    # BCMechanicsSticking,
+    BCMechanicsSliding,
     BCFlow,
     Permeability,
     DiagnosticsMixin,
@@ -116,10 +109,9 @@ def make_model(cell_size=(1 / 20)):
         "meshing_arguments": {
             "cell_size": cell_size / m,
         },
-        # 'solver_type': '1',
+        'solver_type': '1',
         "simulation_name": "fpm_1",
-
-        "iterative_solver": False,
+        # "iterative_solver": False,
     }
     return PoroMech(params)
 

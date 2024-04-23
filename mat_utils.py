@@ -1,6 +1,7 @@
 import sys
 import time
 from typing import Literal
+from warnings import warn
 
 import numpy as np
 import petsc4py
@@ -314,7 +315,7 @@ def inv_block_diag(mat, nd: int):
     if nd == 3:
         diag = diag_nd(mat, nd=3)
         if diag.nnz != mat.nnz:
-            print("Matrix contained nondiagonal elements")
+            warn("Matrix contained nondiagonal elements. Inversion is inefficient.")
         return inv(diag)
     raise ValueError
     # print(f"{nd = } not implemented, using direct inverse")

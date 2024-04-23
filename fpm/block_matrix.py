@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
+import itertools
 
 import seaborn as sns
 import numpy as np
 import matplotlib
 import scipy.sparse
-from scipy.sparse import spmatrix
+from scipy.sparse import spmatrix, csr_matrix
 from matplotlib import pyplot as plt
 
 from mat_utils import FieldSplit, inv, cond
@@ -21,9 +22,16 @@ def color_spy(
     aspect: Literal["equal", "auto"] = "equal",
     show: bool = False,
     marker=None,
+    draw_marker=True,
+    color=True,
+    hatch=True,
+    alpha=0.3,
 ):
 
-    spy(mat, show=False, aspect=aspect, marker=marker)
+    if draw_marker:
+        spy(mat, show=False, aspect=aspect, marker=marker)
+    else:
+        spy(csr_matrix(mat.shape), show=False, aspect=aspect)
 
     row_sep = [0]
     for row in row_idx:
@@ -40,20 +48,36 @@ def color_spy(
     if col_names is None:
         col_names = list(range(len(col_sep) - 1))
 
+    hatch_types = itertools.cycle(["/", "\\"])
+
     ax = plt.gca()
     row_label_pos = []
     for i in range(len(row_names)):
         ystart, yend = row_sep[i : i + 2]
         row_label_pos.append(ystart + (yend - ystart) / 2)
-        plt.axhspan(ystart - 0.5, yend - 0.5, facecolor=f"C{i}", alpha=0.3)
+        kwargs = {}
+        if color:
+            kwargs["facecolor"] = f"C{i}"
+        else:
+            kwargs["fill"] = False
+        if hatch:
+            kwargs["hatch"] = next(hatch_types)
+            kwargs['edgecolor'] = 'black'
+        plt.axhspan(ystart - 0.5, yend - 0.5, alpha=alpha, **kwargs)
     ax.yaxis.set_ticks(row_label_pos)
     ax.set_yticklabels(row_names, rotation=0)
+
+    hatch_types = itertools.cycle(["|", "-"])
 
     col_label_pos = []
     for i in range(len(col_names)):
         xstart, xend = col_sep[i : i + 2]
         col_label_pos.append(xstart + (xend - xstart) / 2)
-        plt.axvspan(xstart - 0.5, xend - 0.5, facecolor=f"C{i}", alpha=0.3)
+        if color:
+            kwargs["facecolor"] = f"C{i}"
+        if hatch:
+            kwargs["hatch"] = next(hatch_types)
+        plt.axvspan(xstart - 0.5, xend - 0.5, alpha=alpha, **kwargs)
     ax.xaxis.set_ticks(col_label_pos)
     ax.set_xticklabels(col_names, rotation=0)
 
@@ -367,6 +391,10 @@ class BlockMatrixStorage:
         show=True,
         aspect: Literal["equal", "auto"] = "equal",
         marker=None,
+        color=True,
+        hatch=False,
+        draw_marker=True,
+        alpha=0.3,
     ):
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         if not groups:
@@ -382,10 +410,20 @@ class BlockMatrixStorage:
             show=show,
             aspect=aspect,
             marker=marker,
+            alpha=alpha,
+            color=color,
+            hatch=hatch,
+            draw_marker=draw_marker,
         )
 
     def matshow(self, log=True, show=True):
         plot_mat(self.mat, log=log, show=show)
+
+    def matshow_blocks(self, log=True, show=True, groups=True):
+        self.matshow(log=log, show=False)
+        self.color_spy(
+            show=show, groups=groups, color=False, hatch=True, draw_marker=False
+        )
 
     def plot_max(self, group=True):
         row_idx, col_idx = self.get_active_local_dofs(grouped=group)

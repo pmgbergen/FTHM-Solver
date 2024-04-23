@@ -40,7 +40,8 @@ def assemble_localization_matrices_mechanics(
         restr_m2 = M2[restr_local, :].indices
 
         restr_local = np.unique(np.concatenate([restr_m1, restr_m2]))
-        assert len(restr_local) > 0
+        if len(restr_local) == 0:
+            continue
         assert np.all(restr_local < B_size)
         restr_total = np.concatenate([restr_local, restr])
 
