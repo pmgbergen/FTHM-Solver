@@ -440,6 +440,23 @@ def group_intervals(arr):
     return intervals
 
 
+def color_time_steps(data: Sequence[TimeStepStats], grid=True):
+    num_newton_iters = [0] + [len(ts.linear_solves) for ts in data]
+    cumsum_newton_iters = np.cumsum(num_newton_iters)
+    for i, (start, end) in enumerate(
+        zip(cumsum_newton_iters[:-1], cumsum_newton_iters[1:])
+    ):
+        plt.axvspan(
+            start - 0.5,
+            end - 0.5,
+            facecolor="grey" if i % 2 else "white",
+            alpha=0.3,
+        )
+    if grid:
+        plt.gca().grid(True)
+    plt.xlim(-0.5, cumsum_newton_iters[-1] - 0.5)
+
+
 def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True):
     converged_reason = get_petsc_converged_reason(data)
     intervals = group_intervals(converged_reason)

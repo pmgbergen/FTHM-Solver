@@ -124,6 +124,7 @@ class BlockMatrixStorage:
         ]
 
         if active_groups_row is None:
+            # This does not work if groups_row include [] for inactive groups
             active_groups_row = list(np.argsort([x[0] for x in groups_row]))
         if active_groups_col is None:
             active_groups_col = list(np.argsort([x[0] for x in groups_col]))

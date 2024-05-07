@@ -16,7 +16,8 @@ from pp_utils import (
     BCMechanicsSliding,
     BCMechanicsSticking,
     MyPetscSolver,
-    TimeStepping,
+    DymanicTimeStepping,
+    StatisticsSavingMixin,
 )
 
 
@@ -27,7 +28,8 @@ MEGA = 1
 
 class PoroMech(
     MyPetscSolver,
-    TimeStepping,
+    DymanicTimeStepping,
+    StatisticsSavingMixin,
     # BCMechanicsOpen,
     # BCMechanicsSticking,
     BCMechanicsSliding,

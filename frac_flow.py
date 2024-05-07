@@ -13,7 +13,7 @@ from porepy.viz.diagnostics_mixin import DiagnosticsMixin
 
 from pp_utils import (
     BCFlow,
-    TimeStepping,
+    DymanicTimeStepping,
 )
 
 
@@ -23,7 +23,7 @@ MEGA = 1
 
 
 class Model(
-    TimeStepping,
+    DymanicTimeStepping,
     Permeability,
     DiagnosticsMixin,
     SinglePhaseFlow,

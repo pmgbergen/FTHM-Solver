@@ -13,11 +13,12 @@ from porepy.viz.diagnostics_mixin import DiagnosticsMixin
 
 from pp_utils import (
     BCFlow,
+    StatisticsSavingMixin,
     BCMechanicsOpen,
     BCMechanicsSliding,
     BCMechanicsSticking,
     MyPetscSolver,
-    TimeStepping,
+    DymanicTimeStepping,
 )
 
 
@@ -28,10 +29,11 @@ MEGA = 1
 
 class PoroMech(
     MyPetscSolver,
-    TimeStepping,
+    StatisticsSavingMixin,
+    DymanicTimeStepping,
     # BCMechanicsOpen,
-    # BCMechanicsSticking,
-    BCMechanicsSliding,
+    BCMechanicsSticking,
+    # BCMechanicsSliding,
     BCFlow,
     Permeability,
     DiagnosticsMixin,

@@ -2,7 +2,6 @@ import numpy as np
 import scipy.sparse
 import scipy.sparse.linalg
 from mat_utils import csr_zeros
-from pp_utils import get_fixed_stress_stabilization
 from block_matrix import BlockMatrixStorage
 
 
@@ -76,6 +75,43 @@ def make_local_inverse_15(bmat: BlockMatrixStorage, base: int, nd: int):
 def make_local_stab_15(bmat: BlockMatrixStorage, base: int, nd: int):
     J15_inv = make_local_inverse_15(bmat=bmat, base=base, nd=nd)
     return -bmat[base, [1, 5]].mat @ J15_inv @ bmat[[1, 5], base].mat
+
+
+def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
+    mu_lame = model.solid.shear_modulus()
+    lambda_lame = model.solid.lame_lambda()
+    alpha_biot = model.solid.biot_coefficient()
+    dim = model.nd
+
+    l_phys = alpha_biot**2 / (2 * mu_lame / dim + lambda_lame)
+    l_min = alpha_biot**2 / (4 * mu_lame + 2 * lambda_lame)
+
+    val = l_min * (l_phys / l_min) ** l_factor
+
+    diagonal_approx = val
+    subdomains = model.mdg.subdomains(dim=dim)
+    cell_volumes = subdomains[0].cell_volumes
+    diagonal_approx *= cell_volumes
+
+    density = model.fluid_density(subdomains).value(model.equation_system)
+    diagonal_approx *= density
+
+    dt = model.time_manager.dt
+    diagonal_approx /= dt
+
+    return scipy.sparse.diags(diagonal_approx)
+
+
+def get_fixed_stress_stabilization_nd(model, l_factor: float = 0.6):
+    mat_nd = get_fixed_stress_stabilization(model=model, l_factor=l_factor)
+
+    sd_lower = [
+        sd for d in reversed(range(model.nd)) for sd in model.mdg.subdomains(dim=d)
+    ]
+    num_cells = sum(sd.num_cells for sd in sd_lower)
+
+    zero_lower = scipy.sparse.csr_matrix((num_cells, num_cells))
+    return scipy.sparse.block_diag([mat_nd, zero_lower]).tocsr()
 
 
 def make_fs(model, J: BlockMatrixStorage):

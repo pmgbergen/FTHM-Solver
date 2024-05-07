@@ -12,13 +12,13 @@ from pp_utils import (
     BCMechanicsSliding,
     BCMechanicsSticking,
     MyPetscSolver,
-    TimeStepping,
+    DymanicTimeStepping,
 )
 
 
 class PoroMech(
     MyPetscSolver,
-    TimeStepping,
+    DymanicTimeStepping,
     # BCMechanicsOpen,
     # BCMechanicsSticking,
     BCMechanicsSliding,

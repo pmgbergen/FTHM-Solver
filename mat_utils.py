@@ -4,6 +4,7 @@ from typing import Literal
 from warnings import warn
 
 import numpy as np
+from numba import njit
 import petsc4py
 import scipy.linalg
 import scipy.sparse
@@ -313,13 +314,8 @@ def inv_block_diag(mat, nd: int):
     if nd == 2:
         return inv_block_diag_2x2(mat)
     if nd == 3:
-        diag = diag_nd(mat, nd=3)
-        if diag.nnz != mat.nnz:
-            warn("Matrix contained nondiagonal elements. Inversion is inefficient.")
-        return inv(diag)
+        return inv_block_diag_3x3(mat)
     raise ValueError
-    # print(f"{nd = } not implemented, using direct inverse")
-    # return inv(mat)
 
 
 def inv_block_diag_2x2(mat):
@@ -384,3 +380,49 @@ def reverse_cuthill_mckee(mat):
 
     reorder = reverse_cuthill_mckee(mat)
     return mat[reorder][:, reorder]
+
+
+def pinv_left(A):
+    return inv(A.T @ A) @ A.T
+
+
+def pinv_right(A):
+    return A.T @ inv(A @ A.T)
+
+
+@njit
+def inv_list_of_matrices(mats):
+    results = np.zeros_like(mats)
+    for i, mat in enumerate(mats):
+        results[i] = np.linalg.inv(mat)
+    return results
+
+
+def inv_block_diag_3x3(mat):
+    assert (mat.shape[0] % 3) == 0
+    diag = mat.diagonal()
+    a00 = diag[0::3]
+    a11 = diag[1::3]
+    a22 = diag[2::3]
+
+    diag_m1 = mat.diagonal(k=-1)
+    a10 = diag_m1[0::3]
+    a21 = diag_m1[1::3]
+
+    diag_m2 = mat.diagonal(k=-2)
+    a20 = diag_m2[0::3]
+
+    diag_p1 = mat.diagonal(k=1)
+    a01 = diag_p1[0::3]
+    a12 = diag_p1[1::3]
+
+    diag_p2 = mat.diagonal(k=2)
+    a02 = diag_p2[0::3]
+
+    mats_3x3 = np.array([
+        [a00, a01, a02],
+        [a10, a11, a12],
+        [a20, a21, a22],
+    ]).transpose(2, 0, 1)
+    mats_3x3_inv = inv_list_of_matrices(mats_3x3)
+    return scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)

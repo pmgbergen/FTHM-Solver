@@ -11,9 +11,10 @@ import scipy.sparse
 from porepy.models.fluid_mass_balance import BoundaryConditionsSinglePhaseFlow
 from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
 from stats import LinearSolveStats, TimeStepStats
-from fpm.block_matrix import BlockMatrixStorage, make_solver, SolveSchema
-
-from invert import USE_NUMBA
+from block_matrix import BlockMatrixStorage, make_solver, SolveSchema
+from mat_utils import PetscILU, extract_diag_inv
+from preconditioner_mech import make_J44_inv_bdiag
+from fixed_stress import get_fixed_stress_stabilization, make_fs
 
 from mat_utils import (
     PetscAMGFlow,
@@ -125,7 +126,9 @@ class BCFlow(BoundaryConditionsSinglePhaseFlow):
         return values
 
 
-class TimeStepping:
+class DymanicTimeStepping:
+    # For some reason, PP does not increase / decrease time step.
+    # Should check whether is has been added lately.
     def after_nonlinear_convergence(
         self, solution: np.ndarray, errors: float, iteration_counter: int
     ) -> None:
@@ -181,43 +184,6 @@ def get_variables_group_ids(model, md_variables_groups):
     return indices
 
 
-def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
-    mu_lame = model.solid.shear_modulus()
-    lambda_lame = model.solid.lame_lambda()
-    alpha_biot = model.solid.biot_coefficient()
-    dim = model.nd
-
-    l_phys = alpha_biot**2 / (2 * mu_lame / dim + lambda_lame)
-    l_min = alpha_biot**2 / (4 * mu_lame + 2 * lambda_lame)
-
-    val = l_min * (l_phys / l_min) ** l_factor
-
-    diagonal_approx = val
-    subdomains = model.mdg.subdomains(dim=dim)
-    cell_volumes = subdomains[0].cell_volumes
-    diagonal_approx *= cell_volumes
-
-    density = model.fluid_density(subdomains).value(model.equation_system)
-    diagonal_approx *= density
-
-    dt = model.time_manager.dt
-    diagonal_approx /= dt
-
-    return scipy.sparse.diags(diagonal_approx)
-
-
-def get_fixed_stress_stabilization_nd(model, l_factor: float = 0.6):
-    mat_nd = get_fixed_stress_stabilization(model=model, l_factor=l_factor)
-
-    sd_lower = [
-        sd for d in reversed(range(model.nd)) for sd in model.mdg.subdomains(dim=d)
-    ]
-    num_cells = sum(sd.num_cells for sd in sd_lower)
-
-    zero_lower = scipy.sparse.csr_matrix((num_cells, num_cells))
-    return scipy.sparse.block_diag([mat_nd, zero_lower]).tocsr()
-
-
 def get_equations_group_ids(model, equations_group_order):
     equation_to_idx = {}
     idx = 0
@@ -240,9 +206,7 @@ def get_equations_group_ids(model, equations_group_order):
     return indices
 
 
-class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
-
-    _solver_initialized = False
+class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
     _linear_solve_stats: LinearSolveStats
     _time_step_stats: TimeStepStats
 
@@ -250,43 +214,35 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
     def statistics(self) -> list[TimeStepStats]:
         return []
 
-    @property
     def simulation_name(self) -> str:
         sim_name = self.params.get("simulation_name", "simulation")
-        sim_name = f"{sim_name}_{self.bc_name}"
+        if hasattr(self, 'bc_name'):
+            sim_name = f"{sim_name}_{self.bc_name}"
         use_direct = not self.params.get("iterative_solver", True)
         if use_direct:
             sim_name = f"{sim_name}_direct"
-        else:
-            solver_type = self.params.get("solver_type", "baseline")
-            sim_name = f"{sim_name}_solver_{solver_type}"
-
-        if USE_NUMBA:
-            sim_name = f"{sim_name}_numba"
-        else:
-            sim_name = f"{sim_name}_python"
+        # else:
+        #     solver_type = self.params.get("solver_type", "baseline")
+        #     sim_name = f"{sim_name}_solver_{solver_type}"
 
         return sim_name
 
     def before_nonlinear_loop(self) -> None:
-        if not self._solver_initialized:
-            self._initialize_solver()
         self._time_step_stats = TimeStepStats()
-        self.nonlinear_residual_0 = self.compute_nonlinear_residual(replace_zeros=True)
-        return super().before_nonlinear_loop()
+        super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(
         self, solution: np.ndarray, errors: float, iteration_counter: int
     ) -> None:
         self.statistics.append(self._time_step_stats)
-        dump_json(self.simulation_name + ".json", self.statistics)
+        dump_json(self.simulation_name() + ".json", self.statistics)
         super().after_nonlinear_convergence(solution, errors, iteration_counter)
 
     def after_nonlinear_failure(
         self, solution: np.ndarray, errors: float, iteration_counter: int
     ) -> None:
         self.statistics.append(self._time_step_stats)
-        dump_json(self.simulation_name + ".json", self.statistics)
+        dump_json(self.simulation_name() + ".json", self.statistics)
         super().after_nonlinear_failure(solution, errors, iteration_counter)
 
     def before_nonlinear_iteration(self) -> None:
@@ -309,7 +265,7 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         save_path = Path("./matrices")
         save_path.mkdir(exist_ok=True)
         mat, rhs = self.linear_system
-        name = f"{self.simulation_name}_{int(time.time() * 1000)}"
+        name = f"{self.simulation_name()}_{int(time.time() * 1000)}"
         mat_id = f"{name}.npz"
         rhs_id = f"{name}_rhs.npy"
         state_id = f"{name}_state.npy"
@@ -332,43 +288,61 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
         self._time_step_stats.linear_solves.append(self._linear_solve_stats)
         super().after_nonlinear_iteration(solution_vector)
 
-    def compute_nonlinear_residual(self, replace_zeros: bool = False):
-        nonlinear_residual = self.equation_system.assemble(evaluate_jacobian=False)
-        group_residuals = []
-        for group in self._equation_groups:
-            dofs = np.concatenate([self.eq_dofs[block] for block in group])
-            nrm = np.linalg.norm(nonlinear_residual[dofs])
-            group_residuals.append(nrm)
 
-        group_residuals = np.array(group_residuals)
+# class AccurateConvergence(pp.SolutionStrategy):
 
-        atol = 1e-16
-        group_residuals[group_residuals < atol] = 0
+#     def before_nonlinear_loop(self) -> None:
+#         self.nonlinear_residual_0 = self.compute_nonlinear_residual(replace_zeros=True)
+#         return super().before_nonlinear_loop()
 
-        if replace_zeros:
-            group_residuals[group_residuals == 0] = 1
-        return group_residuals
+# def check_convergence(
+#     self,
+#     solution: np.ndarray,
+#     prev_solution: np.ndarray,
+#     init_solution: np.ndarray,
+#     nl_params,
+# ) -> tuple[float, bool, bool]:
+# if np.any(np.isnan(solution)):
+#     # If the solution contains nan values, we have diverged.
+#     return np.nan, False, True
 
-    # def check_convergence(
-    #     self,
-    #     solution: np.ndarray,
-    #     prev_solution: np.ndarray,
-    #     init_solution: np.ndarray,
-    #     nl_params,
-    # ) -> tuple[float, bool, bool]:
-    # if np.any(np.isnan(solution)):
-    #     # If the solution contains nan values, we have diverged.
-    #     return np.nan, False, True
+# nonlinear_residual = self.compute_nonlinear_residual(replace_zeros=False)
+# # print([np.format_float_scientific(x, precision=2) for x in nonlinear_residual])
+# residual_drop = nonlinear_residual / self.nonlinear_residual_0
+# residual_drop_sum = sum(residual_drop)
+# converged = False
+# diverged = False
+# if residual_drop_sum < nl_params["nl_convergence_tol"]:
+#     converged = True
+# return residual_drop_sum, converged, diverged
 
-    # nonlinear_residual = self.compute_nonlinear_residual(replace_zeros=False)
-    # # print([np.format_float_scientific(x, precision=2) for x in nonlinear_residual])
-    # residual_drop = nonlinear_residual / self.nonlinear_residual_0
-    # residual_drop_sum = sum(residual_drop)
-    # converged = False
-    # diverged = False
-    # if residual_drop_sum < nl_params["nl_convergence_tol"]:
-    #     converged = True
-    # return residual_drop_sum, converged, diverged
+# def compute_nonlinear_residual(self, replace_zeros: bool = False):
+#     nonlinear_residual = self.equation_system.assemble(evaluate_jacobian=False)
+#     group_residuals = []
+#     for group in self._equation_groups:
+#         dofs = np.concatenate([self.eq_dofs[block] for block in group])
+#         nrm = np.linalg.norm(nonlinear_residual[dofs])
+#         group_residuals.append(nrm)
+
+#     group_residuals = np.array(group_residuals)
+
+#     atol = 1e-16
+#     group_residuals[group_residuals < atol] = 0
+
+#     if replace_zeros:
+#         group_residuals[group_residuals == 0] = 1
+#     return group_residuals
+
+
+class MyPetscSolver(pp.SolutionStrategy):
+
+    _solver_initialized = False
+    _linear_solve_stats = LinearSolveStats()  # placeholder
+
+    def before_nonlinear_loop(self) -> None:
+        if not self._solver_initialized:
+            self._initialize_solver()
+        return super().before_nonlinear_loop()
 
     def _initialize_solver(self):
         self.eq_dofs, self.var_dofs = make_row_col_dofs(self)
@@ -428,8 +402,9 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
     def assemble_linear_system(self) -> None:
         super().assemble_linear_system()
         mat, rhs = self.linear_system
-        mat = mat[self._reorder_contact]
-        rhs = rhs[self._reorder_contact]
+        if len(self._equation_groups[4]) != 0:
+            mat = mat[self._reorder_contact]
+            rhs = rhs[self._reorder_contact]
         self.linear_system = mat, rhs
 
     def make_solver_schema(self):
@@ -453,10 +428,6 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
             )
 
         if solver_type == "1":
-            from mat_utils import PetscILU, extract_diag_inv
-            from preconditioner_mech import make_J44_inv_bdiag
-            from fixed_stress import make_fs
-
             return SolveSchema(
                 groups=[3],
                 solve=lambda bmat: PetscILU(bmat[[3]].mat),
@@ -469,7 +440,8 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
                         solve=lambda bmat: PetscAMGMechanics(
                             mat=bmat[[1, 5]].mat, dim=self.nd
                         ),
-                        invertor=lambda bmat: make_fs(self, bmat).mat,
+                        # invertor=lambda bmat: make_fs(self, bmat).mat,
+                        invertor=lambda bmat: self._fixed_stress.mat,
                         invertor_type="physical",
                         complement=SolveSchema(
                             groups=[0, 2],
@@ -480,6 +452,11 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
             )
 
         raise ValueError(f"{solver_type}")
+
+    @cached_property
+    def _fixed_stress(self):
+        # Assuming blocks [1, 5] don't change
+        return make_fs(self, self.bmat)
 
     def _prepare_solver(self):
         if not self._solver_initialized:
@@ -525,7 +502,7 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
             pc_side = "right"
             solver_type = self.params.get("solver_type", "baseline")
             if solver_type == "1":
-                tol = 1e-15
+                tol = 1e-10
                 pc_side = "left"
             gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec, pc_side=pc_side, tol=tol)
 
@@ -550,6 +527,8 @@ class MyPetscSolver(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
 def make_reorder_contact(model):
     # Combines normal and tangential equations into one equation, AoS alignment
+    if len(model._equation_groups[4]) == 0:
+        return np.array([])
     dofs_contact = np.concatenate([model.eq_dofs[i] for i in model._equation_groups[4]])
     dofs_contact_start = dofs_contact[0]
     dofs_contact_end = dofs_contact[-1] + 1
@@ -575,14 +554,14 @@ def make_reorder_contact(model):
     return reorder
 
 
-def reorder_J44(model):
-    assert model.nd == 2
-    dofs_contact = np.concatenate([model.eq_dofs[i] for i in model._equation_groups[4]])
-    reorder = np.zeros(dofs_contact.size, dtype=int)
-    half = reorder.size // 2
-    reorder[1::2] = np.arange(half)
-    reorder[::2] = np.arange(half) + half
-    return reorder
+# def reorder_J44(model):
+#     assert model.nd == 2
+#     dofs_contact = np.concatenate([model.eq_dofs[i] for i in model._equation_groups[4]])
+#     reorder = np.zeros(dofs_contact.size, dtype=int)
+#     half = reorder.size // 2
+#     reorder[1::2] = np.arange(half)
+#     reorder[::2] = np.arange(half) + half
+#     return reorder
 
 
 def correct_eq_groups(model):
@@ -591,6 +570,9 @@ def correct_eq_groups(model):
     Previously, the groups were: [[f0_norm], [f1_norm], [f0_tang], [f1_tang]].
     This returns new indices: [[f0_norm, f0_tang], [f1_norm, f1_tang]].
     """
+    if len(model._equation_groups[4]) == 0:
+        return model.eq_dofs, model._equation_groups
+
     eq_dofs_corrected = [x.copy() for x in model.eq_dofs]
     eq_groups_corrected = [x.copy() for x in model._equation_groups]
 

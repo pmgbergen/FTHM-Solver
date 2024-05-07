@@ -1,0 +1,242 @@
+Timer unit: 1e-09 s
+
+Total time: 0 s
+File: /home/porepy/simulations/fixed_stress.py
+Function: assemble_localization_matrices_mechanics at line 8
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+     8                                           def assemble_localization_matrices_mechanics(
+     9                                               bmat: BlockMatrixStorage,
+    10                                               base: int,
+    11                                               nd: int,
+    12                                           ) -> list:
+    13                                               # 2: A  Q1Q1Q1
+    14                                               # 1: Q2 B   M1
+    15                                               # 5: Q2 M2  P
+    16                                               bmat = bmat[[base, 1, 5]]
+    17                                           
+    18                                               Q1 = bmat[base, [1, 5]].mat.tocsr()
+    19                                               Q2 = bmat[[1, 5], base].mat.tocsc()
+    20                                               M1 = bmat[1, 5].mat.tocsc()
+    21                                               M2 = bmat[5, 1].mat.tocsr()
+    22                                           
+    23                                               B_size = M1.shape[0]
+    24                                           
+    25                                               restrictions = []
+    26                                           
+    27                                               assert (Q1.shape[0] % nd) == 0
+    28                                               num_cells = Q1.shape[0] // nd
+    29                                           
+    30                                               for i in range(num_cells):
+    31                                                   frac_dofs = np.arange(nd * i, nd * (i + 1))
+    32                                                   restr_q1 = Q1[frac_dofs, :].indices
+    33                                                   restr_q2 = Q2[:, frac_dofs].indices
+    34                                                   restr = np.unique(np.concatenate([restr_q1, restr_q2]))
+    35                                           
+    36                                                   restr_local = restr - B_size
+    37                                                   assert np.all(restr_local >= 0)
+    38                                                   restr_m1 = M1[:, restr_local].indices
+    39                                                   restr_m2 = M2[restr_local, :].indices
+    40                                           
+    41                                                   restr_local = np.unique(np.concatenate([restr_m1, restr_m2]))
+    42                                                   if len(restr_local) == 0:
+    43                                                       continue
+    44                                                   assert np.all(restr_local < B_size)
+    45                                                   restr_total = np.concatenate([restr_local, restr])
+    46                                           
+    47                                                   col_idx = np.array(restr_total)
+    48                                                   data = np.ones_like(restr_total)
+    49                                                   row_idx = np.arange(col_idx.size)
+    50                                                   localization = scipy.sparse.csr_matrix(
+    51                                                       (data, (row_idx, col_idx)), shape=(col_idx.size, Q1.shape[1])
+    52                                                   )
+    53                                           
+    54                                                   restrictions.append(localization)
+    55                                           
+    56                                               return restrictions
+
+Total time: 0 s
+File: /home/porepy/simulations/fixed_stress.py
+Function: make_local_inverse_15 at line 59
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    59                                           def make_local_inverse_15(bmat: BlockMatrixStorage, base: int, nd: int):
+    60                                               localization_mats = assemble_localization_matrices_mechanics(bmat, base=base, nd=nd)
+    61                                           
+    62                                               J_15 = bmat[[1, 5]].mat.tocsr()
+    63                                               J15_inv = csr_zeros(J_15.shape[0])
+    64                                           
+    65                                               for R in localization_mats:
+    66                                                   j15 = R @ J_15 @ R.T
+    67                                                   # j15 = R @ R.T
+    68                                           
+    69                                                   j15_inv = scipy.sparse.linalg.inv(j15.tocsc())
+    70                                                   J15_inv += R.T @ j15_inv @ R
+    71                                           
+    72                                               return J15_inv
+
+Total time: 0 s
+File: /home/porepy/simulations/fixed_stress.py
+Function: make_local_stab_15 at line 75
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    75                                           def make_local_stab_15(bmat: BlockMatrixStorage, base: int, nd: int):
+    76                                               J15_inv = make_local_inverse_15(bmat=bmat, base=base, nd=nd)
+    77                                               return -bmat[base, [1, 5]].mat @ J15_inv @ bmat[[1, 5], base].mat
+
+Total time: 0 s
+File: /home/porepy/simulations/fixed_stress.py
+Function: make_fs at line 117
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   117                                           def make_fs(model, J: BlockMatrixStorage):
+   118                                               diag = [
+   119                                                   get_fixed_stress_stabilization(model),
+   120                                                   make_local_stab_15(bmat=J, base=2, nd=1),
+   121                                               ]
+   122                                               result = J.empty_container()[[0, 2]]
+   123                                               result.mat = scipy.sparse.block_diag(diag, format="csr")
+   124                                               return result
+
+Total time: 0.470645 s
+
+Could not find file /home/porepy/simulations/fpm/block_matrix.py
+Are you sure you are running this program from the same directory
+that you ran the profiler from?
+Continuing without the function's contents.
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   490                                           
+   491         4       2456.0    614.0      0.0  
+   492         4      21653.0   5413.2      0.0  
+   493                                           
+   494         4      15367.0   3841.8      0.0  
+   495                                           
+   496         4    5928635.0    1e+06      1.3  
+   497                                           
+   498         4       2882.0    720.5      0.0  
+   499                                           
+   500                                           
+   501         4       1420.0    355.0      0.0  
+   502                                           
+   503         4       2351.0    587.8      0.0  
+   504         4       1580.0    395.0      0.0  
+   505         4       1903.0    475.8      0.0  
+   506                                           
+   507                                           
+   508         4        590.0    147.5      0.0  
+   509                                           
+   510                                           
+   511         4  407539289.0    1e+08     86.6  
+   512                                           
+   513         4       9223.0   2305.8      0.0  
+   514         1        249.0    249.0      0.0  
+   515                                           
+   516         3    7989918.0    3e+06      1.7  
+   517         3    5682869.0    2e+06      1.2  
+   518         3   14076186.0    5e+06      3.0  
+   519                                           
+   520         3       7974.0   2658.0      0.0  
+   521         1     658224.0 658224.0      0.1  
+   522                                           
+   523         2        318.0    159.0      0.0  
+   524                                           
+   525                                           
+   526         2        627.0    313.5      0.0  
+   527         2        780.0    390.0      0.0  
+   528         1        367.0    367.0      0.0  
+   529         1        369.0    369.0      0.0  
+   530                                           
+   531                                           
+   532         1     748982.0 748982.0      0.2  
+   533         4       4800.0   1200.0      0.0  
+   534         2        645.0    322.5      0.0  
+   535                                           
+   536         2   11979847.0    6e+06      2.5  
+   537                                           
+   538                                           
+   539                                           
+   540                                           
+   541                                           
+   542                                           
+   543                                           
+   544                                           
+   545                                           
+   546                                           
+   547                                           
+   548                                           
+   549                                           
+   550                                           
+   551                                           
+   552                                           
+   553                                           
+   554                                           
+   555         6       5187.0    864.5      0.0  
+   556         3       3626.0   1208.7      0.0  
+   557                                           
+   558         3       3998.0   1332.7      0.0  
+   559                                           
+   560                                           
+   561                                           
+   562         3   15912980.0    5e+06      3.4  
+   563         6      33939.0   5656.5      0.0  
+   564         3        984.0    328.0      0.0  
+   565         3        786.0    262.0      0.0  
+   566         3       2190.0    730.0      0.0  
+   567         3       1379.0    459.7      0.0  
+   568                                           
+   569         3        638.0    212.7      0.0  
+
+Total time: 0.33585 s
+File: /home/porepy/simulations/mat_utils.py
+Function: inv_block_diag at line 310
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   310                                           def inv_block_diag(mat, nd: int):
+   311         2       1459.0    729.5      0.0      if nd == 1:
+   312                                                   return extract_diag_inv(mat)
+   313         2        554.0    277.0      0.0      if nd == 2:
+   314                                                   return inv_block_diag_2x2(mat)
+   315         2       4920.0   2460.0      0.0      if nd == 3:
+   316         2    5553468.0    3e+06      1.7          diag = diag_nd(mat, nd=3)
+   317         2       6728.0   3364.0      0.0          if diag.nnz != mat.nnz:
+   318         1       4896.0   4896.0      0.0              warn("Matrix contained nondiagonal elements. Inversion is inefficient.")
+   319         2  330277628.0    2e+08     98.3          return inv(diag)
+   320                                               raise ValueError
+   321                                               # print(f"{nd = } not implemented, using direct inverse")
+   322                                               # return inv(mat)
+
+Total time: 0.471429 s
+File: /home/porepy/simulations/pp_utils.py
+Function: _prepare_solver at line 452
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   452                                               def _prepare_solver(self):
+   453         1       2144.0   2144.0      0.0          if not self._solver_initialized:
+   454                                                       self._initialize_solver()
+   455         2      18413.0   9206.5      0.0          with TimerContext() as t_prepare_solver:
+   456         1       1163.0   1163.0      0.0              mat, rhs = self.linear_system
+   457                                           
+   458         2     314752.0 157376.0      0.1              bmat = BlockMatrixStorage(
+   459         1        121.0    121.0      0.0                  mat=mat,
+   460         1       8250.0   8250.0      0.0                  global_row_idx=self._corrected_eq_dofs,
+   461         1        578.0    578.0      0.0                  global_col_idx=self.var_dofs,
+   462         1       2484.0   2484.0      0.0                  groups_row=self._corrected_eq_groups,
+   463         1        563.0    563.0      0.0                  groups_col=self._variable_groups,
+   464                                                       )
+   465         1       7392.0   7392.0      0.0              self.bmat = bmat
+   466                                           
+   467         1      32629.0  32629.0      0.0              schema = self.make_solver_schema()
+   468                                           
+   469         1  471028659.0    5e+08     99.9              bmat_reordered, preconditioner = make_solver(schema=schema, mat_orig=bmat)
+   470                                           
+   471         1      11981.0  11981.0      0.0          self._linear_solve_stats.time_prepare_solver = t_prepare_solver.elapsed_time
+   472                                           
+   473         1        175.0    175.0      0.0          return bmat_reordered, preconditioner

@@ -3,10 +3,11 @@ from porepy.models.poromechanics import Poromechanics
 from porepy.viz.diagnostics_mixin import DiagnosticsMixin
 import porepy as pp
 import numpy as np
+from fixed_stress import get_fixed_stress_stabilization
 from mat_utils import *
 from porepy.applications.md_grids.domains import nd_cube_domain
 
-from pp_utils import MyPetscSolver, get_fixed_stress_stabilization, make_block_mat
+from pp_utils import MyPetscSolver, make_block_mat
 
 
 class PoroMech(MyPetscSolver, DiagnosticsMixin, Poromechanics):
