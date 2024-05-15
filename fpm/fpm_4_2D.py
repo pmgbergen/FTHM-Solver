@@ -1,15 +1,15 @@
 # %%
 import numpy as np
 import porepy as pp
-from porepy.models.poromechanics import Poromechanics
-from porepy.models.momentum_balance import MomentumBalance
-from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.models.constitutive_laws import CubicLawPermeability
+from porepy.models.poromechanics import Poromechanics
 
 from pp_utils import (
-    MyPetscSolver,
+    CheckStickingSlidingOpen,
     DymanicTimeStepping,
+    MyPetscSolver,
     NewtonBacktracking,
+    NewtonBacktrackingSimple,
     StatisticsSavingMixin,
 )
 
@@ -29,62 +29,65 @@ solid_material = {
     "dilation_angle": 5 * np.pi / 180,  # [rad]
     "friction_coefficient": 0.577,  # [-]
     # try to match the paper but not exactly
-    "residual_aperture": 1e-4,
+    "residual_aperture": 1e-4,  # [m]
     "normal_permeability": 1e-4,
-    "permeability": 1e-14,
+    "permeability": 1e-14,  # [m^2]
     # granite
     "biot_coefficient": 0.47,  # [-]
     "density": 2683.0,  # [kg * m^-3]
-    # "permeability": 5.0e-18,  # [m^2]
     "porosity": 1.3e-2,  # [-]
     "specific_storage": 4.74e-10,  # [Pa^-1]
+    # other
+    "maximum_fracture_closure": 0,  # Barton-Bandis elastic deformation. Defaults to 0.
 }
 
 
-class Fpm3(
+class Fpm4(
     NewtonBacktracking,
+    # NewtonBacktrackingSimple,
     MyPetscSolver,
     StatisticsSavingMixin,
+    CheckStickingSlidingOpen,
     DymanicTimeStepping,
     CubicLawPermeability,
     Poromechanics,
+    # MomentumBalance,
+    # SinglePhaseFlow,
 ):
 
-    def __init__(self, params):
-        super().__init__(params)
-
     def simulation_name(self):
-        name = super().simulation_name()
+        try:
+            name = super().simulation_name()
+        except Exception:
+            name = "direct"
         cell_size = self.params["cell_size_multiplier"]
         return f"{name}_x{cell_size}"
+
+    def before_nonlinear_loop(self) -> None:
+        super().before_nonlinear_loop()
+        sticking, sliding, open_ = self.sticking_sliding_open()
+        print()
+        print("num sticking:", sum(sticking))
+        print("num sliding:", sum(sliding))
+        print("num open:", sum(open_))
 
     # Geometry
 
     def set_domain(self) -> None:
-        self._domain = pp.Domain(
-            {"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX, "zmin": 0, "zmax": ZMAX}
-        )
+        self._domain = pp.Domain({"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX})
 
     def set_fractures(self) -> None:
         x = 0.3
-        y = 0.3
+        y = 0.5
         pts_list = [
             np.array(
                 [
-                    [x * XMAX, (1 - x) * XMAX, (1 - x) * XMAX, x * XMAX],  # x
-                    [y * YMAX, (1 - y) * YMAX, y * YMAX, (1 - y) * YMAX],  # y
-                    [z * ZMAX, z * ZMAX, z * ZMAX, z * ZMAX],  # z
+                    [x * XMAX, (1 - x) * XMAX],  # x
+                    [y * YMAX, y * YMAX],  # y
                 ]
             )
-            for z in [
-                # 0.2,
-                # 0.4,
-                0.5
-                # 0.6,
-                # 0.8,
-            ]
         ]
-        self._fractures = [pp.PlaneFracture(pts) for pts in pts_list]
+        self._fractures = [pp.LineFracture(pts) for pts in pts_list]
 
     # Source
 
@@ -100,7 +103,7 @@ class Fpm3(
 
     def get_source_intensity(self, t):
         t_max = 6
-        peak_intensity = self.fluid.convert_units(5e-4, "m^3 * s^-1")
+        peak_intensity = self.fluid.convert_units(1e-3, "m^3 * s^-1")
         t_mid = t_max / 2
         if t <= t_mid:
             return t / t_mid * peak_intensity
@@ -139,19 +142,21 @@ class Fpm3(
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
         sides = self.domain_boundary_sides(sd)
-        bc = pp.BoundaryConditionVectorial(
-            sd, sides.east + sides.west + sides.south + sides.north, "dir"
-        )
+        bc = pp.BoundaryConditionVectorial(sd, sides.south, "dir")
         bc.internal_to_dirichlet(sd)
         return bc
 
     def bc_values_stress(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         sides = self.domain_boundary_sides(boundary_grid)
-        bc_values = np.zeros((3, boundary_grid.num_cells))
+        bc_values = np.zeros((self.nd, boundary_grid.num_cells))
         # 10 Mpa
+        x = 0.5  # 1
         val = self.solid.convert_units(1e7, units="Pa")
-        bc_values[2, sides.top] = -val * boundary_grid.cell_volumes[sides.top]
-        bc_values[2, sides.bottom] = val * boundary_grid.cell_volumes[sides.bottom]
+        bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
+        # bc_values[0, sides.north] = val * boundary_grid.cell_volumes[sides.north] * x
+
+        # bc_values[1, sides.west] = -val * boundary_grid.cell_volumes[sides.west] * x
+        bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
         return bc_values.ravel("F")
 
 
@@ -159,22 +164,22 @@ def make_model():
     dt = 0.5
     time_manager = pp.TimeManager(
         dt_init=dt,
-        dt_min_max=(0.1, 0.5),
+        dt_min_max=(0.01, 0.5),
         schedule=[0, 3, 6],
         constant_dt=False,
         iter_max=25,
     )
 
-    cell_size_multiplier = 3
+    cell_size_multiplier = 2
 
-    units = pp.Units(kg=1e9)
+    units = pp.Units(kg=1e10)
     params = {
         "material_constants": {
             "solid": pp.SolidConstants(solid_material),
             "fluid": pp.FluidConstants(fluid_material),
         },
-        "grid_type": "cartesian",
-        # "grid_type": "simplex",
+        # "grid_type": "cartesian",
+        "grid_type": "simplex",
         "time_manager": time_manager,
         "units": units,
         "cell_size_multiplier": cell_size_multiplier,
@@ -183,14 +188,13 @@ def make_model():
         },
         # "iterative_solver": False,
         "solver_type": "1",
-        "simulation_name": "fpm_3",
+        "simulation_name": "fpm_4_2D",
     }
-    return Fpm3(params)
+    return Fpm4(params)
 
 
 # %%
 if __name__ == "__main__":
-    from matplotlib import pyplot as plt
 
     model = make_model()
     model.prepare_simulation()
@@ -208,7 +212,7 @@ if __name__ == "__main__":
         {
             "prepare_simulation": False,
             "progressbars": True,
-            "nl_convergence_tol": 1e-8,
+            "nl_convergence_tol": 1e-6,
             "nl_divergence_tol": 1e8,
             "max_iterations": 25,
         },
@@ -219,6 +223,7 @@ if __name__ == "__main__":
     #     cell_value=model.pressure_variable,
     #     vector_value=model.displacement_variable,
     #     alpha=0.5,
+    #     # plot_2d=True
     # )
 
     print(model.simulation_name())

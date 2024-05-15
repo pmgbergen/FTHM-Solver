@@ -210,22 +210,13 @@ def make_J44_inv(model, bmat: BlockMatrixStorage, lump=False):
 
 
 def make_J44_inv_bdiag(model, bmat: BlockMatrixStorage):
-    S44 = (
-        bmat[4, 4].mat
-        - bmat[4, 5].mat @ inv_block_diag(bmat[5, 5].mat, nd=model.nd) @ bmat[5, 4].mat
-    )
+    J44 = bmat[4, 4].mat
+    stab = bmat[4, 5].mat @ inv_block_diag(bmat[5, 5].mat, nd=model.nd) @ bmat[5, 4].mat
+    
+    # rowsum = np.array(J44.sum(axis=1)).ravel()
+    # nonzeros = rowsum != 0
+    # stab[nonzeros] = 0
+
+    S44 = J44 - stab
+    # S44 = J44
     return inv_block_diag(S44, nd=model.nd)
-
-
-def make_mech_schema(
-    model, J: BlockMatrixStorage, inner: SolveSchema = None
-) -> SolveSchema:
-    return SolveSchema(
-        groups=[4],
-        solve=lambda bmat: make_J44_inv(model=model, bmat=J),
-        complement=SolveSchema(
-            groups=[1, 5],
-            solve=lambda bmat: PetscAMGMechanics(dim=model.nd, mat=bmat.mat),
-            complement=inner,
-        ),
-    )

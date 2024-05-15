@@ -8,59 +8,86 @@ from pathlib import Path
 import numpy as np
 import porepy as pp
 import scipy.sparse
+from matplotlib import pyplot as plt
 from porepy.models.fluid_mass_balance import BoundaryConditionsSinglePhaseFlow
 from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
-from stats import LinearSolveStats, TimeStepStats
-from block_matrix import BlockMatrixStorage, make_solver, SolveSchema
-from mat_utils import PetscILU, extract_diag_inv
-from preconditioner_mech import make_J44_inv_bdiag
-from fixed_stress import get_fixed_stress_stabilization, make_fs
+from scipy.optimize import minimize_scalar
 
+from block_matrix import BlockMatrixStorage, SolveSchema, make_solver
+from fixed_stress import get_fixed_stress_stabilization, make_fs
 from mat_utils import (
     PetscAMGFlow,
     PetscAMGMechanics,
     PetscGMRES,
+    PetscILU,
     TimerContext,
+    extract_diag_inv,
 )
+from preconditioner_mech import make_J44_inv_bdiag
+from stats import LinearSolveStats, TimeStepStats
 
 
 class CheckStickingSlidingOpen:
 
+    # def sticking_sliding_open(self):
+    #     frac_dim = self.nd - 1
+    #     subdomains = self.mdg.subdomains(dim=frac_dim)
+    #     nd_vec_to_normal = self.normal_component(subdomains)
+    #     # The normal component of the contact traction and the displacement jump
+    #     t_n: pp.ad.Operator = nd_vec_to_normal @ self.contact_traction(subdomains)
+    #     u_n: pp.ad.Operator = nd_vec_to_normal @ self.displacement_jump(subdomains)
+
+    #     # The complimentarity condition
+    #     b = pp.ad.Scalar(-1.0) * t_n - self.contact_mechanics_numerical_constant(
+    #         subdomains
+    #     ) * (u_n - self.fracture_gap(subdomains))
+    #     b = b.value(self.equation_system)
+    #     open_cells = b <= 0
+
+    #     nd_vec_to_tangential = self.tangential_component(subdomains)
+    #     tangential_basis: list[pp.ad.SparseArray] = self.basis(
+    #         subdomains, dim=frac_dim  # type: ignore[call-arg]
+    #     )
+
+    #     t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
+    #     u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
+    #     u_t_increment: pp.ad.Operator = pp.ad.time_increment(u_t)
+
+    #     f_norm = pp.ad.Function(partial(pp.ad.l2_norm, frac_dim), "norm_function")
+    #     c_num_as_scalar = self.contact_mechanics_numerical_constant(subdomains)
+    #     c_num = pp.ad.sum_operator_list(
+    #         [e_i * c_num_as_scalar * e_i.T for e_i in tangential_basis]
+    #     )
+    #     tangential_sum = t_t + c_num @ u_t_increment
+    #     norm_tangential_sum = f_norm(tangential_sum)
+    #     norm = norm_tangential_sum.value(self.equation_system)
+    #     sticking_cells = (b > norm) & np.logical_not(open_cells)
+
+    #     sliding_cells = True ^ (sticking_cells | open_cells)
+    #     return sticking_cells, sliding_cells, open_cells
+
     def sticking_sliding_open(self):
-        frac_dim = self.nd - 1
-        subdomains = self.mdg.subdomains(dim=frac_dim)
-        nd_vec_to_normal = self.normal_component(subdomains)
-        # The normal component of the contact traction and the displacement jump
-        t_n: pp.ad.Operator = nd_vec_to_normal @ self.contact_traction(subdomains)
-        u_n: pp.ad.Operator = nd_vec_to_normal @ self.displacement_jump(subdomains)
 
-        # The complimentarity condition
-        b = pp.ad.Scalar(-1.0) * t_n - self.contact_mechanics_numerical_constant(
-            subdomains
-        ) * (u_n - self.fracture_gap(subdomains))
-        b = b.value(self.equation_system)
-        open_cells = b <= 0
-
-        nd_vec_to_tangential = self.tangential_component(subdomains)
-        tangential_basis: list[pp.ad.SparseArray] = self.basis(
-            subdomains, dim=frac_dim  # type: ignore[call-arg]
+        fric = self.solid.friction_coefficient()
+        lambdas = self.contact_traction(self.mdg.subdomains(dim=self.nd - 1)).value(
+            self.equation_system
         )
+        if self.nd == 2:
+            lambda_norm = lambdas[1::2]
+            lambda_tang = lambdas[0::2]
+        elif self.nd == 3:
+            lambda_norm = lambdas[2::3]
+            lambdas_tang_0 = lambdas[0::3]
+            lambdas_tang_1 = lambdas[1::3]
+            lambda_tang = np.sqrt(lambdas_tang_0**2 + lambdas_tang_1**2)
+        else:
+            raise ValueError
 
-        t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
-        u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
-        u_t_increment: pp.ad.Operator = pp.ad.time_increment(u_t)
-
-        f_norm = pp.ad.Function(partial(pp.ad.l2_norm, frac_dim), "norm_function")
-        c_num_as_scalar = self.contact_mechanics_numerical_constant(subdomains)
-        c_num = pp.ad.sum_operator_list(
-            [e_i * c_num_as_scalar * e_i.T for e_i in tangential_basis]
-        )
-        tangential_sum = t_t + c_num @ u_t_increment
-        norm_tangential_sum = f_norm(tangential_sum)
-        norm = norm_tangential_sum.value(self.equation_system)
-        sticking_cells = (b > norm) & np.logical_not(open_cells)
-
-        sliding_cells = True ^ (sticking_cells | open_cells)
+        open_cells = abs(lambda_norm) < 1e-10
+        ratio = abs(lambda_tang / (fric * lambda_norm))
+        sliding_limit = 0.99999
+        sliding_cells = (ratio > sliding_limit) * (1 - open_cells)
+        sticking_cells = (ratio <= sliding_limit) * (1 - open_cells)
         return sticking_cells, sliding_cells, open_cells
 
 
@@ -126,7 +153,7 @@ class BCFlow(BoundaryConditionsSinglePhaseFlow):
         return values
 
 
-class DymanicTimeStepping:
+class DymanicTimeStepping(pp.SolutionStrategy):
     # For some reason, PP does not increase / decrease time step.
     # Should check whether is has been added lately.
     def after_nonlinear_convergence(
@@ -138,6 +165,8 @@ class DymanicTimeStepping:
     def after_nonlinear_failure(
         self, solution: np.ndarray, errors: float, iteration_counter: int
     ) -> None:
+        prev_sol = self.equation_system.get_variable_values(time_step_index=0)
+        self.equation_system.set_variable_values(prev_sol, iterate_index=0)
         self.time_manager.compute_time_step(recompute_solution=True)
 
 
@@ -216,7 +245,7 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
     def simulation_name(self) -> str:
         sim_name = self.params.get("simulation_name", "simulation")
-        if hasattr(self, 'bc_name'):
+        if hasattr(self, "bc_name"):
             sim_name = f"{sim_name}_{self.bc_name}"
         use_direct = not self.params.get("iterative_solver", True)
         if use_direct:
@@ -287,51 +316,6 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         self._linear_solve_stats.simulation_dt = self.time_manager.dt
         self._time_step_stats.linear_solves.append(self._linear_solve_stats)
         super().after_nonlinear_iteration(solution_vector)
-
-
-# class AccurateConvergence(pp.SolutionStrategy):
-
-#     def before_nonlinear_loop(self) -> None:
-#         self.nonlinear_residual_0 = self.compute_nonlinear_residual(replace_zeros=True)
-#         return super().before_nonlinear_loop()
-
-# def check_convergence(
-#     self,
-#     solution: np.ndarray,
-#     prev_solution: np.ndarray,
-#     init_solution: np.ndarray,
-#     nl_params,
-# ) -> tuple[float, bool, bool]:
-# if np.any(np.isnan(solution)):
-#     # If the solution contains nan values, we have diverged.
-#     return np.nan, False, True
-
-# nonlinear_residual = self.compute_nonlinear_residual(replace_zeros=False)
-# # print([np.format_float_scientific(x, precision=2) for x in nonlinear_residual])
-# residual_drop = nonlinear_residual / self.nonlinear_residual_0
-# residual_drop_sum = sum(residual_drop)
-# converged = False
-# diverged = False
-# if residual_drop_sum < nl_params["nl_convergence_tol"]:
-#     converged = True
-# return residual_drop_sum, converged, diverged
-
-# def compute_nonlinear_residual(self, replace_zeros: bool = False):
-#     nonlinear_residual = self.equation_system.assemble(evaluate_jacobian=False)
-#     group_residuals = []
-#     for group in self._equation_groups:
-#         dofs = np.concatenate([self.eq_dofs[block] for block in group])
-#         nrm = np.linalg.norm(nonlinear_residual[dofs])
-#         group_residuals.append(nrm)
-
-#     group_residuals = np.array(group_residuals)
-
-#     atol = 1e-16
-#     group_residuals[group_residuals < atol] = 0
-
-#     if replace_zeros:
-#         group_residuals[group_residuals == 0] = 1
-#     return group_residuals
 
 
 class MyPetscSolver(pp.SolutionStrategy):
@@ -470,6 +454,22 @@ class MyPetscSolver(pp.SolutionStrategy):
                 global_col_idx=self.var_dofs,
                 groups_row=self._corrected_eq_groups,
                 groups_col=self._variable_groups,
+                group_row_names=[
+                    "Flow mat.",
+                    "Force mat.",
+                    "Flow frac.",
+                    "Flow intf.",
+                    "Contact frac.",
+                    "Force intf.",
+                ],
+                group_col_names=[
+                    r"$p_{3D}$",
+                    r"$u_{3D}$",
+                    r"$p_{frac}$",
+                    r"$v_{intf}$",
+                    r"$\lambda_{frac}$",
+                    r"$u_{intf}$",
+                ],
             )
             self.bmat = bmat
 
@@ -554,16 +554,6 @@ def make_reorder_contact(model):
     return reorder
 
 
-# def reorder_J44(model):
-#     assert model.nd == 2
-#     dofs_contact = np.concatenate([model.eq_dofs[i] for i in model._equation_groups[4]])
-#     reorder = np.zeros(dofs_contact.size, dtype=int)
-#     half = reorder.size // 2
-#     reorder[1::2] = np.arange(half)
-#     reorder[::2] = np.arange(half) + half
-#     return reorder
-
-
 def correct_eq_groups(model):
     """We reindex eq_dofs and model._equation_groups to put together normal and
     tangential components of the contact equation for each dof.
@@ -601,3 +591,167 @@ def correct_eq_groups(model):
     eq_groups_corrected[5] = (np.array(model._equation_groups[5]) - end_normal).tolist()
 
     return eq_dofs_corrected, eq_groups_corrected
+
+
+class NewtonBacktracking(pp.SolutionStrategy):
+
+    def _test_residual_norm(self, alpha: float, delta_sol: np.ndarray):
+        original_values = self.equation_system.get_variable_values(iterate_index=0)
+        return (
+            self.compute_nonlinear_residual(state=original_values + delta_sol * alpha)
+            / self._newton_res_0
+        )
+
+    def plot_residual_drop(self, alphas, res_norms):
+        group_names = [
+            "Mass 3d",
+            "Force 3d",
+            "Mass frac",
+            "Intf flux",
+            "Contact",
+            "Intf force",
+        ]
+        for nrm, label in zip(res_norms, group_names):
+            plt.plot(alphas, nrm, label=label)
+        plt.yscale("log")
+        plt.legend()
+        plt.show()
+
+    def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
+        delta_sol = solution_vector
+        del solution_vector
+        # opt_res = minimize_scalar(
+        #     lambda a: self._test_residual_norm(a, delta_sol).max(),
+        #     bounds=[0.5, 1],
+        #     options={"maxiter": 6},
+        # )
+        # alpha = opt_res.x
+
+        alphas = np.linspace(0.5, 1.1, 7, endpoint=True)
+        alphas = alphas[alphas != 0]
+        res_norms = np.array(
+            [self._test_residual_norm(alpha, delta_sol=delta_sol) for alpha in alphas]
+        ).T
+        alpha = alphas[np.argmin(np.max(res_norms, axis=0))]
+
+        delta_sol *= alpha
+
+        # self.plot_residual_drop(alphas, res_norms)
+        # print(file=sys.stderr, flush=True)
+        # print(f"{alpha = }", flush=True)
+        super().after_nonlinear_iteration(delta_sol)
+        pass
+
+    def before_nonlinear_loop(self) -> None:
+        super().before_nonlinear_loop()
+        self._newton_res_0 = self.compute_nonlinear_residual(replace_zeros=True)
+
+    def check_convergence(
+        self,
+        solution: np.ndarray,
+        prev_solution: np.ndarray,
+        init_solution: np.ndarray,
+        nl_params,
+    ) -> tuple[float, bool, bool]:
+        res_norm_groups = self.compute_nonlinear_residual() / self._newton_res_0
+        res_norm = res_norm_groups.sum()
+        # print(f"{res_norm = }")
+        converged = res_norm < nl_params["nl_convergence_tol"]
+        diverged = res_norm > nl_params["nl_divergence_tol"]
+        if not np.all(np.isfinite(res_norm)) or not np.all(np.isfinite(solution)):
+            diverged = True
+        # if diverged:
+        #     print('diverged')
+        return res_norm, converged, diverged
+
+    def compute_nonlinear_residual(
+        self, replace_zeros: bool = False, state: np.ndarray = None
+    ):
+        nonlinear_residual = self.equation_system.assemble(
+            evaluate_jacobian=False, state=state
+        )
+        group_residuals = []
+        for group in self._equation_groups:
+            dofs = np.concatenate([self.eq_dofs[block] for block in group])
+            nrm = np.linalg.norm(nonlinear_residual[dofs])
+            group_residuals.append(nrm)
+
+        group_residuals = np.array(group_residuals)
+
+        atol = 1e-10
+        group_residuals[group_residuals < atol] = 0
+
+        if replace_zeros:
+            group_residuals[group_residuals == 0] = 1
+            # contact mechanics always starts from 1
+            group_residuals[4] = 1
+        return group_residuals
+
+
+class NewtonBacktrackingSimple(pp.SolutionStrategy):
+
+    def _test_residual_norm(self, alpha: float, delta_sol: np.ndarray):
+        original_values = self.equation_system.get_variable_values(iterate_index=0)
+        return np.linalg.norm(
+            self.compute_nonlinear_residual(state=original_values + delta_sol * alpha)
+            / self._newton_res_0
+        )
+
+    def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
+        delta_sol = solution_vector
+        del solution_vector
+
+        alphas = np.linspace(0.5, 1.1, 7, endpoint=True)
+        alphas = alphas[alphas != 0]
+        res_norms = [
+            self._test_residual_norm(alpha, delta_sol=delta_sol) for alpha in alphas
+        ]
+
+        alpha = alphas[np.argmin(res_norms)]
+
+        delta_sol *= alpha
+
+        self.plot_residual_drop(alphas, res_norms)
+        # print(file=sys.stderr, flush=True)
+        # print(f"{alpha = }", flush=True)
+        super().after_nonlinear_iteration(delta_sol)
+
+    #     pass
+
+    def before_nonlinear_loop(self) -> None:
+        super().before_nonlinear_loop()
+        self._newton_res_0 = self.compute_nonlinear_residual(replace_zeros=True)
+
+    def check_convergence(
+        self,
+        solution: np.ndarray,
+        prev_solution: np.ndarray,
+        init_solution: np.ndarray,
+        nl_params,
+    ) -> tuple[float, bool, bool]:
+        res_norm = self.compute_nonlinear_residual() / self._newton_res_0
+        # print(f"{res_norm = }")
+        converged = res_norm < nl_params["nl_convergence_tol"]
+        diverged = res_norm > nl_params["nl_divergence_tol"]
+        # if diverged:
+        #     print('diverged')
+        return res_norm, converged, diverged
+
+    def compute_nonlinear_residual(
+        self, replace_zeros: bool = False, state: np.ndarray = None
+    ):
+        res = np.linalg.norm(
+            self.equation_system.assemble(evaluate_jacobian=False, state=state)
+        )
+        atol = 1e-10
+        if res < atol:
+            if replace_zeros:
+                res = 1
+            else:
+                res = 0
+        return res
+
+    def plot_residual_drop(self, alphas, res_norms):
+        plt.plot(alphas, res_norms)
+        plt.yscale("log")
+        plt.show()

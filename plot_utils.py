@@ -440,21 +440,31 @@ def group_intervals(arr):
     return intervals
 
 
-def color_time_steps(data: Sequence[TimeStepStats], grid=True):
+def color_time_steps(
+    data: Sequence[TimeStepStats], grid=True, fill=False, legend=False
+):
     num_newton_iters = [0] + [len(ts.linear_solves) for ts in data]
-    cumsum_newton_iters = np.cumsum(num_newton_iters)
+    cumsum_newton_iters = np.cumsum(num_newton_iters, dtype=float)
+    cumsum_newton_iters -= 0.5
     for i, (start, end) in enumerate(
         zip(cumsum_newton_iters[:-1], cumsum_newton_iters[1:])
     ):
-        plt.axvspan(
-            start - 0.5,
-            end - 0.5,
-            facecolor="grey" if i % 2 else "white",
-            alpha=0.3,
-        )
+        kwargs = {}
+        if legend and i == 0:
+            kwargs["label"] = "Time step sep."
+        if fill:
+            plt.axvspan(
+                start, end, facecolor="white" if i % 2 else "grey", alpha=0.3, **kwargs
+            )
+        else:
+            if i == len(cumsum_newton_iters) - 2:
+                continue
+            plt.axvline(
+                end, linestyle="--", alpha=0.9, color="grey", linewidth=2, **kwargs
+            )
     if grid:
         plt.gca().grid(True)
-    plt.xlim(-0.5, cumsum_newton_iters[-1] - 0.5)
+    plt.xlim(-0.5, cumsum_newton_iters[-1])
 
 
 def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True):
@@ -488,11 +498,11 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         )
 
     plt.xlim(0, len(converged_reason) - 0.5)
-    if legend:
-        plt.legend()
+    # if legend:
+    #     plt.legend()
 
     if grid:
-        plt.grid()
+        plt.gca().grid(True)
 
 
 def load_matrix_rhs(data: Sequence[TimeStepStats], idx: int):
@@ -563,3 +573,54 @@ def spy_around(mat, i, j, ni=200, nj=None, show=True):
     spy(mat[istart:iend, jstart:jend], show=False, aspect="auto")
     set_zoomed_frame(istart, iend, jstart, jend)
     return istart, jstart
+
+
+def color_sticking_sliding_open(entry: Sequence[TimeStepStats]):
+    sticking, sliding, open_ = get_num_sticking_sliding_open(entry)
+    maximum = np.array([sticking, sliding, open_]).max(axis=0)
+    seen_sticking = seen_sliding = seen_open = False
+    for i in range(maximum.size):
+        kwargs = {}
+        if sliding[i] > 0:
+            color = "green"
+            if not seen_sliding:
+                kwargs["label"] = "Sliding"
+            seen_sliding = True
+        elif sticking[i] == maximum[i]:
+            color = "#8B4513"
+            if not seen_sticking:
+                kwargs["label"] = "Sticking"
+            seen_sticking = True
+        else:
+            color = "blue"
+            if not seen_open:
+                kwargs["label"] = "Open"
+            seen_open = True
+        plt.axvspan(i - 0.5, i + 0.5, facecolor=color, alpha=0.2, **kwargs)
+
+
+def plot_grid(
+    data,
+    render_element,
+    shape: tuple[int, int] = None,
+    figsize: tuple[int, int] = (8, 8),
+    ylabel: str = "GMRES iters.",
+    xlabel: str = "linear system idx.",
+    legend: bool = True,
+):
+    if shape is None:
+        shape = 3, (len(data) // 3 + len(data) % 3)
+    last = len(data) - 1
+    plt.figure(figsize=figsize)
+    for i, (name, entry) in enumerate(data.items()):
+        plt.subplot(shape[0], shape[1], i + 1)
+        # x=1.0,  /
+        plt.title(name)
+        plt.tight_layout()
+        render_element(entry)
+        if i % shape[1] == 0:
+            plt.ylabel(ylabel)
+        if i >= (shape[0] - 1) * shape[1]:
+            plt.xlabel(xlabel)
+        if legend and i == last:
+            plt.legend(loc="center left", bbox_to_anchor=(1, 0.5), fancybox=True)

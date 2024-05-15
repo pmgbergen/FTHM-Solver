@@ -7,9 +7,11 @@ from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.models.constitutive_laws import CubicLawPermeability
 
 from pp_utils import (
+    CheckStickingSlidingOpen,
     MyPetscSolver,
     DymanicTimeStepping,
     NewtonBacktracking,
+    NewtonBacktrackingSimple,
     StatisticsSavingMixin,
 )
 
@@ -29,34 +31,47 @@ solid_material = {
     "dilation_angle": 5 * np.pi / 180,  # [rad]
     "friction_coefficient": 0.577,  # [-]
     # try to match the paper but not exactly
-    "residual_aperture": 1e-4,
+    "residual_aperture": 1e-4,  # [m]
     "normal_permeability": 1e-4,
-    "permeability": 1e-14,
+    "permeability": 1e-14,  # [m^2]
     # granite
     "biot_coefficient": 0.47,  # [-]
     "density": 2683.0,  # [kg * m^-3]
-    # "permeability": 5.0e-18,  # [m^2]
     "porosity": 1.3e-2,  # [-]
     "specific_storage": 4.74e-10,  # [Pa^-1]
+    # other
+    "maximum_fracture_closure": 0,  # Barton-Bandis elastic deformation. Defaults to 0.
 }
 
 
-class Fpm3(
+class Fpm4(
     NewtonBacktracking,
+    # NewtonBacktrackingSimple,
     MyPetscSolver,
     StatisticsSavingMixin,
+    CheckStickingSlidingOpen,
     DymanicTimeStepping,
     CubicLawPermeability,
     Poromechanics,
+    # MomentumBalance,
+    # SinglePhaseFlow,
 ):
 
-    def __init__(self, params):
-        super().__init__(params)
-
     def simulation_name(self):
-        name = super().simulation_name()
+        try:
+            name = super().simulation_name()
+        except:
+            name = "direct"
         cell_size = self.params["cell_size_multiplier"]
         return f"{name}_x{cell_size}"
+
+    def before_nonlinear_loop(self) -> None:
+        super().before_nonlinear_loop()
+        sticking, sliding, open_ = self.sticking_sliding_open()
+        print()
+        print("num sticking:", sum(sticking))
+        print("num sliding:", sum(sliding))
+        print("num open:", sum(open_))
 
     # Geometry
 
@@ -100,7 +115,7 @@ class Fpm3(
 
     def get_source_intensity(self, t):
         t_max = 6
-        peak_intensity = self.fluid.convert_units(5e-4, "m^3 * s^-1")
+        peak_intensity = self.fluid.convert_units(1e-3, "m^3 * s^-1")
         t_mid = t_max / 2
         if t <= t_mid:
             return t / t_mid * peak_intensity
@@ -139,19 +154,22 @@ class Fpm3(
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
         sides = self.domain_boundary_sides(sd)
-        bc = pp.BoundaryConditionVectorial(
-            sd, sides.east + sides.west + sides.south + sides.north, "dir"
-        )
+        bc = pp.BoundaryConditionVectorial(sd, sides.bottom, "dir")
         bc.internal_to_dirichlet(sd)
         return bc
 
     def bc_values_stress(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         sides = self.domain_boundary_sides(boundary_grid)
-        bc_values = np.zeros((3, boundary_grid.num_cells))
+        bc_values = np.zeros((self.nd, boundary_grid.num_cells))
         # 10 Mpa
         val = self.solid.convert_units(1e7, units="Pa")
+        x = 0.5  # 1
         bc_values[2, sides.top] = -val * boundary_grid.cell_volumes[sides.top]
-        bc_values[2, sides.bottom] = val * boundary_grid.cell_volumes[sides.bottom]
+        # bc_values[1, sides.top] = -val * boundary_grid.cell_volumes[sides.top] * 0.8
+
+        bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
+
+        # bc_values[2, sides.bottom] = val * boundary_grid.cell_volumes[sides.bottom]
         return bc_values.ravel("F")
 
 
@@ -167,7 +185,7 @@ def make_model():
 
     cell_size_multiplier = 3
 
-    units = pp.Units(kg=1e9)
+    units = pp.Units(kg=1e10)
     params = {
         "material_constants": {
             "solid": pp.SolidConstants(solid_material),
@@ -183,9 +201,9 @@ def make_model():
         },
         # "iterative_solver": False,
         "solver_type": "1",
-        "simulation_name": "fpm_3",
+        "simulation_name": "fpm_4",
     }
-    return Fpm3(params)
+    return Fpm4(params)
 
 
 # %%
@@ -208,7 +226,7 @@ if __name__ == "__main__":
         {
             "prepare_simulation": False,
             "progressbars": True,
-            "nl_convergence_tol": 1e-8,
+            "nl_convergence_tol": 1e-6,
             "nl_divergence_tol": 1e8,
             "max_iterations": 25,
         },
