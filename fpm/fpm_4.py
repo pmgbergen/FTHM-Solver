@@ -67,11 +67,12 @@ class Fpm4(
 
     def before_nonlinear_loop(self) -> None:
         super().before_nonlinear_loop()
-        sticking, sliding, open_ = self.sticking_sliding_open()
+        st, sl, op, tr = self.sticking_sliding_open_transition()
         print()
-        print("num sticking:", sum(sticking))
-        print("num sliding:", sum(sliding))
-        print("num open:", sum(open_))
+        print("num sticking:", sum(st))
+        print("num sliding:", sum(sl))
+        print("num open:", sum(op))
+        print("num trans:", sum(tr))
 
     # Geometry
 
@@ -183,7 +184,7 @@ def make_model():
         iter_max=25,
     )
 
-    cell_size_multiplier = 3
+    cell_size_multiplier = 2
 
     units = pp.Units(kg=1e10)
     params = {
@@ -228,7 +229,7 @@ if __name__ == "__main__":
             "progressbars": True,
             "nl_convergence_tol": 1e-6,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 25,
+            "max_iterations": 10,
         },
     )
 

@@ -14,6 +14,8 @@ from scipy.sparse import bmat
 from scipy.sparse.linalg import LinearOperator  # , gmres, bicgstab
 from stats import LinearSolveStats
 from pyamg.krylov import gmres
+import porepy as pp
+
 
 from mat_utils import PetscGMRES, condest
 from stats import TimeStepStats
@@ -94,16 +96,17 @@ def plot_jacobian(model, equations=None):
     ax.set_xticklabels(labels, rotation=45, ha="left")
 
 
-def plot_mat(mat, log=True, show=True):
+def plot_mat(mat, log=True, show=True, threshold=1e-30):
     mat = mat.copy()
     try:
         mat = mat.A
     except AttributeError:
         pass
+
+    mat[abs(mat) < threshold] = np.nan
     if log:
         mat = np.log10(abs(mat))
-    else:
-        mat[mat == 0] = np.nan
+
     plt.matshow(mat, fignum=0)
     plt.colorbar()
     if show:
@@ -394,11 +397,26 @@ def get_num_sticking_sliding_open(
     open_ = []
     for ts in x:
         for ls in ts.linear_solves:
-            st, sl, op = ls.num_sticking_sliding_open
-            sticking.append(st)
-            sliding.append(sl)
-            open_.append(op)
+            sticking.append(sum(ls.sticking))
+            sliding.append(sum(ls.sliding))
+            open_.append(sum(ls.open_))
     return sticking, sliding, open_
+
+
+def get_num_sticking_sliding_open_transition(
+    x: Sequence[TimeStepStats],
+) -> tuple[list[int], list[int], list[int]]:
+    st = []
+    sl = []
+    op = []
+    tr = []
+    for ts in x:
+        for ls in ts.linear_solves:
+            st.append(sum(ls.sticking))
+            sl.append(sum(ls.sliding))
+            op.append(sum(ls.open_))
+            tr.append(sum(ls.transition))
+    return st, sl, op, tr
 
 
 def get_num_transition_cells(x: Sequence[TimeStepStats]) -> np.ndarray:
@@ -575,24 +593,36 @@ def spy_around(mat, i, j, ni=200, nj=None, show=True):
     return istart, jstart
 
 
-def color_sticking_sliding_open(entry: Sequence[TimeStepStats]):
-    sticking, sliding, open_ = get_num_sticking_sliding_open(entry)
-    maximum = np.array([sticking, sliding, open_]).max(axis=0)
-    seen_sticking = seen_sliding = seen_open = False
+COLOR_SLIDING = "green"
+COLOR_STICKING = "#8B4513"
+COLOR_TRANSITION = "#00bfff"
+COLOR_OPEN = "blue"
+
+
+def color_sticking_sliding_open_transition(entry: Sequence[TimeStepStats]):
+    st, sl, op, tr = get_num_sticking_sliding_open_transition(entry)
+    maximum = np.array([st, sl, op, tr]).max(axis=0)
+    seen_sticking = seen_sliding = seen_open = seen_transition = False
     for i in range(maximum.size):
         kwargs = {}
-        if sliding[i] > 0:
-            color = "green"
+        # if sliding[i] > 0:
+        if sl[i] == maximum[i]:
+            color = COLOR_SLIDING
             if not seen_sliding:
                 kwargs["label"] = "Sliding"
             seen_sliding = True
-        elif sticking[i] == maximum[i]:
-            color = "#8B4513"
+        elif st[i] == maximum[i]:
+            color = COLOR_STICKING
             if not seen_sticking:
                 kwargs["label"] = "Sticking"
             seen_sticking = True
+        elif tr[i] == maximum[i]:
+            color = COLOR_TRANSITION
+            if not seen_transition:
+                kwargs["label"] = "Transition"
+            seen_transition = True
         else:
-            color = "blue"
+            color = COLOR_OPEN
             if not seen_open:
                 kwargs["label"] = "Open"
             seen_open = True
@@ -624,3 +654,16 @@ def plot_grid(
             plt.xlabel(xlabel)
         if legend and i == last:
             plt.legend(loc="center left", bbox_to_anchor=(1, 0.5), fancybox=True)
+
+
+def get_friction_bound_norm(model: pp.SolutionStrategy, data: Sequence[TimeStepStats]):
+    fractures = model.mdg.subdomains(dim=model.nd - 1)
+    num_ls = len([ls for ts in data for ls in ts.linear_solves])
+    norms = []
+    for i in range(num_ls):
+        mat, rhs, state, iterate, dt = load_matrix_rhs_state_iterate_dt(data, i)
+        model.equation_system.set_variable_values(iterate, iterate_index=0)
+        model.equation_system.set_variable_values(state, time_step_index=0)
+        b = model.friction_bound(fractures).value(model.equation_system)
+        norms.append(abs(b).max())
+    return norms

@@ -60,18 +60,19 @@ class Fpm4(
     def simulation_name(self):
         try:
             name = super().simulation_name()
-        except:
+        except Exception:
             name = "direct"
         cell_size = self.params["cell_size_multiplier"]
         return f"{name}_x{cell_size}"
 
     def before_nonlinear_loop(self) -> None:
         super().before_nonlinear_loop()
-        sticking, sliding, open_ = self.sticking_sliding_open()
+        st, sl, op, tr = self.sticking_sliding_open_transition()
         print()
-        print("num sticking:", sum(sticking))
-        print("num sliding:", sum(sliding))
-        print("num open:", sum(open_))
+        print("num sticking:", sum(st))
+        print("num sliding:", sum(sl))
+        print("num open:", sum(op))
+        print("num trans:", sum(tr))
 
     # Geometry
 

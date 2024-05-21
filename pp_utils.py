@@ -29,66 +29,107 @@ from stats import LinearSolveStats, TimeStepStats
 
 class CheckStickingSlidingOpen:
 
-    # def sticking_sliding_open(self):
-    #     frac_dim = self.nd - 1
-    #     subdomains = self.mdg.subdomains(dim=frac_dim)
-    #     nd_vec_to_normal = self.normal_component(subdomains)
-    #     # The normal component of the contact traction and the displacement jump
-    #     t_n: pp.ad.Operator = nd_vec_to_normal @ self.contact_traction(subdomains)
-    #     u_n: pp.ad.Operator = nd_vec_to_normal @ self.displacement_jump(subdomains)
-
-    #     # The complimentarity condition
-    #     b = pp.ad.Scalar(-1.0) * t_n - self.contact_mechanics_numerical_constant(
-    #         subdomains
-    #     ) * (u_n - self.fracture_gap(subdomains))
-    #     b = b.value(self.equation_system)
-    #     open_cells = b <= 0
-
-    #     nd_vec_to_tangential = self.tangential_component(subdomains)
-    #     tangential_basis: list[pp.ad.SparseArray] = self.basis(
-    #         subdomains, dim=frac_dim  # type: ignore[call-arg]
-    #     )
-
-    #     t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
-    #     u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
-    #     u_t_increment: pp.ad.Operator = pp.ad.time_increment(u_t)
-
-    #     f_norm = pp.ad.Function(partial(pp.ad.l2_norm, frac_dim), "norm_function")
-    #     c_num_as_scalar = self.contact_mechanics_numerical_constant(subdomains)
-    #     c_num = pp.ad.sum_operator_list(
-    #         [e_i * c_num_as_scalar * e_i.T for e_i in tangential_basis]
-    #     )
-    #     tangential_sum = t_t + c_num @ u_t_increment
-    #     norm_tangential_sum = f_norm(tangential_sum)
-    #     norm = norm_tangential_sum.value(self.equation_system)
-    #     sticking_cells = (b > norm) & np.logical_not(open_cells)
-
-    #     sliding_cells = True ^ (sticking_cells | open_cells)
-    #     return sticking_cells, sliding_cells, open_cells
-
     def sticking_sliding_open(self):
+        print('You might want to consider transition as well')
+        frac_dim = self.nd - 1
+        subdomains = self.mdg.subdomains(dim=frac_dim)
 
-        fric = self.solid.friction_coefficient()
-        lambdas = self.contact_traction(self.mdg.subdomains(dim=self.nd - 1)).value(
-            self.equation_system
+        f_max = pp.ad.Function(pp.ad.maximum, "max_function")
+
+        # The complimentarity condition
+        num_cells = sum([sd.num_cells for sd in subdomains])
+        zeros_frac = pp.ad.DenseArray(np.zeros(num_cells))
+        b_p = f_max(self.friction_bound(subdomains), zeros_frac)
+        b_p.set_name("bp")
+        b_p = b_p.value(self.equation_system)
+        open_cells = b_p < 1e-5  # THIS IS THE SAME CONTACT MECHANICS TOLERANCE
+        # (REVISIT AFTER MERGE WITH POREPY)
+
+        nd_vec_to_tangential = self.tangential_component(subdomains)
+        tangential_basis: list[pp.ad.SparseArray] = self.basis(
+            subdomains, dim=frac_dim  # type: ignore[call-arg]
         )
-        if self.nd == 2:
-            lambda_norm = lambdas[1::2]
-            lambda_tang = lambdas[0::2]
-        elif self.nd == 3:
-            lambda_norm = lambdas[2::3]
-            lambdas_tang_0 = lambdas[0::3]
-            lambdas_tang_1 = lambdas[1::3]
-            lambda_tang = np.sqrt(lambdas_tang_0**2 + lambdas_tang_1**2)
-        else:
-            raise ValueError
 
-        open_cells = abs(lambda_norm) < 1e-10
-        ratio = abs(lambda_tang / (fric * lambda_norm))
-        sliding_limit = 0.99999
-        sliding_cells = (ratio > sliding_limit) * (1 - open_cells)
-        sticking_cells = (ratio <= sliding_limit) * (1 - open_cells)
+        t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
+        u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
+        u_t_increment: pp.ad.Operator = pp.ad.time_increment(u_t)
+
+        f_norm = pp.ad.Function(partial(pp.ad.l2_norm, frac_dim), "norm_function")
+        c_num_as_scalar = self.contact_mechanics_numerical_constant(subdomains)
+        c_num = pp.ad.sum_operator_list(
+            [e_i * c_num_as_scalar * e_i.T for e_i in tangential_basis]
+        )
+        tangential_sum = t_t + c_num @ u_t_increment
+        norm_tangential_sum = f_norm(tangential_sum)
+        norm = norm_tangential_sum.value(self.equation_system)
+        sticking_cells = (b_p > norm) & np.logical_not(open_cells)
+
+        sliding_cells = True ^ (sticking_cells | open_cells)
         return sticking_cells, sliding_cells, open_cells
+
+    def sticking_sliding_open_transition(self):
+        frac_dim = self.nd - 1
+        subdomains = self.mdg.subdomains(dim=frac_dim)
+
+        f_max = pp.ad.Function(pp.ad.maximum, "max_function")
+
+        # The complimentarity condition
+        num_cells = sum([sd.num_cells for sd in subdomains])
+        zeros_frac = pp.ad.DenseArray(np.zeros(num_cells))
+        b_p = f_max(self.friction_bound(subdomains), zeros_frac)
+        b_p.set_name("bp")
+        b_p = b_p.value(self.equation_system)
+        open_cells = b_p == 0
+        transition_cells = (0 < b_p) & (b_p < 1e-5)
+        # THIS IS THE SAME CONTACT MECHANICS TOLERANCE
+        # (REVISIT AFTER MERGE WITH POREPY)
+        open_and_transition = open_cells | transition_cells
+
+        nd_vec_to_tangential = self.tangential_component(subdomains)
+        tangential_basis: list[pp.ad.SparseArray] = self.basis(
+            subdomains, dim=frac_dim  # type: ignore[call-arg]
+        )
+
+        t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
+        u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
+        u_t_increment: pp.ad.Operator = pp.ad.time_increment(u_t)
+
+        f_norm = pp.ad.Function(partial(pp.ad.l2_norm, frac_dim), "norm_function")
+        c_num_as_scalar = self.contact_mechanics_numerical_constant(subdomains)
+        c_num = pp.ad.sum_operator_list(
+            [e_i * c_num_as_scalar * e_i.T for e_i in tangential_basis]
+        )
+        tangential_sum = t_t + c_num @ u_t_increment
+        norm_tangential_sum = f_norm(tangential_sum)
+        norm = norm_tangential_sum.value(self.equation_system)
+        sticking_cells = (b_p > norm) & np.logical_not(open_and_transition)
+
+        sliding_cells = True ^ (sticking_cells | open_and_transition)
+        return sticking_cells, sliding_cells, open_cells, transition_cells
+
+    # def sticking_sliding_open(self):
+
+    #     fric = self.solid.friction_coefficient()
+    #     lambdas = self.contact_traction(self.mdg.subdomains(dim=self.nd - 1)).value(
+    #         self.equation_system
+    #     )
+    #     if self.nd == 2:
+    #         lambda_norm = lambdas[1::2]
+    #         lambda_tang = lambdas[0::2]
+    #     elif self.nd == 3:
+    #         lambda_norm = lambdas[2::3]
+    #         lambdas_tang_0 = lambdas[0::3]
+    #         lambdas_tang_1 = lambdas[1::3]
+    #         lambda_tang = np.sqrt(lambdas_tang_0**2 + lambdas_tang_1**2)
+    #     else:
+    #         raise ValueError
+
+    #     open_cells = abs(lambda_norm) < 1e-10
+    #     ratio = abs(lambda_tang / (fric * lambda_norm))
+    #     sliding_limit = 0.99999
+    #     sliding_cells = (ratio > sliding_limit) * (1 - open_cells)
+    #     sticking_cells = (ratio <= sliding_limit) * (1 - open_cells)
+    #     return sticking_cells, sliding_cells, open_cells
 
 
 class BCMechanics(BoundaryConditionsMomentumBalance):
@@ -277,15 +318,12 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
     def before_nonlinear_iteration(self) -> None:
         self._linear_solve_stats = LinearSolveStats()
         super().before_nonlinear_iteration()
-        # self.discretize()
 
-        data = self.sticking_sliding_open()
-        self._linear_solve_stats.num_sticking_sliding_open = tuple(
-            int(sum(x)) for x in data
-        )
+        data = self.sticking_sliding_open_transition()
         self._linear_solve_stats.sticking = data[0].tolist()
         self._linear_solve_stats.sliding = data[1].tolist()
         self._linear_solve_stats.open_ = data[2].tolist()
+        self._linear_solve_stats.transition = data[3].tolist()
 
         characteristic = self._characteristic.value(self.equation_system).tolist()
         self._linear_solve_stats.transition_sticking_sliding = characteristic
@@ -512,12 +550,18 @@ class MyPetscSolver(pp.SolutionStrategy):
 
             info = gmres_.ksp.getConvergedReason()
 
+            res = mat_permuted.reverse_transform_solution(res_permuted)
+            true_residual_nrm_drop = (
+                abs(self.bmat.mat @ res - rhs).max() / abs(rhs).max()
+            )
+
             if info <= 0:
                 print(f"GMRES failed, {info=}", file=sys.stderr)
                 if info == -9:
-                    res_permuted[:] = np.nan
-
-            res = mat_permuted.reverse_transform_solution(res_permuted)
+                    res[:] = np.nan
+            else:
+                if true_residual_nrm_drop >= 1:
+                    print("True residual did not decrease")
 
         self._linear_solve_stats.petsc_converged_reason = info
         self._linear_solve_stats.time_solve_linear_system = t_solve.elapsed_time

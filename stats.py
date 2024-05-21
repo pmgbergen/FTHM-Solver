@@ -17,11 +17,10 @@ class LinearSolveStats:
     state_id: str = ""
     iterate_id: str = ""
     petsc_converged_reason: int = -100
-    num_sticking_sliding_open: tuple[int, int, int] = (-1, -1, -1)
     sticking: list[int] = field(default_factory=list)
     sliding: list[int] = field(default_factory=list)
     open_: list[int] = field(default_factory=list)
-    transition_sticking_sliding: list[int] = field(default=list)
+    transition: list[int] = field(default_factory=list)
 
 
 @dataclass

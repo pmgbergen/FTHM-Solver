@@ -2,7 +2,10 @@ from porepy.numerics.linalg.matrix_operations import sparse_kronecker_product
 from block_matrix import BlockMatrixStorage, SolveSchema
 import scipy.sparse
 import numpy as np
-from mat_utils import PetscAMGMechanics, lump_nd, inv_block_diag
+from mat_utils import PetscAMGMechanics, inv, lump_nd, inv_block_diag
+from scipy.sparse import csr_matrix
+from numba import njit
+import numba
 
 
 def build_local_stabilization(
@@ -211,12 +214,49 @@ def make_J44_inv(model, bmat: BlockMatrixStorage, lump=False):
 
 def make_J44_inv_bdiag(model, bmat: BlockMatrixStorage):
     J44 = bmat[4, 4].mat
-    stab = bmat[4, 5].mat @ inv_block_diag(bmat[5, 5].mat, nd=model.nd) @ bmat[5, 4].mat
-    
-    # rowsum = np.array(J44.sum(axis=1)).ravel()
-    # nonzeros = rowsum != 0
-    # stab[nonzeros] = 0
+    J55_inv = inv_block_diag(bmat[[5]].mat, nd=model.nd)
+    # J55_inv = inv(bmat[5, 5].mat)
+    stab = bmat[4, 5].mat @ J55_inv @ bmat[5, 4].mat
+
+    st, sl, op, tr = model.sticking_sliding_open_transition()
+
+    assert model.nd == 3
+    sliding_tang = np.repeat(sl, model.nd)
+    sliding_tang[::model.nd] = 0  # we need only tangential
+    stab[sliding_tang] = 0
+
+    sliding_norm = np.repeat(sl, model.nd)
+    sliding_norm[1::model.nd] = 0
+    sliding_norm[2::model.nd] = 0
+
+    stab[sliding_norm, 0::3] = 0
+    stab[sliding_norm, 1::3] = 0
 
     S44 = J44 - stab
-    # S44 = J44
+    
     return inv_block_diag(S44, nd=model.nd)
+
+
+def set_rows_zero(mat: csr_matrix, rows: np.ndarray) -> None:
+    rows = np.array(rows)
+    if rows.dtype == bool:
+        _set_rows_zeros_bool(mat.data, mat.indptr, rows)
+    else:
+        _set_rows_zeros_int(mat.data, mat.indptr, rows)
+
+
+@njit
+def _set_rows_zeros_bool(
+    csr_data: np.ndarray, csr_indptr: np.ndarray, rows: np.ndarray
+) -> None:
+    for i, set_zero in enumerate(rows):
+        if set_zero:
+            csr_data[csr_indptr[i] : csr_indptr[i + 1]] = 0.0
+
+
+@njit
+def _set_rows_zeros_int(
+    csr_data: np.ndarray, csr_indptr: np.ndarray, rows: np.ndarray
+) -> None:
+    for i in rows:
+        csr_data[csr_indptr[i] : csr_indptr[i + 1]] = 0.0
