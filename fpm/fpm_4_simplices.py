@@ -174,7 +174,7 @@ class Fpm4(
         return bc_values.ravel("F")
 
 
-def make_model():
+def make_model(cell_size_multiplier=1):
     dt = 0.5
     time_manager = pp.TimeManager(
         dt_init=dt,
@@ -183,8 +183,6 @@ def make_model():
         constant_dt=False,
         iter_max=25,
     )
-
-    cell_size_multiplier = 0.5
 
     units = pp.Units(kg=1e10)
     params = {
