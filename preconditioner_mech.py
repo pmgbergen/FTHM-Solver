@@ -213,7 +213,7 @@ def make_J44_inv(model, bmat: BlockMatrixStorage, lump=False):
 
 
 def make_J44_inv_bdiag(model, bmat: BlockMatrixStorage):
-    assert "You shouldn't be here"
+    assert False, "You shouldn't be here"
     J44 = bmat[4, 4].mat
     J55_inv = inv_block_diag(bmat[[5]].mat, nd=model.nd)
     # J55_inv = inv(bmat[5, 5].mat)
