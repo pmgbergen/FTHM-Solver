@@ -11,7 +11,6 @@ import scipy.sparse
 from matplotlib import pyplot as plt
 from porepy.models.fluid_mass_balance import BoundaryConditionsSinglePhaseFlow
 from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
-from scipy.optimize import minimize_scalar
 
 from block_matrix import BlockMatrixStorage, SolveSchema, make_solver
 from fixed_stress import get_fixed_stress_stabilization, make_fs
@@ -21,6 +20,8 @@ from mat_utils import (
     PetscGMRES,
     PetscILU,
     TimerContext,
+    inv_block_diag,
+    csr_ones,
     extract_diag_inv,
 )
 from preconditioner_mech import make_J44_inv_bdiag
@@ -30,7 +31,7 @@ from stats import LinearSolveStats, TimeStepStats
 class CheckStickingSlidingOpen:
 
     def sticking_sliding_open(self):
-        print('You might want to consider transition as well')
+        print("You might want to consider transition as well")
         frac_dim = self.nd - 1
         subdomains = self.mdg.subdomains(dim=frac_dim)
 
@@ -449,7 +450,7 @@ class MyPetscSolver(pp.SolutionStrategy):
                 ),
             )
 
-        if solver_type == "1":
+        elif solver_type == "1":
             return SolveSchema(
                 groups=[3],
                 solve=lambda bmat: PetscILU(bmat[[3]].mat),
@@ -463,6 +464,28 @@ class MyPetscSolver(pp.SolutionStrategy):
                             mat=bmat[[1, 5]].mat, dim=self.nd
                         ),
                         # invertor=lambda bmat: make_fs(self, bmat).mat,
+                        invertor=lambda bmat: self._fixed_stress.mat,
+                        invertor_type="physical",
+                        complement=SolveSchema(
+                            groups=[0, 2],
+                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                        ),
+                    ),
+                ),
+            )
+        elif solver_type == "2":
+            return SolveSchema(
+                groups=[4],
+                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
+                complement=SolveSchema(
+                    groups=[3],
+                    solve=lambda bmat: PetscILU(bmat[[3]].mat),
+                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                    complement=SolveSchema(
+                        groups=[1, 5],
+                        solve=lambda bmat: PetscAMGMechanics(
+                            mat=bmat[[1, 5]].mat, dim=self.nd
+                        ),
                         invertor=lambda bmat: self._fixed_stress.mat,
                         invertor_type="physical",
                         complement=SolveSchema(
@@ -509,11 +532,29 @@ class MyPetscSolver(pp.SolutionStrategy):
                     r"$u_{intf}$",
                 ],
             )
+            # reordering the matrix to the order I work with, not how PorePy provides it
+            bmat = bmat[:]  
             self.bmat = bmat
-
             schema = self.make_solver_schema()
 
-            bmat_reordered, preconditioner = make_solver(schema=schema, mat_orig=bmat)
+            solver_type = self.params.get("solver_type", "baseline")
+            if solver_type == "2":
+                J55_inv = inv_block_diag(bmat[[5]].mat, nd=self.nd)
+                Q = bmat.empty_container()
+                Q.mat = csr_ones(Q.shape[0])
+                Q[4, 5] = -bmat[4, 5].mat @ J55_inv
+
+                J_Q = bmat.empty_container()
+                J_Q.mat = Q.mat @ bmat.mat
+
+                bmat_reordered, preconditioner = make_solver(schema, J_Q)
+                Q_perm = Q[bmat_reordered.active_groups]
+                self.rhs_Q = Q_perm.mat @ Q_perm.local_rhs(rhs)
+                self.Q_perm = Q_perm
+            else:
+                bmat_reordered, preconditioner = make_solver(
+                    schema=schema, mat_orig=bmat
+                )
 
         self._linear_solve_stats.time_prepare_solver = t_prepare_solver.elapsed_time
 
@@ -533,15 +574,19 @@ class MyPetscSolver(pp.SolutionStrategy):
         with TimerContext() as t_solve:
 
             mat_permuted, prec = self._prepare_solver()
-
-            rhs_permuted = mat_permuted.local_rhs(rhs)
-
             tol = 1e-10
             pc_side = "right"
             solver_type = self.params.get("solver_type", "baseline")
             if solver_type == "1":
                 tol = 1e-10
                 pc_side = "left"
+            
+            if solver_type == '2':
+                rhs_permuted = self.rhs_Q
+                tol=1e-5
+            else:
+                rhs_permuted = mat_permuted.local_rhs(rhs)
+
             gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec, pc_side=pc_side, tol=tol)
 
             with TimerContext() as t_gmres:
@@ -552,7 +597,7 @@ class MyPetscSolver(pp.SolutionStrategy):
 
             res = mat_permuted.reverse_transform_solution(res_permuted)
             true_residual_nrm_drop = (
-                abs(self.bmat.mat @ res - rhs).max() / abs(rhs).max()
+                abs(mat @ res - rhs).max() / abs(rhs).max()
             )
 
             if info <= 0:

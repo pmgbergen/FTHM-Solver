@@ -175,6 +175,7 @@ class Fpm4(
 
 
 def make_model(cell_size_multiplier=1):
+    print(f'{cell_size_multiplier = }')
     dt = 0.5
     time_manager = pp.TimeManager(
         dt_init=dt,
@@ -199,7 +200,7 @@ def make_model(cell_size_multiplier=1):
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
         # "iterative_solver": False,
-        "solver_type": "1",
+        "solver_type": "2",
         "simulation_name": "fpm_4_simplices",
     }
     return Fpm4(params)
@@ -209,7 +210,7 @@ def make_model(cell_size_multiplier=1):
 if __name__ == "__main__":
     from matplotlib import pyplot as plt
 
-    model = make_model()
+    model = make_model(cell_size_multiplier=0.5)
     model.prepare_simulation()
     print(model.simulation_name())
 

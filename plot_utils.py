@@ -5,6 +5,7 @@ import json
 from typing import Literal, Sequence
 
 import matplotlib as mpl
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 import scipy
 import scipy.linalg
@@ -254,6 +255,7 @@ def solve_petsc(
     normalize_residual=False,
     tol=1e-10,
     pc_side: Literal["left", "right"] = "left",
+    return_solution: bool = False,
 ):
     if rhs is None:
         rhs = np.ones(mat.shape[0])
@@ -310,6 +312,8 @@ def solve_petsc(
     if logx_eigs:
         plt.xscale("log")
     ax.set_title("Eigenvalues estimate")
+    if return_solution:
+        return sol
 
 
 def get_gmres_iterations(x: Sequence[TimeStepStats]) -> list[float]:
@@ -483,6 +487,7 @@ def color_time_steps(
     if grid:
         plt.gca().grid(True)
     plt.xlim(-0.5, cumsum_newton_iters[-1])
+    plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
 
 
 def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True):
@@ -667,3 +672,12 @@ def get_friction_bound_norm(model: pp.SolutionStrategy, data: Sequence[TimeStepS
         b = model.friction_bound(fractures).value(model.equation_system)
         norms.append(abs(b).max())
     return norms
+
+
+def plot_sticking_sliding_open_transition(entry: Sequence[TimeStepStats]):
+    st, sl, op, tr = get_num_sticking_sliding_open_transition(entry)
+    color_time_steps(entry, fill=True, grid=False, legend=True)
+    plt.plot(st, label="Sticking", marker=".", color=COLOR_STICKING)
+    plt.plot(sl, label="Sliding", marker=".", color=COLOR_SLIDING)
+    plt.plot(op, label="Open", marker=".", color=COLOR_OPEN)
+    plt.plot(tr, label="Transition", marker=".", color=COLOR_TRANSITION)
