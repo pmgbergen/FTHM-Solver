@@ -108,30 +108,6 @@ class CheckStickingSlidingOpen:
         sliding_cells = True ^ (sticking_cells | open_and_transition)
         return sticking_cells, sliding_cells, open_cells, transition_cells
 
-    # def sticking_sliding_open(self):
-
-    #     fric = self.solid.friction_coefficient()
-    #     lambdas = self.contact_traction(self.mdg.subdomains(dim=self.nd - 1)).value(
-    #         self.equation_system
-    #     )
-    #     if self.nd == 2:
-    #         lambda_norm = lambdas[1::2]
-    #         lambda_tang = lambdas[0::2]
-    #     elif self.nd == 3:
-    #         lambda_norm = lambdas[2::3]
-    #         lambdas_tang_0 = lambdas[0::3]
-    #         lambdas_tang_1 = lambdas[1::3]
-    #         lambda_tang = np.sqrt(lambdas_tang_0**2 + lambdas_tang_1**2)
-    #     else:
-    #         raise ValueError
-
-    #     open_cells = abs(lambda_norm) < 1e-10
-    #     ratio = abs(lambda_tang / (fric * lambda_norm))
-    #     sliding_limit = 0.99999
-    #     sliding_cells = (ratio > sliding_limit) * (1 - open_cells)
-    #     sticking_cells = (ratio <= sliding_limit) * (1 - open_cells)
-    #     return sticking_cells, sliding_cells, open_cells
-
 
 class BCMechanics(BoundaryConditionsMomentumBalance):
     def bc_type_mechanics(self, sd):
@@ -372,6 +348,11 @@ class MyPetscSolver(pp.SolutionStrategy):
         self._variable_groups = self.make_variables_groups()
         self._equation_groups = self.make_equations_groups()
 
+        self.eq_group_dofs = [
+            np.concatenate([self.eq_dofs[block] for block in group])
+            for group in self._equation_groups
+        ]
+
         # This is very important, iterative solver relies on this reindexing
         self._reorder_contact = make_reorder_contact(self)
         self._corrected_eq_dofs, self._corrected_eq_groups = correct_eq_groups(self)
@@ -533,7 +514,7 @@ class MyPetscSolver(pp.SolutionStrategy):
                 ],
             )
             # reordering the matrix to the order I work with, not how PorePy provides it
-            bmat = bmat[:]  
+            bmat = bmat[:]
             self.bmat = bmat
             schema = self.make_solver_schema()
 
@@ -580,14 +561,17 @@ class MyPetscSolver(pp.SolutionStrategy):
             if solver_type == "1":
                 tol = 1e-10
                 pc_side = "left"
-            
-            if solver_type == '2':
+
+            if solver_type == "2":
                 rhs_permuted = self.rhs_Q
-                tol=1e-5
+                # pc_side = "right"
+                # tol = 1e-5
+                pc_side = 'left'
+                tol = 1e-10
             else:
                 rhs_permuted = mat_permuted.local_rhs(rhs)
 
-            gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec, pc_side=pc_side, tol=tol)
+            gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec, pc_side=pc_side, tol=tol, rhs_group_dofs=self.eq_group_dofs)
 
             with TimerContext() as t_gmres:
                 res_permuted = gmres_.solve(rhs_permuted)
@@ -596,9 +580,7 @@ class MyPetscSolver(pp.SolutionStrategy):
             info = gmres_.ksp.getConvergedReason()
 
             res = mat_permuted.reverse_transform_solution(res_permuted)
-            true_residual_nrm_drop = (
-                abs(mat @ res - rhs).max() / abs(rhs).max()
-            )
+            true_residual_nrm_drop = abs(mat @ res - rhs).max() / abs(rhs).max()
 
             if info <= 0:
                 print(f"GMRES failed, {info=}", file=sys.stderr)
@@ -760,8 +742,7 @@ class NewtonBacktracking(pp.SolutionStrategy):
             evaluate_jacobian=False, state=state
         )
         group_residuals = []
-        for group in self._equation_groups:
-            dofs = np.concatenate([self.eq_dofs[block] for block in group])
+        for dofs in self.eq_group_dofs:
             nrm = np.linalg.norm(nonlinear_residual[dofs])
             group_residuals.append(nrm)
 
@@ -804,8 +785,6 @@ class NewtonBacktrackingSimple(pp.SolutionStrategy):
         # print(file=sys.stderr, flush=True)
         # print(f"{alpha = }", flush=True)
         super().after_nonlinear_iteration(delta_sol)
-
-    #     pass
 
     def before_nonlinear_loop(self) -> None:
         super().before_nonlinear_loop()

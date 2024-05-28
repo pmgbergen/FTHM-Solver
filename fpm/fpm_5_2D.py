@@ -1,21 +1,23 @@
 # %%
 import numpy as np
 import porepy as pp
-from porepy.models.poromechanics import Poromechanics
-from porepy.models.momentum_balance import MomentumBalance
-from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.models.constitutive_laws import CubicLawPermeability
+from porepy.models.poromechanics import Poromechanics
+from porepy.applications.md_grids.fracture_sets import (
+    seven_fractures_one_L_intersection,
+)
+from matplotlib import pyplot as plt
 
 from pp_utils import (
     CheckStickingSlidingOpen,
-    MyPetscSolver,
     DymanicTimeStepping,
+    MyPetscSolver,
     NewtonBacktracking,
     NewtonBacktrackingSimple,
     StatisticsSavingMixin,
 )
 
-XMAX = 1.0
+XMAX = 2.0
 YMAX = 1.0
 ZMAX = 1.0
 
@@ -72,35 +74,30 @@ class Fpm4(
         print("num sticking:", sum(st))
         print("num sliding:", sum(sl))
         print("num open:", sum(op))
-        print("num trans:", sum(tr))
+        print("num transition:", sum(tr))
 
     # Geometry
 
     def set_domain(self) -> None:
-        self._domain = pp.Domain(
-            {"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX, "zmin": 0, "zmax": ZMAX}
-        )
+        self._domain = pp.Domain({"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX})
 
     def set_fractures(self) -> None:
         x = 0.3
-        y = 0.3
-        pts_list = [
-            np.array(
+        y = 0.5
+        pts_list = np.array(
+            [
                 [
-                    [x * XMAX, (1 - x) * XMAX, (1 - x) * XMAX, x * XMAX],  # x
-                    [y * YMAX, (1 - y) * YMAX, y * YMAX, (1 - y) * YMAX],  # y
-                    [z * ZMAX, z * ZMAX, z * ZMAX, z * ZMAX],  # z
-                ]
-            )
-            for z in [
-                # 0.2,
-                # 0.4,
-                0.5
-                # 0.6,
-                # 0.8,
+                    [x * XMAX, (1 - x) * XMAX],  # x
+                    [y * YMAX, y * YMAX],  # y
+                ],
+                [
+                    [x * XMAX, (1 - x) * XMAX],
+                    [x * YMAX, (1 - x) * YMAX],
+                ],
             ]
-        ]
-        self._fractures = [pp.PlaneFracture(pts) for pts in pts_list]
+        )
+        # self._fractures = [pp.LineFracture(pts) for pts in pts_list]
+        self._fractures = seven_fractures_one_L_intersection()
 
     # Source
 
@@ -155,7 +152,7 @@ class Fpm4(
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
         sides = self.domain_boundary_sides(sd)
-        bc = pp.BoundaryConditionVectorial(sd, sides.bottom, "dir")
+        bc = pp.BoundaryConditionVectorial(sd, sides.south, "dir")
         bc.internal_to_dirichlet(sd)
         return bc
 
@@ -163,23 +160,18 @@ class Fpm4(
         sides = self.domain_boundary_sides(boundary_grid)
         bc_values = np.zeros((self.nd, boundary_grid.num_cells))
         # 10 Mpa
-        val = self.solid.convert_units(1e7, units="Pa")
         x = 0.5  # 1
-        bc_values[2, sides.top] = -val * boundary_grid.cell_volumes[sides.top]
-        # bc_values[1, sides.top] = -val * boundary_grid.cell_volumes[sides.top] * 0.8
-
-        bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
-
-        # bc_values[2, sides.bottom] = val * boundary_grid.cell_volumes[sides.bottom]
+        val = self.solid.convert_units(1e7, units="Pa")
+        bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
+        # bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
         return bc_values.ravel("F")
 
 
 def make_model(cell_size_multiplier=1):
-    print(f"{cell_size_multiplier = }")
     dt = 0.5
     time_manager = pp.TimeManager(
         dt_init=dt,
-        dt_min_max=(0.1, 0.5),
+        dt_min_max=(0.01, 0.5),
         schedule=[0, 3, 6],
         constant_dt=False,
         iter_max=25,
@@ -201,14 +193,15 @@ def make_model(cell_size_multiplier=1):
         },
         # "iterative_solver": False,
         "solver_type": "2",
-        "simulation_name": "fpm_4_simplices",
+        "simulation_name": "fpm_4_2D",
     }
     return Fpm4(params)
 
 
-def run(cell_size_multiplier: int):
+# %%
+if __name__ == "__main__":
 
-    model = make_model(cell_size_multiplier=cell_size_multiplier)
+    model = make_model(cell_size_multiplier=4)
     model.prepare_simulation()
     print(model.simulation_name())
 
@@ -216,6 +209,7 @@ def run(cell_size_multiplier: int):
     #     model.mdg.subdomains(dim=2)[0],
     #     alpha=0.5,
     #     rgb=[0.5, 0.5, 1],
+    #     plot_2d=True,
     # )
     # plt.show()
 
@@ -226,7 +220,7 @@ def run(cell_size_multiplier: int):
             "progressbars": True,
             "nl_convergence_tol": 1e-6,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 10,
+            "max_iterations": 25,
         },
     )
 
@@ -235,12 +229,9 @@ def run(cell_size_multiplier: int):
     #     cell_value=model.pressure_variable,
     #     vector_value=model.displacement_variable,
     #     alpha=0.5,
+    #     plot_2d=True,
     # )
 
     print(model.simulation_name())
 
-
 # %%
-if __name__ == "__main__":
-    for i in range(2, 6):
-        run(cell_size_multiplier=i + 1)

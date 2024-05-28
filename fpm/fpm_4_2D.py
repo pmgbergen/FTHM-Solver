@@ -65,11 +65,12 @@ class Fpm4(
 
     def before_nonlinear_loop(self) -> None:
         super().before_nonlinear_loop()
-        sticking, sliding, open_ = self.sticking_sliding_open()
+        st, sl, op, tr = self.sticking_sliding_open_transition()
         print()
-        print("num sticking:", sum(sticking))
-        print("num sliding:", sum(sliding))
-        print("num open:", sum(open_))
+        print("num sticking:", sum(st))
+        print("num sliding:", sum(sl))
+        print("num open:", sum(op))
+        print("num transition:", sum(tr))
 
     # Geometry
 
@@ -160,7 +161,7 @@ class Fpm4(
         return bc_values.ravel("F")
 
 
-def make_model():
+def make_model(cell_size_multiplier=1):
     dt = 0.5
     time_manager = pp.TimeManager(
         dt_init=dt,
@@ -169,8 +170,6 @@ def make_model():
         constant_dt=False,
         iter_max=25,
     )
-
-    cell_size_multiplier = 2
 
     units = pp.Units(kg=1e10)
     params = {
@@ -187,7 +186,7 @@ def make_model():
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
         # "iterative_solver": False,
-        "solver_type": "1",
+        "solver_type": "2",
         "simulation_name": "fpm_4_2D",
     }
     return Fpm4(params)
@@ -196,7 +195,7 @@ def make_model():
 # %%
 if __name__ == "__main__":
 
-    model = make_model()
+    model = make_model(cell_size_multiplier=5)
     model.prepare_simulation()
     print(model.simulation_name())
 

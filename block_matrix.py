@@ -292,14 +292,25 @@ class BlockMatrixStorage:
             group_row_names=self.groups_row_names,
         )
 
-    def local_rhs(self, rhs: np.ndarray) -> np.ndarray:
+    def local_rhs(self, global_rhs: np.ndarray) -> np.ndarray:
         row_idx = [
             self.global_row_idx[j]
             for i in self.active_groups[0]
             for j in self.groups_row[i]
         ]
         row_idx = np.concatenate(row_idx)
-        return rhs[row_idx]
+        return global_rhs[row_idx]
+
+    def global_rhs(self, local_rhs: np.ndarray) -> np.ndarray:
+        row_idx = np.concatenate([
+            self.global_row_idx[j]
+            for i in self.active_groups[0]
+            for j in self.groups_row[i]
+        ])
+        total_size = sum(x.size for x in self.global_col_idx)
+        result = np.zeros(total_size, dtype=local_rhs.dtype)
+        result[row_idx] = local_rhs
+        return result
 
     def reverse_transform_solution(self, x: np.ndarray) -> np.ndarray:
         col_idx = [
@@ -462,6 +473,34 @@ class BlockMatrixStorage:
             cmap=sns.color_palette("coolwarm", as_cmap=True),
         )
 
+    def color_local_rhs(self, local_rhs: np.ndarray, groups: bool = True):
+        y_tick_labels, x_tick_labels = self.get_active_group_names()
+        row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
+        row_names = y_tick_labels
+        alpha = 0.3
+
+        # this repeats the code of color_spy()
+        row_sep = [0]
+        for row in row_idx:
+            row_sep.append(row[-1] + 1)
+        row_sep = sorted(row_sep)
+
+        if row_names is None:
+            row_names = list(range(len(row_sep) - 1))
+
+        ax = plt.gca()
+        row_label_pos = []
+        for i in range(len(row_names)):
+            ystart, yend = row_sep[i : i + 2]
+            row_label_pos.append(ystart + (yend - ystart) / 2)
+            kwargs = {}
+            kwargs["facecolor"] = f"C{i}"
+            plt.axvspan(ystart - 0.5, yend - 0.5, alpha=alpha, **kwargs)
+        ax.xaxis.set_ticks(row_label_pos)
+        ax.set_xticklabels(row_names, rotation=45)
+
+        plt.plot(local_rhs)
+
 
 @dataclass
 class SolveSchema:
@@ -472,8 +511,6 @@ class SolveSchema:
         "algebraic"
     )
     complement: Optional["SolveSchema"] = None
-
-    transform_nondiagonal_blocks: callable = lambda mat10, mat01: (mat10, mat01)
 
     compute_cond: bool = False
     color_spy: bool = False
@@ -531,10 +568,8 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
             submat_00_inv = inv(submat_00.mat)
         else:
             submat_00_inv = invertor(mat_orig)
-        submat_10_m, submat_01_m = schema.transform_nondiagonal_blocks(
-            submat_10, submat_01
-        )
-        submat_11.mat -= submat_10_m.mat @ submat_00_inv @ submat_01_m.mat
+
+        submat_11.mat -= submat_10.mat @ submat_00_inv @ submat_01.mat
 
     elif schema.invertor_type == "test_vector":
         if invertor == "use_solve":
@@ -566,6 +601,8 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         solve_mass=complement_solve,
         C1=submat_10.mat,
         C2=submat_01.mat,
+        groups_0=groups_0,
+        groups_1=groups_1,
     )
     return mat_permuted, prec
 

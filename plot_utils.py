@@ -256,10 +256,15 @@ def solve_petsc(
     tol=1e-10,
     pc_side: Literal["left", "right"] = "left",
     return_solution: bool = False,
+    ksp_view: bool = False,
+    rhs_eq_groups: Sequence[np.ndarray] = None
 ):
     if rhs is None:
         rhs = np.ones(mat.shape[0])
-    gmres = PetscGMRES(mat, pc=prec, tol=tol, pc_side=pc_side)
+    gmres = PetscGMRES(mat, pc=prec, tol=tol, pc_side=pc_side, rhs_group_dofs=rhs_eq_groups)
+
+    if ksp_view:
+        gmres.ksp.view()
 
     t0 = time.time()
     sol = gmres.solve(rhs)
@@ -487,7 +492,16 @@ def color_time_steps(
     if grid:
         plt.gca().grid(True)
     plt.xlim(-0.5, cumsum_newton_iters[-1])
-    plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+    set_integer_ticks("horizontal")
+
+
+def set_integer_ticks(direction: Literal["vertical", "horizontal"]):
+    if direction == "vertical":
+        plt.gca().yaxis.set_major_locator(MaxNLocator(integer=True))
+    elif direction == "horizontal":
+        plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+    else:
+        raise ValueError(direction)
 
 
 def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True):
@@ -649,7 +663,6 @@ def plot_grid(
     plt.figure(figsize=figsize)
     for i, (name, entry) in enumerate(data.items()):
         plt.subplot(shape[0], shape[1], i + 1)
-        # x=1.0,  /
         plt.title(name)
         plt.tight_layout()
         render_element(entry)
@@ -658,7 +671,14 @@ def plot_grid(
         if i >= (shape[0] - 1) * shape[1]:
             plt.xlabel(xlabel)
         if legend and i == last:
-            plt.legend(loc="center left", bbox_to_anchor=(1, 0.5), fancybox=True)
+            lines = []
+            labels = []
+            for ax in plt.gcf().axes:
+                for line, label in zip(*ax.get_legend_handles_labels()):
+                    if label not in labels:
+                        lines.append(line)
+                        labels.append(label)
+            plt.legend(lines, labels, loc="center left", bbox_to_anchor=(1, 0.5), fancybox=True)
 
 
 def get_friction_bound_norm(model: pp.SolutionStrategy, data: Sequence[TimeStepStats]):
@@ -681,3 +701,15 @@ def plot_sticking_sliding_open_transition(entry: Sequence[TimeStepStats]):
     plt.plot(sl, label="Sliding", marker=".", color=COLOR_SLIDING)
     plt.plot(op, label="Open", marker=".", color=COLOR_OPEN)
     plt.plot(tr, label="Transition", marker=".", color=COLOR_TRANSITION)
+
+
+def get_rhs_norms(model: pp.SolutionStrategy, data: Sequence[TimeStepStats], ord=2):
+    bmat, prec = model._prepare_solver()
+    num_ls = len([ls for ts in data for ls in ts.linear_solves])
+    norms = [[] for i in range(6)]
+    J_list = [bmat[[i]] for i in range(6)]
+    for i in range(num_ls):
+        mat, rhs, state, iterate, dt = load_matrix_rhs_state_iterate_dt(data, i)
+        for nrm_list, J_i in zip(norms, J_list):
+            nrm_list.append(np.linalg.norm(J_i.local_rhs(rhs), ord=ord))
+    return norms

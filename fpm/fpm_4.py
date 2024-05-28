@@ -5,6 +5,7 @@ from porepy.models.poromechanics import Poromechanics
 from porepy.models.momentum_balance import MomentumBalance
 from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.models.constitutive_laws import CubicLawPermeability
+from matplotlib import pyplot as plt
 
 from pp_utils import (
     CheckStickingSlidingOpen,
@@ -174,7 +175,7 @@ class Fpm4(
         return bc_values.ravel("F")
 
 
-def make_model():
+def make_model(cell_size_multiplier=1):
     dt = 0.5
     time_manager = pp.TimeManager(
         dt_init=dt,
@@ -183,8 +184,6 @@ def make_model():
         constant_dt=False,
         iter_max=25,
     )
-
-    cell_size_multiplier = 2
 
     units = pp.Units(kg=1e10)
     params = {
@@ -201,17 +200,15 @@ def make_model():
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
         # "iterative_solver": False,
-        "solver_type": "1",
+        "solver_type": "2",
         "simulation_name": "fpm_4",
     }
     return Fpm4(params)
 
 
-# %%
-if __name__ == "__main__":
-    from matplotlib import pyplot as plt
+def run(cell_size_multiplier: int):
 
-    model = make_model()
+    model = make_model(cell_size_multiplier=cell_size_multiplier)
     model.prepare_simulation()
     print(model.simulation_name())
 
@@ -242,4 +239,8 @@ if __name__ == "__main__":
 
     print(model.simulation_name())
 
+
 # %%
+if __name__ == "__main__":
+    for i in range(6):
+        run(cell_size_multiplier=i+1)

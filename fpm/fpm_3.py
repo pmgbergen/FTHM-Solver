@@ -155,7 +155,7 @@ class Fpm3(
         return bc_values.ravel("F")
 
 
-def make_model():
+def make_model(cell_size_multiplier=1):
     dt = 0.5
     time_manager = pp.TimeManager(
         dt_init=dt,
@@ -164,8 +164,6 @@ def make_model():
         constant_dt=False,
         iter_max=25,
     )
-
-    cell_size_multiplier = 3
 
     units = pp.Units(kg=1e9)
     params = {
@@ -182,7 +180,7 @@ def make_model():
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
         # "iterative_solver": False,
-        "solver_type": "1",
+        "solver_type": "2",
         "simulation_name": "fpm_3",
     }
     return Fpm3(params)
@@ -192,7 +190,7 @@ def make_model():
 if __name__ == "__main__":
     from matplotlib import pyplot as plt
 
-    model = make_model()
+    model = make_model(cell_size_multiplier=3)
     model.prepare_simulation()
     print(model.simulation_name())
 

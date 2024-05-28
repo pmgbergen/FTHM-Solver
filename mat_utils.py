@@ -15,8 +15,17 @@ petsc4py.init(sys.argv)
 from petsc4py import PETSc
 
 
+def assert_finite(vals, groups):
+    if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
+        print("Divergence", groups)
+
+
 class FieldSplit:
-    def __init__(self, solve_momentum, solve_mass, C1, C2):
+    def __init__(
+        self, solve_momentum, solve_mass, C1, C2, groups_0=None, groups_1=None
+    ):
+        self.groups_0 = groups_0
+        self.groups_1 = groups_1
         self.J00_inv = solve_momentum
         self.S11_inv = solve_mass
         self.J01 = C1
@@ -28,11 +37,15 @@ class FieldSplit:
     def dot(self, x):
         x_0, x_1 = x[: self.sep], x[self.sep :]
         tmp_0 = self.J00_inv.dot(x_0)
+        assert_finite(tmp_0, groups=self.groups_0)  # 1e+32
         tmp_1 = x_1 - self.J01.dot(tmp_0)
         y_1 = self.S11_inv.dot(tmp_1)
+        assert_finite(y_1, groups=self.groups_1)
         y = np.zeros_like(x)
         y[self.sep :] = y_1
-        y[: self.sep] = self.J00_inv.dot(x_0 - self.J10.dot(y_1))
+        tmp_2 = self.J00_inv.dot(x_0 - self.J10.dot(y_1))
+        assert_finite(tmp_2, groups=self.groups_0)
+        y[: self.sep] = tmp_2
         return y
 
 
@@ -152,8 +165,12 @@ class PetscPC:
 class PetscAMGMechanics(PetscPC):
     def __init__(self, dim: int, mat=None) -> None:
         options = PETSc.Options()
+
+        for key in options.getAll():
+            options.delValue(key)
+
         # options["pc_type"] = "gamg"
-        # options['pc_gamg_agg_nsmooths'] = 1
+        # options['pc_gamg_agg_nsmooths'] = 10
         # options["mg_levels_ksp_type"] = "chebyshev"
         # options["mg_levels_ksp_chebyshev_esteig_steps"] = 10
         # options["mg_levels_pc_type"] = "jacobi"
@@ -163,10 +180,15 @@ class PetscAMGMechanics(PetscPC):
         options["pc_hypre_boomeramg_max_iter"] = 1
         options["pc_hypre_boomeramg_cycle_type"] = "W"
         options["pc_hypre_boomeramg_truncfactor"] = 0.3
+        options['pc_hypre_boomeramg_strong_threshold'] = 0.9
+        # options['pc_hypre_boomeramg_relax_type_all'] = 'CG'
+
+        # options['pc_hypre_boomeramg_print_statistics'] = None
+
         # options.setValue('pc_hypre_boomeramg_relax_type_all', 'Chebyshev')
         # options.setValue('pc_hypre_boomeramg_smooth_type', 'Pilut')
 
-        # options["pc_hypre_boomeramg_strong_threshold"] = 0.7
+        # options["pc_hypre_boomeramg_strong_threshold"] = 0.6
         # options["pc_hypre_boomeramg_agg_nl"] = 4
         # options["pc_hypre_boomeramg_agg_num_paths"] = 5
         # options["pc_hypre_boomeramg_max_levels"] = 25
@@ -175,6 +197,9 @@ class PetscAMGMechanics(PetscPC):
         # options["pc_hypre_boomeramg_P_max"] = 2
 
         super().__init__(mat=mat, block_size=dim)
+
+        for key in options.getAll():
+            options.delValue(key)
 
 
 class PetscAMGFlow(PetscPC):
@@ -219,6 +244,7 @@ class PetscGMRES:
         pc: PETSc.PC | None = None,
         tol=1e-10,
         pc_side: Literal["left", "right"] = "left",
+        rhs_group_dofs: list[np.ndarray] = None,
     ) -> None:
         self.shape = mat.shape
         restart = 50
@@ -227,6 +253,12 @@ class PetscGMRES:
         options = PETSc.Options()
         options.setValue("ksp_type", "gmres")
         # options.setValue("ksp_type", "bcgs")
+        # options.setValue("ksp_type", "richardson")
+
+        # options.setValue('ksp_gmres_modifiedgramschmidt', None)
+        # options.setValue('ksp_gmres_cgs_refinement_type', 'refine_always')
+
+        options.setValue("ksp_divtol", 1e10)
         options.setValue("ksp_rtol", tol)
         options.setValue("ksp_max_it", 20 * restart)
         options.setValue("ksp_gmres_restart", restart)
@@ -248,6 +280,11 @@ class PetscGMRES:
         self.options = options
 
         self.ksp.setFromOptions()
+
+        self.rhs_group_dofs = rhs_group_dofs
+        # if rhs_group_dofs is not None:
+        #     self.ksp.addConvergenceTest(self.test_gmres_convergence)
+
         self.ksp.setComputeEigenvalues(True)
         self.ksp.setConvergenceHistory()
         self.pc = PETSc.PC()
@@ -271,7 +308,33 @@ class PetscGMRES:
         self.petsc_x.destroy()
         self.petsc_b.destroy()
 
+    def test_gmres_convergence(self, ksp, its, rnorm):
+        res_norms = self.compute_residual(
+            ksp.buildResidual().getArray(), replace_zeros=False
+        )
+        print(res_norms / self._initial_residual)
+        return 0
+
+    def compute_residual(self, residual, replace_zeros: bool = False):
+        residual = residual
+        group_residuals = []
+        for dofs in self.rhs_group_dofs:
+            nrm = np.linalg.norm(residual[dofs])
+            group_residuals.append(nrm)
+
+        group_residuals = np.array(group_residuals)
+
+        atol = 1e-15
+        group_residuals[group_residuals < atol] = 0
+
+        if replace_zeros:
+            group_residuals[group_residuals == 0] = 1
+            # contact mechanics always starts from 1
+            group_residuals[4] = 1
+        return group_residuals
+
     def solve(self, b):
+        # self._initial_residual = self.compute_residual(b, replace_zeros=True)
         self.petsc_b.setArray(b)
         self.petsc_x.set(0.0)
         self.ksp.solve(self.petsc_b, self.petsc_x)
@@ -419,10 +482,12 @@ def inv_block_diag_3x3(mat):
     diag_p2 = mat.diagonal(k=2)
     a02 = diag_p2[0::3]
 
-    mats_3x3 = np.array([
-        [a00, a01, a02],
-        [a10, a11, a12],
-        [a20, a21, a22],
-    ]).transpose(2, 0, 1)
+    mats_3x3 = np.array(
+        [
+            [a00, a01, a02],
+            [a10, a11, a12],
+            [a20, a21, a22],
+        ]
+    ).transpose(2, 0, 1)
     mats_3x3_inv = inv_list_of_matrices(mats_3x3)
     return scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)
