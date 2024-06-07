@@ -192,10 +192,9 @@ def make_model(cell_size_multiplier=1):
     return Fpm4(params)
 
 
-# %%
-if __name__ == "__main__":
+def run(cell_size_multiplier: int):
 
-    model = make_model(cell_size_multiplier=5)
+    model = make_model(cell_size_multiplier=cell_size_multiplier)
     model.prepare_simulation()
     print(model.simulation_name())
 
@@ -213,7 +212,7 @@ if __name__ == "__main__":
             "progressbars": True,
             "nl_convergence_tol": 1e-6,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 25,
+            "max_iterations": 10,
         },
     )
 
@@ -222,9 +221,13 @@ if __name__ == "__main__":
     #     cell_value=model.pressure_variable,
     #     vector_value=model.displacement_variable,
     #     alpha=0.5,
-    #     # plot_2d=True
     # )
 
     print(model.simulation_name())
 
+
 # %%
+if __name__ == "__main__":
+    # run(cell_size_multiplier=3, save_matrices=False)
+    for i in [1, 2, 3, 4, 5, 6]:
+        run(cell_size_multiplier=i)

@@ -13,7 +13,7 @@ from porepy.models.fluid_mass_balance import BoundaryConditionsSinglePhaseFlow
 from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
 
 from block_matrix import BlockMatrixStorage, SolveSchema, make_solver
-from fixed_stress import get_fixed_stress_stabilization, make_fs
+from fixed_stress import get_fixed_stress_stabilization, make_fs, make_fs_experimental
 from mat_utils import (
     PetscAMGFlow,
     PetscAMGMechanics,
@@ -276,19 +276,19 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
     def before_nonlinear_loop(self) -> None:
         self._time_step_stats = TimeStepStats()
+        self.statistics.append(self._time_step_stats)
         super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(
         self, solution: np.ndarray, errors: float, iteration_counter: int
     ) -> None:
-        self.statistics.append(self._time_step_stats)
         dump_json(self.simulation_name() + ".json", self.statistics)
         super().after_nonlinear_convergence(solution, errors, iteration_counter)
 
     def after_nonlinear_failure(
         self, solution: np.ndarray, errors: float, iteration_counter: int
     ) -> None:
-        self.statistics.append(self._time_step_stats)
+        self._time_step_stats.nonlinear_convergence_status = -1
         dump_json(self.simulation_name() + ".json", self.statistics)
         super().after_nonlinear_failure(solution, errors, iteration_counter)
 
@@ -310,26 +310,28 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         save_path.mkdir(exist_ok=True)
         mat, rhs = self.linear_system
         name = f"{self.simulation_name()}_{int(time.time() * 1000)}"
-        mat_id = f"{name}.npz"
-        rhs_id = f"{name}_rhs.npy"
-        state_id = f"{name}_state.npy"
-        iterate_id = f"{name}_iterate.npy"
-        scipy.sparse.save_npz(save_path / mat_id, mat)
-        np.save(save_path / rhs_id, rhs)
-        np.save(
-            save_path / state_id,
-            self.equation_system.get_variable_values(time_step_index=0),
-        )
-        np.save(
-            save_path / iterate_id,
-            self.equation_system.get_variable_values(iterate_index=0),
-        )
-        self._linear_solve_stats.iterate_id = iterate_id
-        self._linear_solve_stats.state_id = state_id
-        self._linear_solve_stats.matrix_id = mat_id
-        self._linear_solve_stats.rhs_id = rhs_id
-        self._linear_solve_stats.simulation_dt = self.time_manager.dt
+        if self.params.get("save_arrays", True):
+            mat_id = f"{name}.npz"
+            rhs_id = f"{name}_rhs.npy"
+            state_id = f"{name}_state.npy"
+            iterate_id = f"{name}_iterate.npy"
+            scipy.sparse.save_npz(save_path / mat_id, mat)
+            np.save(save_path / rhs_id, rhs)
+            np.save(
+                save_path / state_id,
+                self.equation_system.get_variable_values(time_step_index=0),
+            )
+            np.save(
+                save_path / iterate_id,
+                self.equation_system.get_variable_values(iterate_index=0),
+            )
+            self._linear_solve_stats.iterate_id = iterate_id
+            self._linear_solve_stats.state_id = state_id
+            self._linear_solve_stats.matrix_id = mat_id
+            self._linear_solve_stats.rhs_id = rhs_id
+            self._linear_solve_stats.simulation_dt = self.time_manager.dt
         self._time_step_stats.linear_solves.append(self._linear_solve_stats)
+        dump_json(self.simulation_name() + ".json", self.statistics)
         super().after_nonlinear_iteration(solution_vector)
 
 
@@ -467,7 +469,8 @@ class MyPetscSolver(pp.SolutionStrategy):
                         solve=lambda bmat: PetscAMGMechanics(
                             mat=bmat[[1, 5]].mat, dim=self.nd
                         ),
-                        invertor=lambda bmat: self._fixed_stress.mat,
+                        # invertor=lambda bmat: self._fixed_stress.mat,
+                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
                         invertor_type="physical",
                         complement=SolveSchema(
                             groups=[0, 2],
@@ -481,7 +484,7 @@ class MyPetscSolver(pp.SolutionStrategy):
 
     @cached_property
     def _fixed_stress(self):
-        # Assuming blocks [1, 5] don't change
+        # Assuming blocks [1, 5] don't change. But the block [2, 5] changes....
         return make_fs(self, self.bmat)
 
     def _prepare_solver(self):
@@ -517,29 +520,38 @@ class MyPetscSolver(pp.SolutionStrategy):
             bmat = bmat[:]
             self.bmat = bmat
             schema = self.make_solver_schema()
-
+            self.Qleft = None
+            self.Qright = None
             solver_type = self.params.get("solver_type", "baseline")
             if solver_type == "2":
-                J55_inv = inv_block_diag(bmat[[5]].mat, nd=self.nd)
-                Q = bmat.empty_container()
-                Q.mat = csr_ones(Q.shape[0])
-                Q[4, 5] = -bmat[4, 5].mat @ J55_inv
+                J55_inv = inv_block_diag(bmat[[5]].mat, nd=self.nd, lump=False)
+                # eig_max = abs(J55_inv @ bmat[[5]].mat).data.max()
+                Qleft = bmat.empty_container()
+                Qleft.mat = csr_ones(Qleft.shape[0])
+                Qright = Qleft.copy()
 
-                J_Q = bmat.empty_container()
-                J_Q.mat = Q.mat @ bmat.mat
+                Qleft[4, 5] = -bmat[4, 5].mat @ J55_inv  # / eig_max
+                Qright[5, 4] = -J55_inv @ bmat[5, 4].mat  # / eig_max
 
-                bmat_reordered, preconditioner = make_solver(schema, J_Q)
-                Q_perm = Q[bmat_reordered.active_groups]
-                self.rhs_Q = Q_perm.mat @ Q_perm.local_rhs(rhs)
-                self.Q_perm = Q_perm
-            else:
-                bmat_reordered, preconditioner = make_solver(
-                    schema=schema, mat_orig=bmat
-                )
+                self.Qleft = Qleft
+                self.Qright = Qright
+
+                # J_Q = bmat.empty_container()
+                # J_Q.mat = Qleft.mat @ bmat.mat
+
+                # bmat_reordered, preconditioner = make_solver(schema, J_Q)
+                # Q_perm = Qleft[bmat_reordered.active_groups]
+                # self.rhs_Q = Q_perm.mat @ Q_perm.local_rhs(rhs)
+                # self.Q_perm = Q_perm
+            # else:
+            #     bmat_reordered, preconditioner = make_solver(
+            #         schema=schema, mat_orig=bmat
+            #     )
 
         self._linear_solve_stats.time_prepare_solver = t_prepare_solver.elapsed_time
 
-        return bmat_reordered, preconditioner
+        # return bmat_reordered, preconditioner
+        return schema
 
     def solve_linear_system(self) -> np.ndarray:
         if not self.params.get("iterative_solver", True):
@@ -553,8 +565,26 @@ class MyPetscSolver(pp.SolutionStrategy):
             return result
 
         with TimerContext() as t_solve:
+            schema = self._prepare_solver()
 
-            mat_permuted, prec = self._prepare_solver()
+            mat_Q = self.bmat.copy()
+            Qleft, Qright = self.Qleft, self.Qright
+            if Qleft is not None:
+                assert Qleft.active_groups == self.bmat.active_groups
+                mat_Q.mat = Qleft.mat @ mat_Q.mat
+            if Qright is not None:
+                assert Qright.active_groups == self.bmat.active_groups
+                mat_Q.mat = mat_Q.mat @ Qright.mat
+
+            mat_Q_permuted, prec = make_solver(schema, mat_Q)
+
+            rhs_local = mat_Q_permuted.local_rhs(rhs)
+
+            rhs_Q = rhs_local.copy()
+            if Qleft is not None:
+                Qleft = Qleft[mat_Q_permuted.active_groups]
+                rhs_Q = Qleft.mat @ rhs_Q
+
             tol = 1e-10
             pc_side = "right"
             solver_type = self.params.get("solver_type", "baseline")
@@ -563,29 +593,37 @@ class MyPetscSolver(pp.SolutionStrategy):
                 pc_side = "left"
 
             if solver_type == "2":
-                rhs_permuted = self.rhs_Q
-                # pc_side = "right"
-                # tol = 1e-5
-                pc_side = 'left'
+                pc_side = "right"
+                # tol = 1e-6
+                # pc_side = 'left'
                 tol = 1e-10
-            else:
-                rhs_permuted = mat_permuted.local_rhs(rhs)
 
-            gmres_ = PetscGMRES(mat=mat_permuted.mat, pc=prec, pc_side=pc_side, tol=tol, rhs_group_dofs=self.eq_group_dofs)
+            gmres_ = PetscGMRES(
+                mat=mat_Q_permuted.mat,
+                pc=prec,
+                pc_side=pc_side,
+                tol=tol,
+            )
 
             with TimerContext() as t_gmres:
-                res_permuted = gmres_.solve(rhs_permuted)
+                sol_Q = gmres_.solve(rhs_Q)
+
             self._linear_solve_stats.time_gmres = t_gmres.elapsed_time
 
             info = gmres_.ksp.getConvergedReason()
 
-            res = mat_permuted.reverse_transform_solution(res_permuted)
-            true_residual_nrm_drop = abs(mat @ res - rhs).max() / abs(rhs).max()
+            if Qright is not None:
+                Qright = Qright[mat_Q_permuted.active_groups]
+                sol = mat_Q_permuted.reverse_transform_solution(Qright.mat @ sol_Q)
+            else:
+                sol = mat_Q_permuted.reverse_transform_solution(sol_Q)
+
+            true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
 
             if info <= 0:
                 print(f"GMRES failed, {info=}", file=sys.stderr)
                 if info == -9:
-                    res[:] = np.nan
+                    sol[:] = np.nan
             else:
                 if true_residual_nrm_drop >= 1:
                     print("True residual did not decrease")
@@ -593,7 +631,7 @@ class MyPetscSolver(pp.SolutionStrategy):
         self._linear_solve_stats.petsc_converged_reason = info
         self._linear_solve_stats.time_solve_linear_system = t_solve.elapsed_time
         self._linear_solve_stats.gmres_iters = len(gmres_.get_residuals())
-        return np.atleast_1d(res)
+        return np.atleast_1d(sol)
 
 
 def make_reorder_contact(model):

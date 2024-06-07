@@ -122,3 +122,94 @@ def make_fs(model, J: BlockMatrixStorage):
     result = J.empty_container()[[0, 2]]
     result.mat = scipy.sparse.block_diag(diag, format="csr")
     return result
+
+
+def get_fs_fractures_analytical(model):
+    alpha_biot = model.solid.biot_coefficient()  # [-]
+    lame_lambda = model.solid.lame_lambda()  # [Pa]
+    M = 1 / model.solid.specific_storage()  # [Pa]
+    compressibility = model.fluid.compressibility()  # [1 / Pa]
+    porosity = model.solid.porosity()
+
+    val = alpha_biot**2 / (lame_lambda * (1 / (compressibility * M) + porosity))
+
+    fractures = model.mdg.subdomains(dim=model.nd - 1)
+    intersections = [
+        frac
+        for dim in reversed(range(model.nd - 1))
+        for frac in model.mdg.subdomains(dim=dim)
+    ]
+
+    # fractures += intersections
+
+    cell_volumes = np.concatenate([f.cell_volumes for f in fractures])
+    val *= cell_volumes
+
+    # intersections ?
+
+    # specific volume ?
+    # specific_volume = model.specific_volume(fractures).value(model.equation_system)
+    # specific_volume[-1] = 1
+    # val *= specific_volume
+
+    density = model.fluid_density(fractures).value(model.equation_system)
+    val *= density
+
+    dt = model.time_manager.dt
+    val /= dt
+
+    intersect_zeros = np.zeros(sum(f.num_cells for f in intersections))
+    val = np.concatenate([val, intersect_zeros])
+
+    return scipy.sparse.diags(val)
+
+
+def get_fs_contact_analytical(model):
+    alpha_biot = model.solid.biot_coefficient()  # [-]
+    lame_lambda = model.solid.lame_lambda()  # [Pa]
+    M = 1 / model.solid.specific_storage()  # [Pa]
+    compressibility = model.fluid.compressibility()  # [1 / Pa]
+    porosity = model.solid.porosity()
+
+    val = alpha_biot**2 / (lame_lambda * (1 / (compressibility * M) + porosity))
+
+    matrix = model.mdg.subdomains(dim=model.nd)
+    fractures = matrix + model.mdg.subdomains(dim=model.nd - 1)
+    intersections = [
+        frac
+        for dim in reversed(range(model.nd - 1))
+        for frac in model.mdg.subdomains(dim=dim)
+    ]
+
+    # fractures += intersections
+
+    cell_volumes = np.concatenate([f.cell_volumes for f in fractures])
+    val *= cell_volumes
+
+    # intersections ?
+
+    # specific volume ?
+    # specific_volume = model.specific_volume(fractures).value(model.equation_system)
+    # specific_volume[-1] = 1
+    # val *= specific_volume
+
+    density = model.fluid_density(fractures).value(model.equation_system)
+    val *= density
+
+    dt = model.time_manager.dt
+    val /= dt
+
+    intersect_zeros = np.zeros(sum(f.num_cells for f in intersections))
+    val = np.concatenate([val, intersect_zeros])
+
+    return scipy.sparse.diags(val)
+
+
+def make_fs_experimental(model, J):
+    diag = [
+        get_fixed_stress_stabilization(model),
+        get_fs_fractures_analytical(model),
+    ]
+    result = J.empty_container()[[0, 2]]
+    result.mat = scipy.sparse.block_diag(diag, format="csr")
+    return result

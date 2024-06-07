@@ -2,7 +2,7 @@ import itertools
 from pathlib import Path
 import time
 import json
-from typing import Literal, Sequence
+from typing import Literal, Sequence, TYPE_CHECKING
 
 import matplotlib as mpl
 from matplotlib.ticker import MaxNLocator
@@ -16,6 +16,9 @@ from scipy.sparse.linalg import LinearOperator  # , gmres, bicgstab
 from stats import LinearSolveStats
 from pyamg.krylov import gmres
 import porepy as pp
+
+if TYPE_CHECKING:
+    from block_matrix import SolveSchema, BlockMatrixStorage
 
 
 from mat_utils import PetscGMRES, condest
@@ -257,11 +260,13 @@ def solve_petsc(
     pc_side: Literal["left", "right"] = "left",
     return_solution: bool = False,
     ksp_view: bool = False,
-    rhs_eq_groups: Sequence[np.ndarray] = None
+    rhs_eq_groups: Sequence[np.ndarray] = None,
 ):
     if rhs is None:
         rhs = np.ones(mat.shape[0])
-    gmres = PetscGMRES(mat, pc=prec, tol=tol, pc_side=pc_side, rhs_group_dofs=rhs_eq_groups)
+    gmres = PetscGMRES(
+        mat, pc=prec, tol=tol, pc_side=pc_side, rhs_group_dofs=rhs_eq_groups
+    )
 
     if ksp_view:
         gmres.ksp.view()
@@ -277,10 +282,10 @@ def solve_petsc(
     res_norm = norm(mat @ sol - rhs)
     print("True residual decrease:", res_norm / rhs_norm)
 
+    print("PETSc Converged Reason:", info)
     linestyle = "-"
     if info <= 0:
         linestyle = "--"
-        print("PETSc Converged Reason:", info)
         if len(eigs) > 0:
             print("lambda min:", min(abs(eigs)))
 
@@ -471,6 +476,8 @@ def color_time_steps(
     data: Sequence[TimeStepStats], grid=True, fill=False, legend=False
 ):
     num_newton_iters = [0] + [len(ts.linear_solves) for ts in data]
+    newton_converged = [ts.nonlinear_convergence_status == 1 for ts in data]
+    printed_newton_diverged_legend = False
     cumsum_newton_iters = np.cumsum(num_newton_iters, dtype=float)
     cumsum_newton_iters -= 0.5
     for i, (start, end) in enumerate(
@@ -489,6 +496,12 @@ def color_time_steps(
             plt.axvline(
                 end, linestyle="--", alpha=0.9, color="grey", linewidth=2, **kwargs
             )
+        if not newton_converged[i]:
+            kwargs = {}
+            if legend and not printed_newton_diverged_legend:
+                printed_newton_diverged_legend = True
+                kwargs["label"] = "Newton diverged"
+            plt.axvspan(start, end, fill=False, hatch="/", **kwargs)
     if grid:
         plt.gca().grid(True)
     plt.xlim(-0.5, cumsum_newton_iters[-1])
@@ -678,7 +691,9 @@ def plot_grid(
                     if label not in labels:
                         lines.append(line)
                         labels.append(label)
-            plt.legend(lines, labels, loc="center left", bbox_to_anchor=(1, 0.5), fancybox=True)
+            plt.legend(
+                lines, labels, loc="center left", bbox_to_anchor=(1, 0.5), fancybox=True
+            )
 
 
 def get_friction_bound_norm(model: pp.SolutionStrategy, data: Sequence[TimeStepStats]):
@@ -713,3 +728,113 @@ def get_rhs_norms(model: pp.SolutionStrategy, data: Sequence[TimeStepStats], ord
         for nrm_list, J_i in zip(norms, J_list):
             nrm_list.append(np.linalg.norm(J_i.local_rhs(rhs), ord=ord))
     return norms
+
+
+def solve_petsc_new(
+    mat: "BlockMatrixStorage",
+    solve_schema: "SolveSchema" = None,
+    rhs_global=None,
+    rhs=None,
+    label="",
+    logx_eigs=False,
+    normalize_residual=False,
+    tol=1e-10,
+    pc_side: Literal["left", "right"] = "left",
+    ksp_view: bool = False,
+    rhs_eq_groups: Sequence[np.ndarray] = None,
+    Qleft: "BlockMatrixStorage" = None,
+    Qright: "BlockMatrixStorage" = None,
+):
+    from block_matrix import make_solver
+
+    if rhs is not None:
+        assert False, "Pass rhs_global instead"
+
+    mat_Q = mat.copy()
+    if Qleft is not None:
+        assert Qleft.active_groups == mat.active_groups
+        mat_Q.mat = Qleft.mat @ mat_Q.mat
+    if Qright is not None:
+        assert Qright.active_groups == mat.active_groups
+        mat_Q.mat = mat_Q.mat @ Qright.mat
+
+    mat_permuted, prec = make_solver(solve_schema, mat_Q)
+
+    if rhs_global is None:
+        rhs_local = np.ones(mat.shape[0])
+    else:
+        rhs_local = mat_permuted.local_rhs(rhs_global)
+
+    rhs_Q = rhs_local.copy()
+    if Qleft is not None:
+        Qleft = Qleft[mat_permuted.active_groups]
+        rhs_Q = Qleft.mat @ rhs_Q
+
+    gmres = PetscGMRES(mat_permuted.mat, pc=prec, tol=tol, pc_side=pc_side)
+
+    if ksp_view:
+        gmres.ksp.view()
+
+    t0 = time.time()
+    sol_Q = gmres.solve(rhs_Q)
+    print("Solve", label, "took:", round(time.time() - t0, 2))
+    residuals = gmres.get_residuals()
+    info = gmres.ksp.getConvergedReason()
+    eigs = gmres.ksp.computeEigenvalues()
+
+    print(
+        "True residual permuted:", norm(mat_permuted.mat @ sol_Q - rhs_Q) / norm(rhs_Q)
+    )
+
+    if Qright is not None:
+        Qright = Qright[mat_permuted.active_groups]
+        sol = mat.local_rhs(Qright.global_rhs(Qright.mat @ sol_Q))
+        print(
+            "True residual:",
+            norm(mat.mat @ sol - mat.local_rhs(rhs_global))
+            / norm(mat.local_rhs(rhs_global)),
+        )
+    else:
+        sol = sol_Q
+
+    print("PETSc Converged Reason:", info)
+    linestyle = "-"
+    if info <= 0:
+        linestyle = "--"
+        if len(eigs) > 0:
+            print("lambda min:", min(abs(eigs)))
+
+    plt.gcf().set_size_inches(14, 4)
+
+    # ax = plt.gca()
+    ax = plt.subplot(1, 2, 1)
+    if normalize_residual:
+        residuals /= residuals[0]
+    ax.plot(residuals, label=label, marker=".", linestyle=linestyle)
+    ax.set_yscale("log")
+
+    ksp_norm_type = gmres.options.getString("ksp_norm_type", "default")
+    if ksp_norm_type == "unpreconditioned":
+        ax.set_ylabel("true residual")
+    else:
+        ax.set_ylabel("preconditioned residual")
+    ax.set_xlabel("gmres iter.")
+    ax.grid(True)
+    if label != "":
+        ax.legend()
+    ax.set_title("GMRES Convergence")
+
+    ax = plt.subplot(1, 2, 2)
+    if logx_eigs:
+        eigs.real = abs(eigs.real)
+    # ax.scatter(eigs.real, eigs.imag, label=label, marker="$\lambda$", alpha=0.9)
+    ax.scatter(eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS))
+    ax.set_xlabel(r"Re($\lambda)$")
+    ax.set_ylabel(r"Im($\lambda$)")
+    ax.grid(True)
+    if label != "":
+        ax.legend()
+    if logx_eigs:
+        plt.xscale("log")
+    ax.set_title("Eigenvalues estimate")
+    return {'mat_Q': mat_permuted}

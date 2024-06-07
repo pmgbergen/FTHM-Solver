@@ -16,8 +16,9 @@ from petsc4py import PETSc
 
 
 def assert_finite(vals, groups):
-    if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
-        print("Divergence", groups)
+    pass
+    # if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
+    #     print("Divergence", groups)
 
 
 class FieldSplit:
@@ -47,6 +48,46 @@ class FieldSplit:
         assert_finite(tmp_2, groups=self.groups_0)
         y[: self.sep] = tmp_2
         return y
+
+
+class BlockJacobi:
+    def __init__(self, bmat, solve_A, solve_B, groups_0=None, groups_1=None):
+        self.bmat = bmat
+        self.solve_A = solve_A
+        self.solve_B = solve_B
+        self.sep = solve_A.shape[0]
+        self.shape = bmat.shape
+        self.groups_0 = groups_0
+        self.groups_1 = groups_1
+
+    def dot(self, x):
+        x_0, x_1 = x[: self.sep], x[self.sep :]
+        tmp_0 = self.solve_A.dot(x_0)
+        assert_finite(tmp_0, groups=self.groups_0)  # 1e+32
+        tmp_1 = self.solve_B.dot(x_1)
+        assert_finite(tmp_1, groups=self.groups_1)
+        return np.concatenate([tmp_0, tmp_1])
+
+
+class BlockGS:
+    def __init__(self, bmat, solve_A, solve_B, groups_0=None, groups_1=None):
+        self.bmat = bmat
+        self.solve_A = solve_A
+        self.solve_B = solve_B
+        self.A10 = bmat[groups_1, groups_0].mat
+        self.A01 = bmat[groups_0, groups_1].mat
+        self.sep = solve_A.shape[0]
+        self.shape = bmat.shape
+        self.groups_0 = groups_0
+        self.groups_1 = groups_1
+
+    def dot(self, x):
+        x_0, x_1 = x[: self.sep], x[self.sep :]
+        # tmp_0 = self.solve_A.dot(x_0)
+        # tmp_1 = self.solve_B.dot(x_1 - self.A10.dot(tmp_0))
+        tmp_1 = self.solve_B.dot(x_1)
+        tmp_0 = self.solve_A.dot(x_0 - self.A01.dot(tmp_1))
+        return np.concatenate([tmp_0, tmp_1])
 
 
 def cond(mat):
@@ -170,18 +211,37 @@ class PetscAMGMechanics(PetscPC):
             options.delValue(key)
 
         # options["pc_type"] = "gamg"
-        # options['pc_gamg_agg_nsmooths'] = 10
+        # options['pc_gamg_agg_nsmooths'] = 1
+        # options['pc_mg_cycle_type'] = 'W'
+        # options['mg_levels_pc_type'] = 'sor'
+        # options['pc_gamg_threshold'] = 0.9
         # options["mg_levels_ksp_type"] = "chebyshev"
         # options["mg_levels_ksp_chebyshev_esteig_steps"] = 10
         # options["mg_levels_pc_type"] = "jacobi"
 
+        # options['pc_type'] = 'hmg'
+        # options['hmg_inner_pc_type'] = 'gamg'
+        # options["hmg_inner_pc_hypre_type"] = "boomeramg"
+        # options["hmg_inner_pc_hypre_boomeramg_max_iter"] = 1
+        # options["hmg_inner_pc_hypre_boomeramg_cycle_type"] = "W"
+        # options["hmg_inner_pc_hypre_boomeramg_truncfactor"] = 0.3
+        # options['hmg_inner_pc_hypre_boomeramg_strong_threshold'] = 0.8
+
         options["pc_type"] = "hypre"
         options["pc_hypre_type"] = "boomeramg"
-        options["pc_hypre_boomeramg_max_iter"] = 1
+        options["pc_hypre_boomeramg_max_iter"] = 3
         options["pc_hypre_boomeramg_cycle_type"] = "W"
         options["pc_hypre_boomeramg_truncfactor"] = 0.3
-        options['pc_hypre_boomeramg_strong_threshold'] = 0.9
-        # options['pc_hypre_boomeramg_relax_type_all'] = 'CG'
+        options["pc_hypre_boomeramg_strong_threshold"] = 0.9
+        # options['pc_hypre_boomeramg_nodal_coarsen'] = 3
+        # options["pc_hypre_boomeramg_coarsen_type"] = "CLJP"
+        # options['pc_hypre_boomeramg_no_CF'] = True
+        # options['pc_hypre_boomeramg_interp_type'] = 'block'
+        # options['pc_hypre_boomeramg_nodal_relaxation'] = 1
+        # options["pc_hypre_boomeramg_relax_type_all"] = "l1scaled-SOR/Jacobi"
+        # options["pc_hypre_boomeramg_relax_type_coarse"] = "Gaussian-Elimination"
+
+        # options['pc_hypre_boomeramg_strong_threshold'] = 0.5
 
         # options['pc_hypre_boomeramg_print_statistics'] = None
 
@@ -247,7 +307,7 @@ class PetscGMRES:
         rhs_group_dofs: list[np.ndarray] = None,
     ) -> None:
         self.shape = mat.shape
-        restart = 50
+        restart = 20
 
         self.ksp = PETSc.KSP().create()
         options = PETSc.Options()
@@ -260,7 +320,7 @@ class PetscGMRES:
 
         options.setValue("ksp_divtol", 1e10)
         options.setValue("ksp_rtol", tol)
-        options.setValue("ksp_max_it", 20 * restart)
+        options.setValue("ksp_max_it", 3 * restart)
         options.setValue("ksp_gmres_restart", restart)
 
         if pc_side == "left":
@@ -371,7 +431,9 @@ def extract_diag_inv(mat):
     return ones
 
 
-def inv_block_diag(mat, nd: int):
+def inv_block_diag(mat, nd: int, lump: bool = False):
+    if lump:
+        mat = lump_nd(mat, nd)
     if nd == 1:
         return extract_diag_inv(mat)
     if nd == 2:

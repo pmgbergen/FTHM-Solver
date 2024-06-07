@@ -62,7 +62,10 @@ def color_spy(
             kwargs["fill"] = False
         if hatch:
             kwargs["hatch"] = next(hatch_types)
-            kwargs['edgecolor'] = 'black'
+            # kwargs['color'] = 'none'
+            kwargs['edgecolor'] = 'red'
+            # kwargs['facecolor'] = 'blue'
+
         plt.axhspan(ystart - 0.5, yend - 0.5, alpha=alpha, **kwargs)
     ax.yaxis.set_ticks(row_label_pos)
     ax.set_yticklabels(row_names, rotation=0)
@@ -437,8 +440,8 @@ class BlockMatrixStorage:
             show=show, groups=groups, color=False, hatch=True, draw_marker=False
         )
 
-    def plot_max(self, group=True):
-        row_idx, col_idx = self.get_active_local_dofs(grouped=group)
+    def plot_max(self, groups=True):
+        row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         data = []
 
         for row in row_idx:
@@ -452,7 +455,7 @@ class BlockMatrixStorage:
                     row_data.append(abs(submat).max())
             data.append(row_data)
 
-        if group:
+        if groups:
             y_tick_labels, x_tick_labels = self.get_active_group_names()
         else:
             y_tick_labels = x_tick_labels = "auto"
@@ -473,7 +476,7 @@ class BlockMatrixStorage:
             cmap=sns.color_palette("coolwarm", as_cmap=True),
         )
 
-    def color_local_rhs(self, local_rhs: np.ndarray, groups: bool = True):
+    def color_local_rhs(self, local_rhs: np.ndarray, groups: bool = True, log: bool = True, label=None):
         y_tick_labels, x_tick_labels = self.get_active_group_names()
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         row_names = y_tick_labels
@@ -498,8 +501,11 @@ class BlockMatrixStorage:
             plt.axvspan(ystart - 0.5, yend - 0.5, alpha=alpha, **kwargs)
         ax.xaxis.set_ticks(row_label_pos)
         ax.set_xticklabels(row_names, rotation=45)
+        if log:
+            local_rhs = abs(local_rhs)
+            plt.yscale('log')
 
-        plt.plot(local_rhs)
+        plt.plot(local_rhs, label=label)
 
 
 @dataclass

@@ -5,6 +5,7 @@ from porepy.models.poromechanics import Poromechanics
 from porepy.models.momentum_balance import MomentumBalance
 from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.models.constitutive_laws import CubicLawPermeability
+from porepy.applications.md_grids.fracture_sets import orthogonal_fractures_3d
 
 from pp_utils import (
     CheckStickingSlidingOpen,
@@ -82,25 +83,34 @@ class Fpm4(
         )
 
     def set_fractures(self) -> None:
-        x = 0.3
-        y = 0.3
-        pts_list = [
-            np.array(
-                [
-                    [x * XMAX, (1 - x) * XMAX, (1 - x) * XMAX, x * XMAX],  # x
-                    [y * YMAX, (1 - y) * YMAX, y * YMAX, (1 - y) * YMAX],  # y
-                    [z * ZMAX, z * ZMAX, z * ZMAX, z * ZMAX],  # z
-                ]
-            )
-            for z in [
-                # 0.2,
-                # 0.4,
-                0.5
-                # 0.6,
-                # 0.8,
-            ]
-        ]
-        self._fractures = [pp.PlaneFracture(pts) for pts in pts_list]
+        # x = 0.3
+        # y = 0.3
+        # pts_list = [
+        #     np.array(
+        #         [
+        #             [x * XMAX, (1 - x) * XMAX, (1 - x) * XMAX, x * XMAX],  # x
+        #             [y * YMAX, (1 - y) * YMAX, y * YMAX, (1 - y) * YMAX],  # y
+        #             [z * ZMAX, z * ZMAX, z * ZMAX, z * ZMAX],  # z
+        #         ]
+        #     )
+        #     for z in [
+        #         # 0.2,
+        #         # 0.4,
+        #         0.5
+        #         # 0.6,
+        #         # 0.8,
+        #     ]
+        # ]
+        # # self._fractures = [pp.PlaneFracture(pts) for pts in pts_list]
+        # self._fractures = orthogonal_fractures_3d(size=1)
+        coords_a = [0.5, 0.5, 0.5, 0.5]
+        coords_b = [0.3, 0.3, 0.7, 0.7]
+        coords_c = [0.3, 0.7, 0.7, 0.3]
+        pts = []
+        pts.append(np.array([coords_a, coords_b, coords_c]))
+        pts.append(np.array([coords_b, coords_a, coords_c]))
+        pts.append(np.array([coords_b, coords_c, coords_a]))
+        self._fractures = [pp.PlaneFracture(pts[i]) for i in range(len(pts))]
 
     # Source
 
@@ -110,8 +120,8 @@ class Fpm4(
         x = cell_centers[0]
         y = cell_centers[1]
         distance = np.sqrt((x - 0.499 * XMAX) ** 2 + (y - 0.499 * YMAX) ** 2)
-        loc = distance == distance.min()
-        assert loc.sum() == 1
+        loc = np.where(distance == distance.min())[0]
+        # assert loc.sum() == 1
         return loc
 
     def get_source_intensity(self, t):
@@ -174,7 +184,7 @@ class Fpm4(
         return bc_values.ravel("F")
 
 
-def make_model(cell_size_multiplier=1, save_matrices=True):
+def make_model(cell_size_multiplier=1, save_matrices: bool = True):
     print(f"{cell_size_multiplier = }")
     dt = 0.5
     time_manager = pp.TimeManager(
@@ -201,17 +211,15 @@ def make_model(cell_size_multiplier=1, save_matrices=True):
         },
         # "iterative_solver": False,
         "solver_type": "2",
-        "simulation_name": "fpm_4_simplices",
+        "simulation_name": "fpm_6",
         "save_arrays": save_matrices,
     }
     return Fpm4(params)
 
 
-def run(cell_size_multiplier: int, save_matrices: bool):
+def run(cell_size_multiplier: int, save_matrices: bool = True):
 
-    model = make_model(
-        cell_size_multiplier=cell_size_multiplier, save_matrices=save_matrices
-    )
+    model = make_model(cell_size_multiplier=cell_size_multiplier, save_matrices=save_matrices)
     model.prepare_simulation()
     print(model.simulation_name())
 
@@ -229,7 +237,7 @@ def run(cell_size_multiplier: int, save_matrices: bool):
             "progressbars": True,
             "nl_convergence_tol": 1e-6,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 10,
+            "max_iterations": 25,
         },
     )
 
@@ -245,6 +253,8 @@ def run(cell_size_multiplier: int, save_matrices: bool):
 
 # %%
 if __name__ == "__main__":
-    run(cell_size_multiplier=3, save_matrices=False)
-    # for i in [0.5, 1, 2, 3]:
-    #     run(cell_size_multiplier=i)
+    #     run(cell_size_multiplier=i, save_matrices=True)
+    #     run(cell_size_multiplier=i, save_matrices=False)
+    # for i in [0.25, 0.5]:
+    for i in [2]:
+        run(cell_size_multiplier=i, save_matrices=True)

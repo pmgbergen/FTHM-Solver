@@ -26,6 +26,7 @@ class LinearSolveStats:
 @dataclass
 class TimeStepStats:
     linear_solves: list[LinearSolveStats] = field(default_factory=list)
+    nonlinear_convergence_status: int = 1  # 1 converged -1 diverged
 
     @classmethod
     def from_json(cls, json: str):

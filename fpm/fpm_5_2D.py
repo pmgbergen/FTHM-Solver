@@ -106,6 +106,8 @@ class Fpm4(
     def locate_source(self, cell_centers: np.ndarray) -> np.ndarray:
         x = cell_centers[0]
         y = cell_centers[1]
+        # xcenter = (x.max() + x.min()) * 0.5
+        # ycenter = (y.max() + y.min()) * 0.5
         distance = np.sqrt((x - 0.499 * XMAX) ** 2 + (y - 0.499 * YMAX) ** 2)
         loc = distance == distance.min()
         assert loc.sum() == 1
@@ -193,15 +195,15 @@ def make_model(cell_size_multiplier=1):
         },
         # "iterative_solver": False,
         "solver_type": "2",
-        "simulation_name": "fpm_4_2D",
+        "simulation_name": "fpm_5_2D",
     }
     return Fpm4(params)
 
 
-# %%
-if __name__ == "__main__":
 
-    model = make_model(cell_size_multiplier=4)
+def run(cell_size_multiplier: int):
+
+    model = make_model(cell_size_multiplier=cell_size_multiplier)
     model.prepare_simulation()
     print(model.simulation_name())
 
@@ -209,7 +211,6 @@ if __name__ == "__main__":
     #     model.mdg.subdomains(dim=2)[0],
     #     alpha=0.5,
     #     rgb=[0.5, 0.5, 1],
-    #     plot_2d=True,
     # )
     # plt.show()
 
@@ -229,9 +230,13 @@ if __name__ == "__main__":
     #     cell_value=model.pressure_variable,
     #     vector_value=model.displacement_variable,
     #     alpha=0.5,
-    #     plot_2d=True,
     # )
 
     print(model.simulation_name())
 
+
 # %%
+if __name__ == "__main__":
+    # run(cell_size_multiplier=4)
+    for i in range(6):
+        run(cell_size_multiplier=i+1)
