@@ -228,6 +228,6 @@ def run(cell_size_multiplier: int):
 
 # %%
 if __name__ == "__main__":
-    # run(cell_size_multiplier=3, save_matrices=False)
-    for i in [1, 2, 3, 4, 5, 6]:
+    # run(cell_size_multiplier=3)
+    for i in reversed([1, 2, 3, 4, 5, 6]):
         run(cell_size_multiplier=i)

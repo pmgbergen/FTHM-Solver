@@ -465,20 +465,50 @@ class MyPetscSolver(pp.SolutionStrategy):
                     solve=lambda bmat: PetscILU(bmat[[3]].mat),
                     invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
                     complement=SolveSchema(
-                        groups=[1, 5],
-                        solve=lambda bmat: PetscAMGMechanics(
-                            mat=bmat[[1, 5]].mat, dim=self.nd
-                        ),
-                        # invertor=lambda bmat: self._fixed_stress.mat,
-                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
-                        invertor_type="physical",
+                        groups=[5],
+                        # solve=lambda bmat: PetscAMGMechanics(
+                        #     mat=bmat[[5]].mat, dim=self.nd
+                        # ),
+                        # invertor=lambda bmat: inv_block_diag(
+                        #     mat=bmat[[5]].mat, nd=self.nd, lump=True
+                        # ),
                         complement=SolveSchema(
-                            groups=[0, 2],
-                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                            groups=[1],
+                            solve=lambda bmat: PetscAMGMechanics(
+                                mat=bmat[[1]].mat, dim=self.nd
+                            ),
+                            invertor_type="physical",
+                            invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
+                            complement=SolveSchema(
+                                groups=[0, 2],
+                                solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                            ),
                         ),
                     ),
                 ),
             )
+            # return SolveSchema(
+            #     groups=[4],
+            #     solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
+            #     complement=SolveSchema(
+            #         groups=[3],
+            #         solve=lambda bmat: PetscILU(bmat[[3]].mat),
+            #         invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+            #         complement=SolveSchema(
+            #             groups=[1, 5],
+            #             solve=lambda bmat: PetscAMGMechanics(
+            #                 mat=bmat[[1, 5]].mat, dim=self.nd
+            #             ),
+            #             # invertor=lambda bmat: self._fixed_stress.mat,
+            #             invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
+            #             invertor_type="physical",
+            #             complement=SolveSchema(
+            #                 groups=[0, 2],
+            #                 solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+            #             ),
+            #         ),
+            #     ),
+            # )
 
         raise ValueError(f"{solver_type}")
 
@@ -525,15 +555,17 @@ class MyPetscSolver(pp.SolutionStrategy):
             solver_type = self.params.get("solver_type", "baseline")
             if solver_type == "2":
                 J55_inv = inv_block_diag(bmat[[5]].mat, nd=self.nd, lump=False)
-                # eig_max = abs(J55_inv @ bmat[[5]].mat).data.max()
+                eig_max_right = abs(bmat[[5]].mat @ J55_inv).data.max()
+                eig_max_left = abs(J55_inv @ bmat[[5]].mat).data.max()
+
                 Qleft = bmat.empty_container()
                 Qleft.mat = csr_ones(Qleft.shape[0])
                 Qright = Qleft.copy()
 
-                Qleft[4, 5] = -bmat[4, 5].mat @ J55_inv  # / eig_max
-                Qright[5, 4] = -J55_inv @ bmat[5, 4].mat  # / eig_max
+                Qleft[4, 5] = -bmat[4, 5].mat @ J55_inv / eig_max_left
+                Qright[5, 4] = -J55_inv @ bmat[5, 4].mat / eig_max_right
 
-                self.Qleft = Qleft
+                # self.Qleft = Qleft
                 self.Qright = Qright
 
                 # J_Q = bmat.empty_container()

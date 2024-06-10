@@ -238,5 +238,5 @@ def run(cell_size_multiplier: int):
 # %%
 if __name__ == "__main__":
     # run(cell_size_multiplier=4)
-    for i in range(6):
+    for i in (range(6)):
         run(cell_size_multiplier=i+1)

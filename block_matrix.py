@@ -63,7 +63,7 @@ def color_spy(
         if hatch:
             kwargs["hatch"] = next(hatch_types)
             # kwargs['color'] = 'none'
-            kwargs['edgecolor'] = 'red'
+            kwargs["edgecolor"] = "red"
             # kwargs['facecolor'] = 'blue'
 
         plt.axhspan(ystart - 0.5, yend - 0.5, alpha=alpha, **kwargs)
@@ -257,13 +257,17 @@ class BlockMatrixStorage:
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         return self.mat[I, J]
 
-    def block_diag_inv(self) -> spmatrix:
+    def block_diag(self) -> "BlockMatrixStorage":
+        """Returns a copy. Keeps only diagonal blocks.
+        E.g. how removes how one fracture affects the other."""
         active_idx = [x for x in self.local_row_idx if x is not None]
         bmats = []
         for active in active_idx:
             I, J = np.meshgrid(active, active, sparse=True, indexing="ij", copy=False)
-            bmats.append(inv(self.mat[I, J]))
-        return scipy.sparse.block_diag(bmats, format="csr")
+            bmats.append(self.mat[I, J])
+        tmp = self.empty_container()
+        tmp.mat = scipy.sparse.block_diag(bmats, format="csr")
+        return tmp
 
     def copy(self) -> "BlockMatrixStorage":
         return BlockMatrixStorage(
@@ -305,11 +309,13 @@ class BlockMatrixStorage:
         return global_rhs[row_idx]
 
     def global_rhs(self, local_rhs: np.ndarray) -> np.ndarray:
-        row_idx = np.concatenate([
-            self.global_row_idx[j]
-            for i in self.active_groups[0]
-            for j in self.groups_row[i]
-        ])
+        row_idx = np.concatenate(
+            [
+                self.global_row_idx[j]
+                for i in self.active_groups[0]
+                for j in self.groups_row[i]
+            ]
+        )
         total_size = sum(x.size for x in self.global_col_idx)
         result = np.zeros(total_size, dtype=local_rhs.dtype)
         result[row_idx] = local_rhs
@@ -476,7 +482,9 @@ class BlockMatrixStorage:
             cmap=sns.color_palette("coolwarm", as_cmap=True),
         )
 
-    def color_local_rhs(self, local_rhs: np.ndarray, groups: bool = True, log: bool = True, label=None):
+    def color_local_rhs(
+        self, local_rhs: np.ndarray, groups: bool = True, log: bool = True, label=None
+    ):
         y_tick_labels, x_tick_labels = self.get_active_group_names()
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         row_names = y_tick_labels
@@ -503,7 +511,7 @@ class BlockMatrixStorage:
         ax.set_xticklabels(row_names, rotation=45)
         if log:
             local_rhs = abs(local_rhs)
-            plt.yscale('log')
+            plt.yscale("log")
 
         plt.plot(local_rhs, label=label)
 
