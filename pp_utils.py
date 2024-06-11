@@ -464,27 +464,27 @@ class MyPetscSolver(pp.SolutionStrategy):
                     groups=[3],
                     solve=lambda bmat: PetscILU(bmat[[3]].mat),
                     invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                    # complement=SolveSchema(
+                    #     groups=[5],
+                    #     solve=lambda bmat: PetscAMGMechanics(
+                    #         mat=bmat[[5]].mat, dim=self.nd
+                    #     ),
+                    #     invertor=lambda bmat: inv_block_diag(
+                    #         mat=bmat[[5]].mat, nd=self.nd, lump=True
+                    #     ),
                     complement=SolveSchema(
-                        groups=[5],
-                        # solve=lambda bmat: PetscAMGMechanics(
-                        #     mat=bmat[[5]].mat, dim=self.nd
-                        # ),
-                        # invertor=lambda bmat: inv_block_diag(
-                        #     mat=bmat[[5]].mat, nd=self.nd, lump=True
-                        # ),
+                        groups=[1, 5],
+                        solve=lambda bmat: PetscAMGMechanics(
+                            mat=bmat[[1, 5]].mat, dim=self.nd
+                        ),
+                        invertor_type="physical",
+                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
                         complement=SolveSchema(
-                            groups=[1],
-                            solve=lambda bmat: PetscAMGMechanics(
-                                mat=bmat[[1]].mat, dim=self.nd
-                            ),
-                            invertor_type="physical",
-                            invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
-                            complement=SolveSchema(
-                                groups=[0, 2],
-                                solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
-                            ),
+                            groups=[0, 2],
+                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
                         ),
                     ),
+                    # ),
                 ),
             )
             # return SolveSchema(
@@ -550,6 +550,8 @@ class MyPetscSolver(pp.SolutionStrategy):
             bmat = bmat[:]
             self.bmat = bmat
             schema = self.make_solver_schema()
+            self._Qleft = None
+            self._Qright = None
             self.Qleft = None
             self.Qright = None
             solver_type = self.params.get("solver_type", "baseline")
@@ -567,6 +569,8 @@ class MyPetscSolver(pp.SolutionStrategy):
 
                 # self.Qleft = Qleft
                 self.Qright = Qright
+                self._Qleft = Qleft
+                self._Qright = Qright
 
                 # J_Q = bmat.empty_container()
                 # J_Q.mat = Qleft.mat @ bmat.mat

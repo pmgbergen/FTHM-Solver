@@ -1,7 +1,6 @@
 import sys
 import time
 from typing import Literal
-from warnings import warn
 
 import numpy as np
 from numba import njit
@@ -160,7 +159,7 @@ class TimerContext:
 
 
 class PetscPC:
-    def __init__(self, mat=None, block_size=1) -> None:
+    def __init__(self, mat=None, block_size=1, null_space: np.ndarray = None) -> None:
         self.pc = PETSc.PC().create()
 
         self.petsc_mat = PETSc.Mat()
@@ -168,9 +167,26 @@ class PetscPC:
         self.petsc_b = PETSc.Vec()
         self.pc.setFromOptions()
 
+        self.null_space = null_space
+        self.block_size = block_size
+
         self.shape: tuple[int, int]
         if mat is not None:
             self.set_operator(mat, block_size=block_size)
+
+    def set_up_null_space(self):
+        if self.null_space is None:
+            return
+        null_space_vectors = []
+        for b in self.null_space:
+            null_space_vec_petsc = PETSc.Vec().create()
+            null_space_vec_petsc.setSizes(b.shape[0], self.block_size)
+            null_space_vec_petsc.setUp()
+            null_space_vec_petsc.setArray(b)
+            null_space_vectors.append(null_space_vec_petsc)
+
+        null_space_petsc = PETSc.NullSpace().create(True, null_space_vectors)
+        self.petsc_mat.setNearNullSpace(null_space_petsc)
 
     def set_operator(self, mat, block_size=1):
         self.shape = mat.shape
@@ -180,6 +196,7 @@ class PetscPC:
         self.petsc_mat.createAIJ(
             size=mat.shape, csr=(mat.indptr, mat.indices, mat.data), bsize=block_size
         )
+        self.set_up_null_space()
         self.petsc_b = self.petsc_mat.createVecLeft()
         self.petsc_x = self.petsc_mat.createVecLeft()
         self.pc.setOperators(self.petsc_mat)
@@ -204,7 +221,7 @@ class PetscPC:
 
 
 class PetscAMGMechanics(PetscPC):
-    def __init__(self, dim: int, mat=None) -> None:
+    def __init__(self, dim: int, mat=None, null_space: np.ndarray = None) -> None:
         options = PETSc.Options()
 
         for key in options.getAll():
@@ -227,12 +244,27 @@ class PetscAMGMechanics(PetscPC):
         # options["hmg_inner_pc_hypre_boomeramg_truncfactor"] = 0.3
         # options['hmg_inner_pc_hypre_boomeramg_strong_threshold'] = 0.8
 
-        options["pc_type"] = "hypre"
-        options["pc_hypre_type"] = "boomeramg"
-        options["pc_hypre_boomeramg_max_iter"] = 3
-        options["pc_hypre_boomeramg_cycle_type"] = "W"
-        options["pc_hypre_boomeramg_truncfactor"] = 0.3
-        options["pc_hypre_boomeramg_strong_threshold"] = 0.9
+        options["pc_type"] = "gamg"
+        # options["pc_gamg_threshold"] = -0.1
+        options['pc_gamg_coarse_eq_limit'] = 100
+        options["pc_gamg_agg_nsmooths"] = 5
+
+        options['mg_levels_ksp_type'] = 'richardson'
+        options['mg_levels_ksp_max_iter'] = 2
+        options['mg_levels_pc_type'] = 'ilu'
+        # options["pc_gamg_agg_nsmooths"] = 1
+
+        # good ones:
+        # options["pc_type"] = "hypre"
+        # options["pc_hypre_type"] = "boomeramg"
+        # options["pc_hypre_boomeramg_max_iter"] = 3
+        # options["pc_hypre_boomeramg_cycle_type"] = "W"
+        # options["pc_hypre_boomeramg_truncfactor"] = 0.3
+        # options["pc_hypre_boomeramg_strong_threshold"] = 0.9
+
+        # options['pc_hypre_boomeramg_nodal_coarsen'] = 0
+        # options['pc_hypre_boomeramg_vec_interp_variant'] = 0
+
         # options['pc_hypre_boomeramg_nodal_coarsen'] = 3
         # options["pc_hypre_boomeramg_coarsen_type"] = "CLJP"
         # options['pc_hypre_boomeramg_no_CF'] = True
@@ -240,10 +272,9 @@ class PetscAMGMechanics(PetscPC):
         # options['pc_hypre_boomeramg_nodal_relaxation'] = 1
         # options["pc_hypre_boomeramg_relax_type_all"] = "l1-Gauss-Seidel"
         # options["pc_hypre_boomeramg_relax_type_coarse"] = "Gaussian-Elimination"
-        
+
         # options['pc_hypre_boomeramg_coarsen_type'] = 'PMIS'
         # options['pc_hypre_boomeramg_interp_type'] = 'multipass'
-
 
         # options['pc_hypre_boomeramg_strong_threshold'] = 0.5
 
@@ -260,7 +291,7 @@ class PetscAMGMechanics(PetscPC):
         # options["pc_hypre_boomeramg_interp_type"] = "ext+i"
         # options["pc_hypre_boomeramg_P_max"] = 2
 
-        super().__init__(mat=mat, block_size=dim)
+        super().__init__(mat=mat, block_size=dim, null_space=null_space)
 
         for key in options.getAll():
             options.delValue(key)
@@ -273,7 +304,7 @@ class PetscAMGFlow(PetscPC):
         options["pc_type"] = "hypre"
         options["pc_hypre_type"] = "boomeramg"
         options["pc_hypre_boomeramg_max_iter"] = 1
-        options["pc_hypre_boomeramg_cycle_type"] = "W"
+        # options["pc_hypre_boomeramg_cycle_type"] = "W"
         options["pc_hypre_boomeramg_truncfactor"] = 0.3
 
         super().__init__(mat=mat, block_size=1)

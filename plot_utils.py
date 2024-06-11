@@ -837,4 +837,4 @@ def solve_petsc_new(
     if logx_eigs:
         plt.xscale("log")
     ax.set_title("Eigenvalues estimate")
-    return {'mat_Q': mat_permuted}
+    return {'mat_Q': mat_permuted, 'rhs_Q': rhs_Q}

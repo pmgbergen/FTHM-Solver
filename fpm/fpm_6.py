@@ -254,8 +254,8 @@ def run(cell_size_multiplier: int, save_matrices: bool = True):
 # %%
 if __name__ == "__main__":
     #     run(cell_size_multiplier=i, save_matrices=True)
+    # for i in [0.25, 0.5]:
+    #     run(cell_size_multiplier=i, save_matrices=True)
+    # for i in [1, 2]:
     #     run(cell_size_multiplier=i, save_matrices=False)
-    for i in [0.25, 0.5]:
-        run(cell_size_multiplier=i, save_matrices=True)
-    for i in [1, 2]:
-        run(cell_size_multiplier=i, save_matrices=False)
+    run(cell_size_multiplier=3, save_matrices=False)
