@@ -257,6 +257,20 @@ class BlockMatrixStorage:
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         return self.mat[I, J]
 
+    def build_schur_complement(
+        self, keep: Sequence[int], elim: Sequence[int], only_stab: bool = False
+    ) -> "BlockMatrixStorage":
+        m_kk = self[keep].copy()
+        m_ee = self[elim].mat
+        m_ke = self[keep, elim].mat
+        m_ek = self[elim, keep].mat
+        stab = m_ke @ inv(m_ee) @ m_ek
+        if only_stab:
+            m_kk.mat = stab
+        else:
+            m_kk.mat -= stab
+        return m_kk
+
     def block_diag(self) -> "BlockMatrixStorage":
         """Returns a copy. Keeps only diagonal blocks.
         E.g. how removes how one fracture affects the other."""
@@ -529,6 +543,18 @@ class SolveSchema:
     compute_cond: bool = False
     color_spy: bool = False
     only_complement: bool = False
+
+    def __str__(self):
+        res = (
+            f"Groups: {self.groups}\n"
+            # f"Solve: {self.solve}\n"
+            # f"Invertor: {self.invertor}\n"
+            f"Invertor type: {self.invertor_type}\n"
+        )
+        if self.complement is not None:
+            complement_str = str(self.complement)
+            res += complement_str
+        return res
 
 
 def get_complement_groups(schema: SolveSchema):

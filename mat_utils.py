@@ -16,9 +16,9 @@ from petsc4py import PETSc
 
 
 def assert_finite(vals, groups):
-    pass
-    # if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
-    #     print("Divergence", groups)
+    # pass
+    if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
+        print("Divergence", groups)
 
 
 class FieldSplit:
@@ -238,8 +238,12 @@ class PetscAMGMechanics(PetscPC):
         # options['pc_hypre_boomeramg_no_CF'] = True
         # options['pc_hypre_boomeramg_interp_type'] = 'block'
         # options['pc_hypre_boomeramg_nodal_relaxation'] = 1
-        # options["pc_hypre_boomeramg_relax_type_all"] = "l1scaled-SOR/Jacobi"
+        # options["pc_hypre_boomeramg_relax_type_all"] = "l1-Gauss-Seidel"
         # options["pc_hypre_boomeramg_relax_type_coarse"] = "Gaussian-Elimination"
+        
+        # options['pc_hypre_boomeramg_coarsen_type'] = 'PMIS'
+        # options['pc_hypre_boomeramg_interp_type'] = 'multipass'
+
 
         # options['pc_hypre_boomeramg_strong_threshold'] = 0.5
 
