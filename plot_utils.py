@@ -1,25 +1,27 @@
 import itertools
-from pathlib import Path
-import time
 import json
-from typing import Literal, Sequence, TYPE_CHECKING
+import time
+from dataclasses import asdict
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Literal, Sequence
 
 import matplotlib as mpl
-from matplotlib.ticker import MaxNLocator
 import numpy as np
+import porepy as pp
 import scipy
 import scipy.linalg
 from matplotlib import pyplot as plt
+from matplotlib.ticker import MaxNLocator
 from numpy.linalg import norm
+from pyamg.krylov import gmres
 from scipy.sparse import bmat
 from scipy.sparse.linalg import LinearOperator  # , gmres, bicgstab
+from tqdm import tqdm
+
 from stats import LinearSolveStats
-from pyamg.krylov import gmres
-import porepy as pp
 
 if TYPE_CHECKING:
     from block_matrix import SolveSchema, BlockMatrixStorage
-
 
 from mat_utils import PetscGMRES, condest
 from stats import TimeStepStats
@@ -837,4 +839,36 @@ def solve_petsc_new(
     if logx_eigs:
         plt.xscale("log")
     ax.set_title("Eigenvalues estimate")
-    return {'mat_Q': mat_permuted, 'rhs_Q': rhs_Q}
+    return {"mat_Q": mat_permuted, "rhs_Q": rhs_Q}
+
+
+def dump_json(name, data):
+    save_path = Path("./stats")
+    save_path.mkdir(exist_ok=True)
+    try:
+        dict_data = [asdict(x) for x in data]
+    except TypeError:
+        dict_data = data
+    json_data = json.dumps(dict_data)
+    with open(save_path / name, "w") as file:
+        file.write(json_data)
+
+
+def write_dofs_info(
+    model_name: str, make_model: Callable, cell_size_multipliers: list[int]
+):
+    filename = f"dofs_info_{model_name}.json"
+    data = []
+    for cell_size_multiplier in tqdm(cell_size_multipliers):
+        model = make_model(cell_size_multiplier=cell_size_multiplier)
+        model.prepare_simulation()
+        model._initialize_solver()
+        model.assemble_linear_system()
+        model._prepare_solver()
+        data_entry = dict()
+        for i in range(6):
+            data_entry[f"block {i}"] = model.bmat[5, i].shape[1]
+        data_entry["cell_size_multiplier"] = cell_size_multiplier
+        data.append(data_entry)
+
+    dump_json(filename, data)

@@ -6,6 +6,7 @@ from porepy.models.momentum_balance import MomentumBalance
 from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.models.constitutive_laws import CubicLawPermeability
 
+from plot_utils import write_dofs_info
 from pp_utils import (
     CheckStickingSlidingOpen,
     MyPetscSolver,
@@ -245,6 +246,11 @@ def run(cell_size_multiplier: int, save_matrices: bool):
 
 # %%
 if __name__ == "__main__":
-    for i in [0.5, 1, 2]:
-        run(cell_size_multiplier=i, save_matrices=True)
-    run(cell_size_multiplier=3, save_matrices=False)
+    write_dofs_info(
+        model_name="fpm_4_3d",
+        make_model=make_model,
+        cell_size_multipliers=[0.5, 1, 2, 3],
+    )
+    # for i in [0.5, 1, 2]:
+    #     run(cell_size_multiplier=i, save_matrices=True)
+    # run(cell_size_multiplier=3, save_matrices=False)

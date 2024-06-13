@@ -8,6 +8,7 @@ from porepy.applications.md_grids.fracture_sets import (
 )
 from matplotlib import pyplot as plt
 
+from plot_utils import write_dofs_info
 from pp_utils import (
     CheckStickingSlidingOpen,
     DymanicTimeStepping,
@@ -200,7 +201,6 @@ def make_model(cell_size_multiplier=1):
     return Fpm4(params)
 
 
-
 def run(cell_size_multiplier: int):
 
     model = make_model(cell_size_multiplier=cell_size_multiplier)
@@ -237,6 +237,11 @@ def run(cell_size_multiplier: int):
 
 # %%
 if __name__ == "__main__":
+    write_dofs_info(
+        model_name="fpm_5_2d",
+        make_model=make_model,
+        cell_size_multipliers=[1, 2, 3, 4, 5, 6],
+    )
     # run(cell_size_multiplier=4)
-    for i in reversed(range(6)):
-        run(cell_size_multiplier=i+1)
+    # for i in reversed(range(6)):
+    #     run(cell_size_multiplier=i+1)

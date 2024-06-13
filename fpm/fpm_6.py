@@ -7,6 +7,7 @@ from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.models.constitutive_laws import CubicLawPermeability
 from porepy.applications.md_grids.fracture_sets import orthogonal_fractures_3d
 
+from plot_utils import write_dofs_info
 from pp_utils import (
     CheckStickingSlidingOpen,
     MyPetscSolver,
@@ -253,9 +254,14 @@ def run(cell_size_multiplier: int, save_matrices: bool = True):
 
 # %%
 if __name__ == "__main__":
+    write_dofs_info(
+        model_name="fpm_6_3d",
+        make_model=make_model,
+        cell_size_multipliers=[0.25, 0.5, 1, 2, 3],
+    )
     #     run(cell_size_multiplier=i, save_matrices=True)
     # for i in [0.25, 0.5]:
     #     run(cell_size_multiplier=i, save_matrices=True)
     # for i in [1, 2]:
     #     run(cell_size_multiplier=i, save_matrices=False)
-    run(cell_size_multiplier=3, save_matrices=False)
+    # run(cell_size_multiplier=3, save_matrices=False)

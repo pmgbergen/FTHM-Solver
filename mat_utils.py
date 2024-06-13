@@ -244,15 +244,16 @@ class PetscAMGMechanics(PetscPC):
         # options["hmg_inner_pc_hypre_boomeramg_truncfactor"] = 0.3
         # options['hmg_inner_pc_hypre_boomeramg_strong_threshold'] = 0.8
 
+        # good one
         options["pc_type"] = "gamg"
-        # options["pc_gamg_threshold"] = -0.1
         options['pc_gamg_coarse_eq_limit'] = 100
         options["pc_gamg_agg_nsmooths"] = 5
-
         options['mg_levels_ksp_type'] = 'richardson'
         options['mg_levels_ksp_max_iter'] = 2
         options['mg_levels_pc_type'] = 'ilu'
+
         # options["pc_gamg_agg_nsmooths"] = 1
+        # options["pc_gamg_threshold"] = -0.1
 
         # good ones:
         # options["pc_type"] = "hypre"

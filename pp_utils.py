@@ -1,7 +1,5 @@
-import json
 import sys
 import time
-from dataclasses import asdict
 from functools import cached_property, partial
 from pathlib import Path
 
@@ -13,17 +11,12 @@ from porepy.models.fluid_mass_balance import BoundaryConditionsSinglePhaseFlow
 from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
 
 from block_matrix import BlockMatrixStorage, SolveSchema, make_solver
-from fixed_stress import get_fixed_stress_stabilization, make_fs, make_fs_experimental
-from mat_utils import (
-    PetscAMGFlow,
-    PetscAMGMechanics,
-    PetscGMRES,
-    PetscILU,
-    TimerContext,
-    inv_block_diag,
-    csr_ones,
-    extract_diag_inv,
-)
+from fixed_stress import (get_fixed_stress_stabilization, make_fs,
+                          make_fs_experimental)
+from mat_utils import (PetscAMGFlow, PetscAMGMechanics, PetscGMRES, PetscILU,
+                       TimerContext, csr_ones, extract_diag_inv,
+                       inv_block_diag)
+from plot_utils import dump_json
 from preconditioner_mech import make_J44_inv_bdiag
 from stats import LinearSolveStats, TimeStepStats
 
@@ -186,15 +179,6 @@ class DymanicTimeStepping(pp.SolutionStrategy):
         prev_sol = self.equation_system.get_variable_values(time_step_index=0)
         self.equation_system.set_variable_values(prev_sol, iterate_index=0)
         self.time_manager.compute_time_step(recompute_solution=True)
-
-
-def dump_json(name, data):
-    save_path = Path("./stats")
-    save_path.mkdir(exist_ok=True)
-    dict_data = [asdict(x) for x in data]
-    json_data = json.dumps(dict_data)
-    with open(save_path / name, "w") as file:
-        file.write(json_data)
 
 
 def make_row_col_dofs(model):
