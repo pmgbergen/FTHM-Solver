@@ -11,11 +11,17 @@ from porepy.models.fluid_mass_balance import BoundaryConditionsSinglePhaseFlow
 from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
 
 from block_matrix import BlockMatrixStorage, SolveSchema, make_solver
-from fixed_stress import (get_fixed_stress_stabilization, make_fs,
-                          make_fs_experimental)
-from mat_utils import (PetscAMGFlow, PetscAMGMechanics, PetscGMRES, PetscILU,
-                       TimerContext, csr_ones, extract_diag_inv,
-                       inv_block_diag)
+from fixed_stress import get_fixed_stress_stabilization, make_fs, make_fs_experimental
+from mat_utils import (
+    PetscAMGFlow,
+    PetscAMGMechanics,
+    PetscGMRES,
+    PetscILU,
+    TimerContext,
+    csr_ones,
+    extract_diag_inv,
+    inv_block_diag,
+)
 from plot_utils import dump_json
 from preconditioner_mech import make_J44_inv_bdiag
 from stats import LinearSolveStats, TimeStepStats
@@ -459,7 +465,9 @@ class MyPetscSolver(pp.SolutionStrategy):
                     complement=SolveSchema(
                         groups=[1, 5],
                         solve=lambda bmat: PetscAMGMechanics(
-                            mat=bmat[[1, 5]].mat, dim=self.nd
+                            mat=bmat[[1, 5]].mat,
+                            dim=self.nd,
+                            null_space=self.build_mechanics_near_null_space(),
                         ),
                         invertor_type="physical",
                         invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
@@ -495,6 +503,62 @@ class MyPetscSolver(pp.SolutionStrategy):
             # )
 
         raise ValueError(f"{solver_type}")
+
+    def build_mechanics_near_null_space(self, groups=(1, 5)):
+        cell_centers = []
+        if 1 in groups:
+            cell_centers.append(self.mdg.subdomains(dim=self.nd)[0].cell_centers)
+        if 5 in groups:
+            cell_centers.extend(
+                [intf.cell_centers for intf in self.mdg.interfaces(dim=self.nd - 1)]
+            )
+        cell_centers = np.concatenate(cell_centers, axis=1)
+
+        x, y, z = cell_centers
+        num_dofs = cell_centers.shape[1]
+
+        null_space = []
+        if self.nd == 3:
+            vec = np.zeros((3, num_dofs))
+            vec[0] = 1
+            null_space.append(vec.ravel("f"))
+            vec = np.zeros((3, num_dofs))
+            vec[1] = 1
+            null_space.append(vec.ravel("f"))
+            vec = np.zeros((3, num_dofs))
+            vec[2] = 1
+            null_space.append(vec.ravel("f"))
+            # # 0, -z, y
+            vec = np.zeros((3, num_dofs))
+            vec[1] = -z
+            vec[2] = y
+            null_space.append(vec.ravel("f"))
+            # z, 0, -x
+            vec = np.zeros((3, num_dofs))
+            vec[0] = z
+            vec[2] = -x
+            null_space.append(vec.ravel("f"))
+            # -y, x, 0
+            vec = np.zeros((3, num_dofs))
+            vec[0] = -y
+            vec[1] = x
+            null_space.append(vec.ravel("f"))
+        elif self.nd == 2:
+            vec = np.zeros((2, num_dofs))
+            vec[0] = 1
+            null_space.append(vec.ravel("f"))
+            vec = np.zeros((2, num_dofs))
+            vec[1] = 1
+            null_space.append(vec.ravel("f"))
+            # -x, y
+            vec = np.zeros((2, num_dofs))
+            vec[0] = -x
+            vec[1] = y
+            null_space.append(vec.ravel("f"))
+        else:
+            raise ValueError
+
+        return np.array(null_space)
 
     @cached_property
     def _fixed_stress(self):

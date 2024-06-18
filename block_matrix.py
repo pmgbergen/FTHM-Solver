@@ -451,8 +451,8 @@ class BlockMatrixStorage:
             draw_marker=draw_marker,
         )
 
-    def matshow(self, log=True, show=True):
-        plot_mat(self.mat, log=log, show=show)
+    def matshow(self, log=True, show=True, threshold: float = 1e-30):
+        plot_mat(self.mat, log=log, show=show, threshold=threshold)
 
     def matshow_blocks(self, log=True, show=True, groups=True):
         self.matshow(log=log, show=False)
@@ -539,6 +539,7 @@ class SolveSchema:
         "algebraic"
     )
     complement: Optional["SolveSchema"] = None
+    factorization_type: Literal['full', 'upper'] = 'upper'
 
     compute_cond: bool = False
     color_spy: bool = False
@@ -636,6 +637,9 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         return complement_mat, complement_solve
 
     mat_permuted = mat_orig[groups_0 + groups_1, groups_0 + groups_1]
+
+    assert schema.factorization_type in ('upper', 'lower', 'full')
+
     prec = FieldSplit(
         solve_momentum=submat_00_solve,
         solve_mass=complement_solve,
@@ -643,51 +647,6 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
         C2=submat_01.mat,
         groups_0=groups_0,
         groups_1=groups_1,
+        factorization_type=schema.factorization_type,
     )
     return mat_permuted, prec
-
-
-def make_complement(schema: SolveSchema, mat_orig: BlockMatrixStorage):
-    groups_0 = schema.groups
-    groups_1 = get_complement_groups(schema)
-
-    assert len(set(groups_0).intersection(groups_1)) == 0
-
-    submat_00 = mat_orig[groups_0, groups_0]
-
-    solve = schema.solve
-    invertor = schema.invertor
-    if solve == "direct":
-        solve = lambda bmat: inv(submat_00.mat)
-
-    if len(groups_1) == 0:
-        return submat_00
-
-    submat_10 = mat_orig[groups_1, groups_0]
-    submat_01 = mat_orig[groups_0, groups_1]
-    submat_11 = mat_orig[groups_1, groups_1]
-
-    if schema.invertor_type == "physical":
-        submat_11.mat += invertor(mat_orig)
-
-    elif schema.invertor_type == "operator":
-        submat_11.mat = invertor(mat_orig)
-
-    elif schema.invertor_type == "algebraic":
-        if invertor == "use_solve":
-            submat_00_inv = solve(mat_orig)
-        elif invertor == "direct":
-            submat_00_inv = inv(submat_00.mat)
-        else:
-            submat_00_inv = invertor(mat_orig)
-        submat_10_m, submat_01_m = schema.transform_nondiagonal_blocks(
-            submat_10, submat_01
-        )
-        submat_11.mat -= submat_10_m.mat @ submat_00_inv @ submat_01_m.mat
-
-    else:
-        raise ValueError(f"{schema.invertor_type=}")
-
-    complement_mat = make_complement(schema=schema.complement, mat_orig=submat_11)
-    print("Returning only Schur complement based on", groups_1)
-    return complement_mat

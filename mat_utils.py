@@ -15,14 +15,21 @@ from petsc4py import PETSc
 
 
 def assert_finite(vals, groups):
-    # pass
+    pass
     if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
         print("Divergence", groups)
 
 
 class FieldSplit:
     def __init__(
-        self, solve_momentum, solve_mass, C1, C2, groups_0=None, groups_1=None
+        self,
+        solve_momentum,
+        solve_mass,
+        C1,
+        C2,
+        groups_0=None,
+        groups_1=None,
+        factorization_type: Literal["full", "upper", "lower"] = "full",
     ):
         self.groups_0 = groups_0
         self.groups_1 = groups_1
@@ -31,20 +38,28 @@ class FieldSplit:
         self.J01 = C1
         self.J10 = C2
         self.sep = solve_momentum.shape[0]
+        self.factorization_type: Literal["full", "upper", "lower"] = factorization_type
         shape = solve_momentum.shape[0] + solve_mass.shape[0]
         self.shape = shape, shape
 
     def dot(self, x):
         x_0, x_1 = x[: self.sep], x[self.sep :]
-        tmp_0 = self.J00_inv.dot(x_0)
-        assert_finite(tmp_0, groups=self.groups_0)  # 1e+32
-        tmp_1 = x_1 - self.J01.dot(tmp_0)
+        if self.factorization_type != "upper":
+            tmp_0 = self.J00_inv.dot(x_0)
+            assert_finite(tmp_0, groups=self.groups_0)  # 1e+32
+            tmp_1 = x_1 - self.J01.dot(tmp_0)
+        else:
+            tmp_0 = x_0
+            tmp_1 = x_1
         y_1 = self.S11_inv.dot(tmp_1)
         assert_finite(y_1, groups=self.groups_1)
         y = np.zeros_like(x)
         y[self.sep :] = y_1
-        tmp_2 = self.J00_inv.dot(x_0 - self.J10.dot(y_1))
-        assert_finite(tmp_2, groups=self.groups_0)
+        if self.factorization_type != 'lower':
+            tmp_2 = self.J00_inv.dot(x_0 - self.J10.dot(y_1))
+            assert_finite(tmp_2, groups=self.groups_0)
+        else:
+            tmp_2 = tmp_0
         y[: self.sep] = tmp_2
         return y
 
@@ -167,36 +182,38 @@ class PetscPC:
         self.petsc_b = PETSc.Vec()
         self.pc.setFromOptions()
 
-        self.null_space = null_space
+        self.null_space_vectors = []
+        if null_space is not None:
+            for b in null_space:
+                null_space_vec_petsc = PETSc.Vec().create()
+                null_space_vec_petsc.setSizes(b.shape[0], block_size)
+                null_space_vec_petsc.setUp()
+                null_space_vec_petsc.setArray(b)
+                self.null_space_vectors.append(null_space_vec_petsc)
+            self.null_space_petsc = PETSc.NullSpace().create(
+                True, self.null_space_vectors
+            )
+        else:
+            self.null_space_petsc = None
+
         self.block_size = block_size
 
         self.shape: tuple[int, int]
         if mat is not None:
-            self.set_operator(mat, block_size=block_size)
+            self.set_operator(mat)
 
-    def set_up_null_space(self):
-        if self.null_space is None:
-            return
-        null_space_vectors = []
-        for b in self.null_space:
-            null_space_vec_petsc = PETSc.Vec().create()
-            null_space_vec_petsc.setSizes(b.shape[0], self.block_size)
-            null_space_vec_petsc.setUp()
-            null_space_vec_petsc.setArray(b)
-            null_space_vectors.append(null_space_vec_petsc)
-
-        null_space_petsc = PETSc.NullSpace().create(True, null_space_vectors)
-        self.petsc_mat.setNearNullSpace(null_space_petsc)
-
-    def set_operator(self, mat, block_size=1):
+    def set_operator(self, mat):
         self.shape = mat.shape
         self.petsc_mat.destroy()
         self.petsc_x.destroy()
         self.petsc_b.destroy()
         self.petsc_mat.createAIJ(
-            size=mat.shape, csr=(mat.indptr, mat.indices, mat.data), bsize=block_size
+            size=mat.shape,
+            csr=(mat.indptr, mat.indices, mat.data),
+            bsize=self.block_size,
         )
-        self.set_up_null_space()
+        if self.null_space_petsc is not None:
+            self.petsc_mat.setNearNullSpace(self.null_space_petsc)
         self.petsc_b = self.petsc_mat.createVecLeft()
         self.petsc_x = self.petsc_mat.createVecLeft()
         self.pc.setOperators(self.petsc_mat)
@@ -207,6 +224,10 @@ class PetscPC:
         self.petsc_mat.destroy()
         self.petsc_b.destroy()
         self.petsc_x.destroy()
+        for vec in self.null_space_vectors:
+            vec.destroy()
+        if self.null_space_petsc is not None:
+            self.null_space_petsc.destroy()
 
     def dot(self, b):
         self.petsc_x.set(0.0)
@@ -218,6 +239,21 @@ class PetscPC:
     def get_matrix(self):
         indptr, indices, data = self.petsc_mat.getValuesCSR()
         return scipy.sparse.csr_matrix((data, indices, indptr))
+
+
+class PetscCustomPC(PetscPC):
+
+    def __init__(
+        self, options: dict, mat=None, block_size=1, null_space: np.ndarray = None
+    ) -> None:
+        petsc_options = PETSc.Options()
+
+        for key in petsc_options.getAll():
+            petsc_options.delValue(key)
+        for key, value in options.items():
+            petsc_options[key] = value
+
+        super().__init__(mat, block_size, null_space)
 
 
 class PetscAMGMechanics(PetscPC):
@@ -246,11 +282,11 @@ class PetscAMGMechanics(PetscPC):
 
         # good one
         options["pc_type"] = "gamg"
-        options['pc_gamg_coarse_eq_limit'] = 100
+        options["pc_gamg_coarse_eq_limit"] = 100
         options["pc_gamg_agg_nsmooths"] = 5
-        options['mg_levels_ksp_type'] = 'richardson'
-        options['mg_levels_ksp_max_iter'] = 2
-        options['mg_levels_pc_type'] = 'ilu'
+        options["mg_levels_ksp_type"] = "richardson"
+        options["mg_levels_ksp_max_iter"] = 2
+        options["mg_levels_pc_type"] = "ilu"
 
         # options["pc_gamg_agg_nsmooths"] = 1
         # options["pc_gamg_threshold"] = -0.1
@@ -263,18 +299,21 @@ class PetscAMGMechanics(PetscPC):
         # options["pc_hypre_boomeramg_truncfactor"] = 0.3
         # options["pc_hypre_boomeramg_strong_threshold"] = 0.9
 
-        # options['pc_hypre_boomeramg_nodal_coarsen'] = 0
-        # options['pc_hypre_boomeramg_vec_interp_variant'] = 0
+        # options['pc_hypre_boomeramg_relax_type_down'] = 'l1-Gauss-Seidel'
+        # options['pc_hypre_boomeramg_relax_type_up'] = 'backward-l1-Gauss-Seidel'
+        # options["pc_hypre_boomeramg_relax_type_all"] = "chebyshev"
+
+        # options['pc_hypre_boomeramg_nodal_coarsen'] = 2
+        # options['pc_hypre_boomeramg_vec_interp_variant'] = 1
 
         # options['pc_hypre_boomeramg_nodal_coarsen'] = 3
-        # options["pc_hypre_boomeramg_coarsen_type"] = "CLJP"
+        # options["pc_hypre_boomeramg_coarsen_type"] = 'Falgout'
         # options['pc_hypre_boomeramg_no_CF'] = True
         # options['pc_hypre_boomeramg_interp_type'] = 'block'
         # options['pc_hypre_boomeramg_nodal_relaxation'] = 1
-        # options["pc_hypre_boomeramg_relax_type_all"] = "l1-Gauss-Seidel"
         # options["pc_hypre_boomeramg_relax_type_coarse"] = "Gaussian-Elimination"
 
-        # options['pc_hypre_boomeramg_coarsen_type'] = 'PMIS'
+        # options['pc_hypre_boomeramg_coarsen_type'] = 'HMIS'
         # options['pc_hypre_boomeramg_interp_type'] = 'multipass'
 
         # options['pc_hypre_boomeramg_strong_threshold'] = 0.5
