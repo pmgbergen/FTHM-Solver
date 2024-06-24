@@ -258,10 +258,9 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         use_direct = not self.params.get("iterative_solver", True)
         if use_direct:
             sim_name = f"{sim_name}_direct"
-        # else:
-        #     solver_type = self.params.get("solver_type", "baseline")
-        #     sim_name = f"{sim_name}_solver_{solver_type}"
-
+        solver_type = self.params.get("solver_type", "baseline")
+        if solver_type != '2':
+            sim_name = f"{sim_name}_solver_{solver_type}"
         return sim_name
 
     def before_nonlinear_loop(self) -> None:
@@ -501,6 +500,34 @@ class MyPetscSolver(pp.SolutionStrategy):
             #         ),
             #     ),
             # )
+        elif solver_type == "2_exact":
+            return SolveSchema(
+                groups=[4],
+                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
+                complement=SolveSchema(
+                    groups=[3],
+                    # solve=lambda bmat: PetscILU(bmat[[3]].mat),
+                    solve='direct',
+                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                    complement=SolveSchema(
+                        groups=[1, 5],
+                        # solve=lambda bmat: PetscAMGMechanics(
+                        #     mat=bmat[[1, 5]].mat,
+                        #     dim=self.nd,
+                        #     null_space=self.build_mechanics_near_null_space(),
+                        # ),
+                        solve='direct',
+                        invertor_type="physical",
+                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
+                        complement=SolveSchema(
+                            groups=[0, 2],
+                            solve='direct',
+                            # solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                        ),
+                    ),
+                    # ),
+                ),
+            )
 
         raise ValueError(f"{solver_type}")
 
@@ -603,7 +630,7 @@ class MyPetscSolver(pp.SolutionStrategy):
             self.Qleft = None
             self.Qright = None
             solver_type = self.params.get("solver_type", "baseline")
-            if solver_type == "2":
+            if solver_type == "2" or solver_type == '2_exact':
                 J55_inv = inv_block_diag(bmat[[5]].mat, nd=self.nd, lump=False)
                 eig_max_right = abs(bmat[[5]].mat @ J55_inv).data.max()
                 eig_max_left = abs(J55_inv @ bmat[[5]].mat).data.max()

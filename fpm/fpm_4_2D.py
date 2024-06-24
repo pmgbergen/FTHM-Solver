@@ -186,7 +186,7 @@ def make_model(cell_size_multiplier=1):
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
         # "iterative_solver": False,
-        "solver_type": "2",
+        "solver_type": "2_exact",
         "simulation_name": "fpm_4_2D",
     }
     return Fpm4(params)
@@ -237,5 +237,8 @@ if __name__ == "__main__":
     # )
 
     # run(cell_size_multiplier=3)
-    for i in reversed([1, 2, 3, 4, 5, 6]):
+    # for i in reversed([1, 2, 3, 4, 5, 6]):
+    #     run(cell_size_multiplier=i)
+
+    for i in ([3, 4, 5, 6]):
         run(cell_size_multiplier=i)

@@ -23,7 +23,7 @@ from stats import LinearSolveStats
 if TYPE_CHECKING:
     from block_matrix import SolveSchema, BlockMatrixStorage
 
-from mat_utils import PetscGMRES, condest
+from mat_utils import PetscGMRES, condest, eigs
 from stats import TimeStepStats
 
 BURBERRY = mpl.cycler(
@@ -408,19 +408,51 @@ def get_petsc_converged_reason(x: Sequence[TimeStepStats]) -> list[int]:
 def get_num_sticking_sliding_open(
     x: Sequence[TimeStepStats],
 ) -> tuple[list[int], list[int], list[int]]:
-    sticking = []
-    sliding = []
-    open_ = []
+    st, sl, op, tr = get_num_sticking_sliding_open_transition(
+        x, transition_as_open=True
+    )
+    return st, sl, op
+
+
+def get_cell_volumes(dofs_info_path: str, cell_size_multiplier: int):
+    data = load_data(dofs_info_path)
+    data = next(
+        entry for entry in data if entry["cell_size_multiplier"] == cell_size_multiplier
+    )
+    return data["cell_volumes"]
+
+
+def get_volume_sticking_sliding_open_transition(
+    x: Sequence[TimeStepStats],
+    dofs_info_path: str,
+    cell_size_multiplier: int,
+    transition_as_open: bool = True,
+):
+    st = []
+    sl = []
+    op = []
+    tr = []
+    cell_volumes = np.array(
+        get_cell_volumes(
+            dofs_info_path=dofs_info_path, cell_size_multiplier=cell_size_multiplier
+        )
+    )
     for ts in x:
         for ls in ts.linear_solves:
-            sticking.append(sum(ls.sticking))
-            sliding.append(sum(ls.sliding))
-            open_.append(sum(ls.open_))
-    return sticking, sliding, open_
+            st.append(sum(cell_volumes[ls.sticking]))
+            sl.append(sum(cell_volumes[ls.sliding]))
+            if transition_as_open:
+                op.append(
+                    sum(cell_volumes[np.array(ls.open_) | np.array(ls.transition)])
+                )
+            else:
+                op.append(sum(cell_volumes[ls.open_]))
+                tr.append(sum(cell_volumes[ls.transition]))
+    return st, sl, op, tr
 
 
 def get_num_sticking_sliding_open_transition(
-    x: Sequence[TimeStepStats],
+    x: Sequence[TimeStepStats], transition_as_open: bool = True
 ) -> tuple[list[int], list[int], list[int]]:
     st = []
     sl = []
@@ -430,8 +462,12 @@ def get_num_sticking_sliding_open_transition(
         for ls in ts.linear_solves:
             st.append(sum(ls.sticking))
             sl.append(sum(ls.sliding))
-            op.append(sum(ls.open_))
-            tr.append(sum(ls.transition))
+            if transition_as_open:
+                op.append(sum(np.array(ls.open_) | np.array(ls.transition)))
+                tr.append(0)
+            else:
+                op.append(sum(ls.open_))
+                tr.append(sum(ls.transition))
     return st, sl, op, tr
 
 
@@ -579,7 +615,10 @@ def load_matrix_rhs_state_iterate_dt(data: Sequence[TimeStepStats], idx: int):
 def load_data(path) -> Sequence[TimeStepStats]:
     with open(path, "r") as f:
         payload = json.load(f)
-    return [TimeStepStats.from_json(x) for x in payload]
+    try:
+        return [TimeStepStats.from_json(x) for x in payload]
+    except TypeError:
+        return payload
 
 
 def zoom_in_mat(mat, i, j, ni=200, nj=None):
@@ -633,8 +672,12 @@ COLOR_TRANSITION = "#00bfff"
 COLOR_OPEN = "blue"
 
 
-def color_sticking_sliding_open_transition(entry: Sequence[TimeStepStats]):
-    st, sl, op, tr = get_num_sticking_sliding_open_transition(entry)
+def color_sticking_sliding_open_transition(
+    entry: Sequence[TimeStepStats], transition_as_open: bool = True
+):
+    st, sl, op, tr = get_num_sticking_sliding_open_transition(
+        entry, transition_as_open=transition_as_open
+    )
     maximum = np.array([st, sl, op, tr]).max(axis=0)
     seen_sticking = seen_sliding = seen_open = seen_transition = False
     for i in range(maximum.size):
@@ -660,7 +703,10 @@ def color_sticking_sliding_open_transition(entry: Sequence[TimeStepStats]):
             if not seen_open:
                 kwargs["label"] = "Open"
             seen_open = True
-        plt.axvspan(i - 0.5, i + 0.5, facecolor=color, alpha=0.2, **kwargs)
+        # matplotlib.patches.Patch(linewidth=0
+        plt.axvspan(
+            i - 0.5, i + 0.5, facecolor=color, edgecolor="none", alpha=0.2, **kwargs
+        )
 
 
 def plot_grid(
@@ -669,33 +715,63 @@ def plot_grid(
     shape: tuple[int, int] = None,
     figsize: tuple[int, int] = (8, 8),
     ylabel: str = "GMRES iters.",
-    xlabel: str = "linear system idx.",
+    xlabel: str = "Linear system idx.",
     legend: bool = True,
+    ax_titles: dict = None,
+    reuse_axes=None,
+    return_axes: bool = False,
 ):
     if shape is None:
         shape = 3, (len(data) // 3 + len(data) % 3)
-    last = len(data) - 1
-    plt.figure(figsize=figsize)
+
+    if reuse_axes is not None:
+        axes = reuse_axes
+    else:
+        fig, axes = plt.subplots(
+            nrows=shape[0], ncols=shape[1], squeeze=False, figsize=figsize
+        )
     for i, (name, entry) in enumerate(data.items()):
-        plt.subplot(shape[0], shape[1], i + 1)
-        plt.title(name)
-        plt.tight_layout()
-        render_element(entry)
+        ax = axes.ravel()[i]
+
+        if ax_titles is not None:
+            ax.set_title(ax_titles[name])
+        else:
+            ax.set_title(name)
+
+        plt.sca(ax)
+
+        num_args = render_element.__code__.co_argcount
+        if num_args == 2:
+            render_element(name, entry)
+        elif num_args == 1:
+            render_element(entry)
+        else:
+            raise TypeError
         if i % shape[1] == 0:
             plt.ylabel(ylabel)
         if i >= (shape[0] - 1) * shape[1]:
             plt.xlabel(xlabel)
-        if legend and i == last:
-            lines = []
-            labels = []
-            for ax in plt.gcf().axes:
-                for line, label in zip(*ax.get_legend_handles_labels()):
-                    if label not in labels:
-                        lines.append(line)
-                        labels.append(label)
-            plt.legend(
-                lines, labels, loc="center left", bbox_to_anchor=(1, 0.5), fancybox=True
-            )
+    if legend:
+        lines = []
+        labels = []
+        for ax in axes.ravel():
+            for line, label in zip(*ax.get_legend_handles_labels()):
+                if label not in labels:
+                    lines.append(line)
+                    labels.append(label)
+        axes[-1, -1].legend(
+            lines,
+            labels,
+            # loc="center left",
+            # bbox_to_anchor=(1, 0.5),
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.5),
+            ncol=5,
+            fancybox=True,
+        )
+    plt.tight_layout()
+    if return_axes:
+        return axes
 
 
 def get_friction_bound_norm(model: pp.SolutionStrategy, data: Sequence[TimeStepStats]):
@@ -711,13 +787,18 @@ def get_friction_bound_norm(model: pp.SolutionStrategy, data: Sequence[TimeStepS
     return norms
 
 
-def plot_sticking_sliding_open_transition(entry: Sequence[TimeStepStats]):
-    st, sl, op, tr = get_num_sticking_sliding_open_transition(entry)
+def plot_sticking_sliding_open_transition(
+    entry: Sequence[TimeStepStats], transition_as_open: bool = True
+):
+    st, sl, op, tr = get_num_sticking_sliding_open_transition(
+        entry, transition_as_open=transition_as_open
+    )
     color_time_steps(entry, fill=True, grid=False, legend=True)
     plt.plot(st, label="Sticking", marker=".", color=COLOR_STICKING)
     plt.plot(sl, label="Sliding", marker=".", color=COLOR_SLIDING)
     plt.plot(op, label="Open", marker=".", color=COLOR_OPEN)
-    plt.plot(tr, label="Transition", marker=".", color=COLOR_TRANSITION)
+    if not transition_as_open:
+        plt.plot(tr, label="Transition", marker=".", color=COLOR_TRANSITION)
 
 
 def get_rhs_norms(model: pp.SolutionStrategy, data: Sequence[TimeStepStats], ord=2):
@@ -869,6 +950,24 @@ def write_dofs_info(
         for i in range(6):
             data_entry[f"block {i}"] = model.bmat[5, i].shape[1]
         data_entry["cell_size_multiplier"] = cell_size_multiplier
+        cell_volumes = np.concatenate(
+            [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]
+        ).tolist()
+        data_entry["cell_volumes"] = cell_volumes
         data.append(data_entry)
 
     dump_json(filename, data)
+
+
+def plot_eigs_exact(mat, logx: bool = True):
+    lambdas = eigs(mat)
+    if np.any(lambdas.real <= 0):
+        print("Has negative lambda")
+    if np.any(lambdas.real == 0):
+        print("Has zero lambda")
+    imag = lambdas.imag
+    real = lambdas.real
+    if logx:
+        plt.xscale("log")
+        real = abs(real)
+    plt.scatter(real, imag, marker="x")

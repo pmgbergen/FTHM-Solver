@@ -16,8 +16,8 @@ from petsc4py import PETSc
 
 def assert_finite(vals, groups):
     pass
-    if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
-        print("Divergence", groups)
+    # if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
+    #     print("Divergence", groups)
 
 
 class FieldSplit:
@@ -110,6 +110,14 @@ def cond(mat):
     except AttributeError:
         pass
     return np.linalg.cond(mat)
+
+
+def eigs(mat):
+    try:
+        mat = mat.A
+    except AttributeError:
+        pass
+    return np.linalg.eigvals(mat)
 
 
 def inv(mat):
@@ -282,10 +290,11 @@ class PetscAMGMechanics(PetscPC):
 
         # good one
         options["pc_type"] = "gamg"
-        options["pc_gamg_coarse_eq_limit"] = 100
-        options["pc_gamg_agg_nsmooths"] = 5
+        # options["pc_gamg_coarse_eq_limit"] = 100
+        options["pc_gamg_agg_nsmooths"] = 10
         options["mg_levels_ksp_type"] = "richardson"
-        options["mg_levels_ksp_max_iter"] = 2
+        options["mg_levels_ksp_max_iter"] = 1
+        # options["mg_levels_pc_type"] = "ilu"
         options["mg_levels_pc_type"] = "ilu"
 
         # options["pc_gamg_agg_nsmooths"] = 1
@@ -294,10 +303,10 @@ class PetscAMGMechanics(PetscPC):
         # good ones:
         # options["pc_type"] = "hypre"
         # options["pc_hypre_type"] = "boomeramg"
-        # options["pc_hypre_boomeramg_max_iter"] = 3
-        # options["pc_hypre_boomeramg_cycle_type"] = "W"
+        # options["pc_hypre_boomeramg_max_iter"] = 6
+        # options["pc_hypre_boomeramg_cycle_type"] = "v"
         # options["pc_hypre_boomeramg_truncfactor"] = 0.3
-        # options["pc_hypre_boomeramg_strong_threshold"] = 0.9
+        # options["pc_hypre_boomeramg_strong_threshold"] = 0.6
 
         # options['pc_hypre_boomeramg_relax_type_down'] = 'l1-Gauss-Seidel'
         # options['pc_hypre_boomeramg_relax_type_up'] = 'backward-l1-Gauss-Seidel'

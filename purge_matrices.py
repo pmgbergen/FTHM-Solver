@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from plot_utils import load_data
+from stats import TimeStepStats
 
 known_data = set()
 
@@ -8,10 +9,10 @@ stats_dir = Path('./stats')
 data_dir = Path('./matrices')
 
 for stats_file in os.listdir(stats_dir):
-    try:
-        stats = load_data(stats_dir / stats_file)
-    except TypeError:
+    stats = load_data(stats_dir / stats_file)
+    if not isinstance(stats[0], TimeStepStats):
         print('Skipping', stats_file)
+        continue
     for ts in stats:
         for ls in ts.linear_solves:
             known_data.add(ls.matrix_id)
