@@ -102,7 +102,13 @@ def plot_jacobian(model, equations=None):
     ax.set_xticklabels(labels, rotation=45, ha="left")
 
 
-def plot_mat(mat, log=True, show=True, threshold=1e-30):
+def plot_mat(
+    mat,
+    log=True,
+    show=True,
+    threshold=1e-30,
+    aspect: Literal["equal", "auto"] = "equal",
+):
     mat = mat.copy()
     try:
         mat = mat.A
@@ -113,7 +119,7 @@ def plot_mat(mat, log=True, show=True, threshold=1e-30):
     if log:
         mat = np.log10(abs(mat))
 
-    plt.matshow(mat, fignum=0)
+    plt.matshow(mat, fignum=0, aspect=aspect)
     plt.colorbar()
     if show:
         plt.show()
@@ -137,7 +143,7 @@ def solve(
     prec=None,
     rhs=None,
     label="",
-    plot_residuals=True,
+    plot_residuals=False,
     tol=1e-10,
 ):
     residuals = []
@@ -191,6 +197,7 @@ def solve(
         # plt.legend()
         plt.plot(residual_vectors[-1] / residual_vectors[0], alpha=0.7)
         plt.yscale("log")
+    return np.array(residual_vectors)
 
 
 def color_spy(block_mat, row_idx=None, col_idx=None, row_names=None, col_names=None):
@@ -920,7 +927,7 @@ def solve_petsc_new(
     if logx_eigs:
         plt.xscale("log")
     ax.set_title("Eigenvalues estimate")
-    return {"mat_Q": mat_permuted, "rhs_Q": rhs_Q}
+    return {"mat_Q": mat_permuted, "rhs_Q": rhs_Q, "prec": prec}
 
 
 def dump_json(name, data):

@@ -451,8 +451,14 @@ class BlockMatrixStorage:
             draw_marker=draw_marker,
         )
 
-    def matshow(self, log=True, show=True, threshold: float = 1e-30):
-        plot_mat(self.mat, log=log, show=show, threshold=threshold)
+    def matshow(
+        self,
+        log=True,
+        show=True,
+        threshold: float = 1e-30,
+        aspect: Literal["equal", "auto"] = "equal",
+    ):
+        plot_mat(self.mat, log=log, show=show, threshold=threshold, aspect=aspect)
 
     def matshow_blocks(self, log=True, show=True, groups=True):
         self.matshow(log=log, show=False)
@@ -539,7 +545,7 @@ class SolveSchema:
         "algebraic"
     )
     complement: Optional["SolveSchema"] = None
-    factorization_type: Literal['full', 'upper'] = 'upper'
+    factorization_type: Literal["full", "upper"] = "upper"
 
     compute_cond: bool = False
     color_spy: bool = False
@@ -638,7 +644,7 @@ def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
 
     mat_permuted = mat_orig[groups_0 + groups_1, groups_0 + groups_1]
 
-    assert schema.factorization_type in ('upper', 'lower', 'full')
+    assert schema.factorization_type in ("upper", "lower", "full")
 
     prec = FieldSplit(
         solve_momentum=submat_00_solve,

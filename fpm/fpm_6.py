@@ -4,7 +4,7 @@ import porepy as pp
 from porepy.models.poromechanics import Poromechanics
 from porepy.models.momentum_balance import MomentumBalance
 from porepy.models.fluid_mass_balance import SinglePhaseFlow
-from porepy.models.constitutive_laws import CubicLawPermeability
+from porepy.models.constitutive_laws import CubicLawPermeability, DarcysLawAd
 from porepy.applications.md_grids.fracture_sets import orthogonal_fractures_3d
 
 from plot_utils import write_dofs_info
@@ -46,7 +46,7 @@ solid_material = {
 }
 
 
-class Fpm4(
+BaseClasses = [
     NewtonBacktracking,
     # NewtonBacktrackingSimple,
     MyPetscSolver,
@@ -57,7 +57,15 @@ class Fpm4(
     Poromechanics,
     # MomentumBalance,
     # SinglePhaseFlow,
-):
+]
+
+DIFFERENTIABLE_TPFA = False
+if DIFFERENTIABLE_TPFA:
+    BaseClasses.insert(0, DarcysLawAd)
+print(f"{DIFFERENTIABLE_TPFA = }")
+
+
+class Fpm4(*BaseClasses):
 
     def simulation_name(self):
         try:
@@ -65,7 +73,11 @@ class Fpm4(
         except Exception:
             name = "direct"
         cell_size = self.params["cell_size_multiplier"]
-        return f"{name}_x{cell_size}"
+        name = f"{name}_x{cell_size}"
+
+        if DIFFERENTIABLE_TPFA:
+            name = f"{name}_dTPFA"
+        return name
 
     def before_nonlinear_loop(self) -> None:
         super().before_nonlinear_loop()
@@ -187,10 +199,13 @@ class Fpm4(
 
 def make_model(cell_size_multiplier=1, save_matrices: bool = True):
     print(f"{cell_size_multiplier = }")
-    dt = 0.5
+    dt_max = dt = 0.5
+    if cell_size_multiplier == 3:
+        dt_max = dt = 0.1
+        print(f'{dt_max = }')
     time_manager = pp.TimeManager(
         dt_init=dt,
-        dt_min_max=(0.1, 0.5),
+        dt_min_max=(dt_max / 5, dt_max),
         schedule=[0, 3, 6],
         constant_dt=False,
         iter_max=25,
@@ -254,14 +269,13 @@ def run(cell_size_multiplier: int, save_matrices: bool = True):
 
 # %%
 if __name__ == "__main__":
-    write_dofs_info(
-        model_name="fpm_6_3d",
-        make_model=make_model,
-        cell_size_multipliers=[0.25, 0.5, 1, 2, 3],
-    )
-    #     run(cell_size_multiplier=i, save_matrices=True)
+    # write_dofs_info(
+    #     model_name="fpm_6_3d",
+    #     make_model=make_model,
+    #     cell_size_multipliers=[0.25, 0.5, 1, 2, 3],
+    # )
+    run(cell_size_multiplier=3, save_matrices=False)
+    # run(cell_size_multiplier=2, save_matrices=False)
     # for i in [0.25, 0.5]:
     #     run(cell_size_multiplier=i, save_matrices=True)
-    # for i in [1, 2]:
-    #     run(cell_size_multiplier=i, save_matrices=False)
-    # run(cell_size_multiplier=2, save_matrices=False)
+    # run(cell_size_multiplier=1, save_matrices=False)

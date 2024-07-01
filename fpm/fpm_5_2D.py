@@ -1,7 +1,7 @@
 # %%
 import numpy as np
 import porepy as pp
-from porepy.models.constitutive_laws import CubicLawPermeability
+from porepy.models.constitutive_laws import CubicLawPermeability, DarcysLawAd
 from porepy.models.poromechanics import Poromechanics
 from porepy.applications.md_grids.fracture_sets import (
     seven_fractures_one_L_intersection,
@@ -21,6 +21,27 @@ from pp_utils import (
 XMAX = 2.0
 YMAX = 1.0
 ZMAX = 1.0
+
+BaseClasses = [
+    NewtonBacktracking,
+    # NewtonBacktrackingSimple,
+    MyPetscSolver,
+    StatisticsSavingMixin,
+    CheckStickingSlidingOpen,
+    DymanicTimeStepping,
+    CubicLawPermeability,
+    Poromechanics,
+    # MomentumBalance,
+    # SinglePhaseFlow,
+]
+
+DIFFERENTIABLE_TPFA = False
+if DIFFERENTIABLE_TPFA:
+    BaseClasses.insert(0, DarcysLawAd)
+
+DIRECT_SUBSOLVERS = True
+
+NORMAL_ELASTIC_DEFORMATION = False
 
 fluid_material = {
     "compressibility": 4.559 * 1e-10,  # [Pa^-1], isentropic compressibility
@@ -43,22 +64,14 @@ solid_material = {
     "porosity": 1.3e-2,  # [-]
     "specific_storage": 4.74e-10,  # [Pa^-1]
     # other
-    "maximum_fracture_closure": 0,  # Barton-Bandis elastic deformation. Defaults to 0.
+    # Barton-Bandis elastic deformation. Defaults to 0.
+    "fracture_gap": 1e-4 if NORMAL_ELASTIC_DEFORMATION else 0,
+    "maximum_fracture_closure": 5e-5 if NORMAL_ELASTIC_DEFORMATION else 0,
+    "fracture_normal_stiffness": 1.1e8,  # [Pa m^-1]  # increase this to make easier to converge (* 10)
 }
 
 
-class Fpm4(
-    NewtonBacktracking,
-    # NewtonBacktrackingSimple,
-    MyPetscSolver,
-    StatisticsSavingMixin,
-    CheckStickingSlidingOpen,
-    DymanicTimeStepping,
-    CubicLawPermeability,
-    Poromechanics,
-    # MomentumBalance,
-    # SinglePhaseFlow,
-):
+class Fpm4(*BaseClasses):
 
     def simulation_name(self):
         try:
@@ -66,16 +79,15 @@ class Fpm4(
         except Exception:
             name = "direct"
         cell_size = self.params["cell_size_multiplier"]
-        return f"{name}_x{cell_size}"
+        name = f"{name}_x{cell_size}"
 
-    def before_nonlinear_loop(self) -> None:
-        super().before_nonlinear_loop()
-        st, sl, op, tr = self.sticking_sliding_open_transition()
-        print()
-        print("num sticking:", sum(st))
-        print("num sliding:", sum(sl))
-        print("num open:", sum(op))
-        print("num transition:", sum(tr))
+        if DIFFERENTIABLE_TPFA:
+            name = f"{name}_dTPFA"
+
+        if NORMAL_ELASTIC_DEFORMATION:
+            name = f"{name}_Barton-Bandis"
+
+        return name
 
     # Geometry
 
@@ -195,7 +207,9 @@ def make_model(cell_size_multiplier=1):
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
         # "iterative_solver": False,
-        "solver_type": "2",
+        # "solver_type": "2",
+        "solver_type": "2_exact",
+        # "solver_type": "2_exact_only_fs",
         "simulation_name": "fpm_5_2D",
     }
     return Fpm4(params)
@@ -237,10 +251,11 @@ def run(cell_size_multiplier: int):
 
 # %%
 if __name__ == "__main__":
-    write_dofs_info(
-        model_name="fpm_5_2d",
-        make_model=make_model,
-        cell_size_multipliers=[1, 2, 3, 4, 5, 6],
-    )
-    # for i in reversed(range(6)):
-    #     run(cell_size_multiplier=i+1)
+    # write_dofs_info(
+    #     model_name="fpm_5_2d",
+    #     make_model=make_model,
+    #     cell_size_multipliers=[1, 2, 3, 4, 5, 6],
+    # )
+    run(cell_size_multiplier=1)
+    # for i in [1, 2, 3, 4, 5, 6]:
+    #     run(cell_size_multiplier=i)

@@ -4,7 +4,7 @@ import porepy as pp
 from porepy.models.poromechanics import Poromechanics
 from porepy.models.momentum_balance import MomentumBalance
 from porepy.models.fluid_mass_balance import SinglePhaseFlow
-from porepy.models.constitutive_laws import CubicLawPermeability
+from porepy.models.constitutive_laws import CubicLawPermeability, DarcysLawAd
 
 from plot_utils import write_dofs_info
 from pp_utils import (
@@ -19,6 +19,7 @@ from pp_utils import (
 XMAX = 1.0
 YMAX = 1.0
 ZMAX = 1.0
+
 
 fluid_material = {
     "compressibility": 4.559 * 1e-10,  # [Pa^-1], isentropic compressibility
@@ -45,7 +46,7 @@ solid_material = {
 }
 
 
-class Fpm4(
+BaseClasses = [
     NewtonBacktracking,
     # NewtonBacktrackingSimple,
     MyPetscSolver,
@@ -56,7 +57,14 @@ class Fpm4(
     Poromechanics,
     # MomentumBalance,
     # SinglePhaseFlow,
-):
+]
+
+DIFFERENTIABLE_TPFA = False
+if DIFFERENTIABLE_TPFA:
+    BaseClasses.insert(0, DarcysLawAd)
+
+
+class Fpm4(*BaseClasses):
 
     def simulation_name(self):
         try:
@@ -64,7 +72,11 @@ class Fpm4(
         except Exception:
             name = "direct"
         cell_size = self.params["cell_size_multiplier"]
-        return f"{name}_x{cell_size}"
+        name = f"{name}_x{cell_size}"
+
+        if DIFFERENTIABLE_TPFA:
+            name = f"{name}_dTPFA"
+        return name
 
     def before_nonlinear_loop(self) -> None:
         super().before_nonlinear_loop()
@@ -246,11 +258,11 @@ def run(cell_size_multiplier: int, save_matrices: bool):
 
 # %%
 if __name__ == "__main__":
-    write_dofs_info(
-        model_name="fpm_4_3d",
-        make_model=make_model,
-        cell_size_multipliers=[0.5, 1, 2, 3],
-    )
-    # for i in [0.5, 1, 2]:
-    #     run(cell_size_multiplier=i, save_matrices=True)
-    # run(cell_size_multiplier=3, save_matrices=False)
+    # write_dofs_info(
+    #     model_name="fpm_4_3d",
+    #     make_model=make_model,
+    #     cell_size_multipliers=[0.5, 1, 2, 3],
+    # )
+    for i in [0.5, 1, 2]:
+        run(cell_size_multiplier=i, save_matrices=True)
+    run(cell_size_multiplier=3, save_matrices=False)

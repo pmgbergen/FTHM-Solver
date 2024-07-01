@@ -21,6 +21,7 @@ from mat_utils import (
     csr_ones,
     extract_diag_inv,
     inv_block_diag,
+    inv,
 )
 from plot_utils import dump_json
 from preconditioner_mech import make_J44_inv_bdiag
@@ -528,6 +529,34 @@ class MyPetscSolver(pp.SolutionStrategy):
                     # ),
                 ),
             )
+        elif solver_type == "2_exact_only_fs":
+            return SolveSchema(
+                groups=[4],
+                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
+                complement=SolveSchema(
+                    groups=[3],
+                    # solve=lambda bmat: PetscILU(bmat[[3]].mat),
+                    solve='direct',
+                    # invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                    complement=SolveSchema(
+                        groups=[1, 5],
+                        # solve=lambda bmat: PetscAMGMechanics(
+                        #     mat=bmat[[1, 5]].mat,
+                        #     dim=self.nd,
+                        #     null_space=self.build_mechanics_near_null_space(),
+                        # ),
+                        solve='direct',
+                        invertor_type="physical",
+                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
+                        complement=SolveSchema(
+                            groups=[0, 2],
+                            solve='direct',
+                            # solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                        ),
+                    ),
+                    # ),
+                ),
+            )
 
         raise ValueError(f"{solver_type}")
 
@@ -630,10 +659,15 @@ class MyPetscSolver(pp.SolutionStrategy):
             self.Qleft = None
             self.Qright = None
             solver_type = self.params.get("solver_type", "baseline")
-            if solver_type == "2" or solver_type == '2_exact':
-                J55_inv = inv_block_diag(bmat[[5]].mat, nd=self.nd, lump=False)
-                eig_max_right = abs(bmat[[5]].mat @ J55_inv).data.max()
-                eig_max_left = abs(J55_inv @ bmat[[5]].mat).data.max()
+            if solver_type.startswith('2'):
+                if solver_type == '2_exact_only_fs':
+                    J55_inv = inv(bmat[[5]].mat)
+                    eig_max_right = 1
+                    eig_max_left = 1
+                else:
+                    J55_inv = inv_block_diag(bmat[[5]].mat, nd=self.nd, lump=False)
+                    eig_max_right = abs(bmat[[5]].mat @ J55_inv).data.max()
+                    eig_max_left = abs(J55_inv @ bmat[[5]].mat).data.max()
 
                 Qleft = bmat.empty_container()
                 Qleft.mat = csr_ones(Qleft.shape[0])
@@ -718,6 +752,8 @@ class MyPetscSolver(pp.SolutionStrategy):
 
             with TimerContext() as t_gmres:
                 sol_Q = gmres_.solve(rhs_Q)
+                # print(len(gmres_.get_residuals()))
+                # mat_Q_permuted.color_local_rhs(rhs_Q); plt.show()
 
             self._linear_solve_stats.time_gmres = t_gmres.elapsed_time
 
