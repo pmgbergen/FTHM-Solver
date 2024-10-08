@@ -271,43 +271,6 @@ class PetscAMGMechanics(PetscPC):
         for key in options.getAll():
             options.delValue(key)
 
-        # options["pc_type"] = "gamg"
-        # options['pc_gamg_agg_nsmooths'] = 1
-        # options['pc_mg_cycle_type'] = 'W'
-        # options['mg_levels_pc_type'] = 'sor'
-        # options['pc_gamg_threshold'] = 0.9
-        # options["mg_levels_ksp_type"] = "chebyshev"
-        # options["mg_levels_ksp_chebyshev_esteig_steps"] = 10
-        # options["mg_levels_pc_type"] = "jacobi"
-
-        # options['pc_type'] = 'hmg'
-        # options['hmg_inner_pc_type'] = 'gamg'
-        # options["hmg_inner_pc_hypre_type"] = "boomeramg"
-        # options["hmg_inner_pc_hypre_boomeramg_max_iter"] = 1
-        # options["hmg_inner_pc_hypre_boomeramg_cycle_type"] = "W"
-        # options["hmg_inner_pc_hypre_boomeramg_truncfactor"] = 0.3
-        # options['hmg_inner_pc_hypre_boomeramg_strong_threshold'] = 0.8
-
-        # # good one
-        # options["pc_type"] = "gamg"
-        # # options["pc_gamg_coarse_eq_limit"] = 100
-        # options["pc_gamg_agg_nsmooths"] = 10
-        # options["mg_levels_ksp_type"] = "richardson"
-        # options["mg_levels_ksp_max_iter"] = 1
-        # options["mg_levels_pc_type"] = "ilu"
-
-        # options["pc_gamg_agg_nsmooths"] = 1
-        # options["pc_gamg_threshold"] = -0.1
-
-        # good one:
-        # options["pc_type"] = "hypre"
-        # options["pc_hypre_type"] = "boomeramg"
-        # options["pc_hypre_boomeramg_max_iter"] = 1
-        # options["pc_hypre_boomeramg_cycle_type"] = "v"
-        # options["pc_hypre_boomeramg_truncfactor"] = 0.3
-        # options["pc_hypre_boomeramg_strong_threshold"] = 0.7
-        # options['pc_hypre_boomeramg_smooth_type'] = 'Euclid'
-
         options['pc_type'] = 'gamg'
         options["mg_levels_ksp_type"] = "richardson"
         options["mg_levels_ksp_max_iter"] = 1
@@ -316,47 +279,14 @@ class PetscAMGMechanics(PetscPC):
             options["mg_levels_pc_factor_levels"] = 0
         else:
             options["mg_levels_pc_factor_levels"] = 5
-        # options['mg_levels_pc_factor_mat_ordering_type'] = 'rcm'
 
-        # options['pc_mg_levels'] = 5
-        # options['pc_gamg_repartition'] = True
-        # options['pc_gamg_aggressive_coarsening'] = 5
-        # options['pc_gamg_aggressive_mis_k'] = 5
-
-        # options['pc_hypre_boomeramg_max_levels'] = 25
-        # options["pc_hypre_boomeramg_relax_type_all"] = "CG"
-
-        # options['pc_hypre_boomeramg_relax_type_down'] = 'l1-Gauss-Seidel'
-        # options['pc_hypre_boomeramg_relax_type_up'] = 'backward-l1-Gauss-Seidel'
-        # options["pc_hypre_boomeramg_relax_type_all"] = "chebyshev"
-
-        # options['pc_hypre_boomeramg_nodal_coarsen'] = 2
-        # options['pc_hypre_boomeramg_vec_interp_variant'] = 1
-
-        # options['pc_hypre_boomeramg_nodal_coarsen'] = 3
-        # options["pc_hypre_boomeramg_coarsen_type"] = 'Falgout'
-        # options['pc_hypre_boomeramg_no_CF'] = True
-        # options['pc_hypre_boomeramg_interp_type'] = 'block'
-        # options['pc_hypre_boomeramg_nodal_relaxation'] = 1
-        # options["pc_hypre_boomeramg_relax_type_coarse"] = "Gaussian-Elimination"
-
-        # options['pc_hypre_boomeramg_coarsen_type'] = 'HMIS'
-        # options['pc_hypre_boomeramg_interp_type'] = 'multipass'
-
-        # options['pc_hypre_boomeramg_strong_threshold'] = 0.5
-
-        # options['pc_hypre_boomeramg_print_statistics'] = None
-
-        # options.setValue('pc_hypre_boomeramg_relax_type_all', 'Chebyshev')
-        # options.setValue('pc_hypre_boomeramg_smooth_type', 'Pilut')
-
-        # options["pc_hypre_boomeramg_strong_threshold"] = 0.6
-        # options["pc_hypre_boomeramg_agg_nl"] = 4
-        # options["pc_hypre_boomeramg_agg_num_paths"] = 5
-        # options["pc_hypre_boomeramg_max_levels"] = 25
-        # options["pc_hypre_boomeramg_coarsen_type"] = "HMIS"
-        # options["pc_hypre_boomeramg_interp_type"] = "ext+i"
-        # options["pc_hypre_boomeramg_P_max"] = 2
+        # options["pc_type"] = "hypre"
+        # options["pc_hypre_type"] = "boomeramg"
+        # options["pc_hypre_boomeramg_max_iter"] = 1
+        # options["pc_hypre_boomeramg_coarsen_type"] = 'Ruge-Stueben'
+        # options["pc_hypre_boomeramg_num_functions"] = dim
+        # options["pc_hypre_boomeramg_relax_type_all"] = 'symmetric-SOR/Jacobi'
+        # options["pc_hypre_boomeramg_interp_type"] = 'ext+i'
 
         super().__init__(mat=mat, block_size=dim, null_space=null_space)
 
@@ -542,7 +472,8 @@ def inv_block_diag(mat, nd: int, lump: bool = False):
         return inv_block_diag_2x2(mat)
     if nd == 3:
         return inv_block_diag_3x3(mat)
-    raise ValueError
+    print(f"Using inefficient invert block diag, {nd = }")
+    return inv(diag_nd(mat, nd=nd))
 
 
 def inv_block_diag_2x2(mat):

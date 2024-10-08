@@ -39,7 +39,7 @@ DIFFERENTIABLE_TPFA = False
 if DIFFERENTIABLE_TPFA:
     BaseClasses.insert(0, DarcysLawAd)
 
-DIRECT_SUBSOLVERS = True
+DIRECT_SUBSOLVERS = False
 
 NORMAL_ELASTIC_DEFORMATION = False
 
@@ -67,7 +67,7 @@ solid_material = {
     # Barton-Bandis elastic deformation. Defaults to 0.
     "fracture_gap": 1e-4 if NORMAL_ELASTIC_DEFORMATION else 0,
     "maximum_fracture_closure": 5e-5 if NORMAL_ELASTIC_DEFORMATION else 0,
-    "fracture_normal_stiffness": 1.1e8,  # [Pa m^-1]  # increase this to make easier to converge (* 10)
+    "fracture_normal_stiffness": 1.2e9,  # [Pa m^-1]  # increase this to make easier to converge (* 10)
 }
 
 
@@ -207,8 +207,8 @@ def make_model(cell_size_multiplier=1):
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
         # "iterative_solver": False,
-        # "solver_type": "2",
-        "solver_type": "2_exact",
+        "solver_type": "2",
+        # "solver_type": "2_exact",
         # "solver_type": "2_exact_only_fs",
         "simulation_name": "fpm_5_2D",
     }
@@ -233,7 +233,7 @@ def run(cell_size_multiplier: int):
         {
             "prepare_simulation": False,
             "progressbars": True,
-            "nl_convergence_tol": 1e-6,
+            "nl_convergence_tol_res": 1e-6,
             "nl_divergence_tol": 1e8,
             "max_iterations": 25,
         },
@@ -256,6 +256,6 @@ if __name__ == "__main__":
     #     make_model=make_model,
     #     cell_size_multipliers=[1, 2, 3, 4, 5, 6],
     # )
-    run(cell_size_multiplier=1)
-    # for i in [1, 2, 3, 4, 5, 6]:
-    #     run(cell_size_multiplier=i)
+    # run(cell_size_multiplier=1)
+    for i in [1, 2, 3, 4, 5, 6]:
+        run(cell_size_multiplier=i)

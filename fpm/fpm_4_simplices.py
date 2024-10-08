@@ -22,7 +22,7 @@ ZMAX = 1.0
 
 
 fluid_material = {
-    "compressibility": 4.559 * 1e-10,  # [Pa^-1], isentropic compressibility
+    "compressibility": 4.559 * 1e-10,  # [Pa^-1], isotropic compressibility
     "density": 998.2,  # [kg m^-3]
     "viscosity": 1.002e-3,  # [Pa s], absolute viscosity
 }
@@ -240,7 +240,7 @@ def run(cell_size_multiplier: int, save_matrices: bool):
         {
             "prepare_simulation": False,
             "progressbars": True,
-            "nl_convergence_tol": 1e-6,
+            "nl_convergence_tol_res": 1e-6,
             "nl_divergence_tol": 1e8,
             "max_iterations": 10,
         },

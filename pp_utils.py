@@ -172,20 +172,21 @@ class BCFlow(BoundaryConditionsSinglePhaseFlow):
 
 
 class DymanicTimeStepping(pp.SolutionStrategy):
+    pass
     # For some reason, PP does not increase / decrease time step.
     # Should check whether is has been added lately.
-    def after_nonlinear_convergence(
-        self, solution: np.ndarray, errors: float, iteration_counter: int
-    ) -> None:
-        super().after_nonlinear_convergence(solution, errors, iteration_counter)
-        self.time_manager.compute_time_step(iteration_counter, recompute_solution=False)
+    # def after_nonlinear_convergence(
+    #     self, solution: np.ndarray, errors: float, iteration_counter: int
+    # ) -> None:
+    #     super().after_nonlinear_convergence(solution, errors, iteration_counter)
+    #     self.time_manager.compute_time_step(iteration_counter, recompute_solution=False)
 
-    def after_nonlinear_failure(
-        self, solution: np.ndarray, errors: float, iteration_counter: int
-    ) -> None:
-        prev_sol = self.equation_system.get_variable_values(time_step_index=0)
-        self.equation_system.set_variable_values(prev_sol, iterate_index=0)
-        self.time_manager.compute_time_step(recompute_solution=True)
+    # def after_nonlinear_failure(
+    #     self, solution: np.ndarray, errors: float, iteration_counter: int
+    # ) -> None:
+    #     prev_sol = self.equation_system.get_variable_values(time_step_index=0)
+    #     self.equation_system.set_variable_values(prev_sol, iterate_index=0)
+    #     self.time_manager.compute_time_step(recompute_solution=True)
 
 
 def make_row_col_dofs(model):
@@ -260,7 +261,7 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         if use_direct:
             sim_name = f"{sim_name}_direct"
         solver_type = self.params.get("solver_type", "baseline")
-        if solver_type != '2':
+        if solver_type != "2":
             sim_name = f"{sim_name}_solver_{solver_type}"
         return sim_name
 
@@ -269,18 +270,14 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         self.statistics.append(self._time_step_stats)
         super().before_nonlinear_loop()
 
-    def after_nonlinear_convergence(
-        self, solution: np.ndarray, errors: float, iteration_counter: int
-    ) -> None:
+    def after_nonlinear_convergence(self, iteration_counter: int) -> None:
         dump_json(self.simulation_name() + ".json", self.statistics)
-        super().after_nonlinear_convergence(solution, errors, iteration_counter)
+        super().after_nonlinear_convergence(iteration_counter)
 
-    def after_nonlinear_failure(
-        self, solution: np.ndarray, errors: float, iteration_counter: int
-    ) -> None:
+    def after_nonlinear_failure(self) -> None:
         self._time_step_stats.nonlinear_convergence_status = -1
         dump_json(self.simulation_name() + ".json", self.statistics)
-        super().after_nonlinear_failure(solution, errors, iteration_counter)
+        super().after_nonlinear_failure()
 
     def before_nonlinear_iteration(self) -> None:
         self._linear_solve_stats = LinearSolveStats()
@@ -292,8 +289,8 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         self._linear_solve_stats.open_ = data[2].tolist()
         self._linear_solve_stats.transition = data[3].tolist()
 
-        characteristic = self._characteristic.value(self.equation_system).tolist()
-        self._linear_solve_stats.transition_sticking_sliding = characteristic
+        # characteristic = self._characteristic.value(self.equation_system).tolist()
+        # self._linear_solve_stats.transition_sticking_sliding = characteristic
 
     def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
         save_path = Path("./matrices")
@@ -454,14 +451,6 @@ class MyPetscSolver(pp.SolutionStrategy):
                     groups=[3],
                     solve=lambda bmat: PetscILU(bmat[[3]].mat),
                     invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
-                    # complement=SolveSchema(
-                    #     groups=[5],
-                    #     solve=lambda bmat: PetscAMGMechanics(
-                    #         mat=bmat[[5]].mat, dim=self.nd
-                    #     ),
-                    #     invertor=lambda bmat: inv_block_diag(
-                    #         mat=bmat[[5]].mat, nd=self.nd, lump=True
-                    #     ),
                     complement=SolveSchema(
                         groups=[1, 5],
                         solve=lambda bmat: PetscAMGMechanics(
@@ -476,31 +465,32 @@ class MyPetscSolver(pp.SolutionStrategy):
                             solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
                         ),
                     ),
-                    # ),
                 ),
             )
-            # return SolveSchema(
-            #     groups=[4],
-            #     solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
-            #     complement=SolveSchema(
-            #         groups=[3],
-            #         solve=lambda bmat: PetscILU(bmat[[3]].mat),
-            #         invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
-            #         complement=SolveSchema(
-            #             groups=[1, 5],
-            #             solve=lambda bmat: PetscAMGMechanics(
-            #                 mat=bmat[[1, 5]].mat, dim=self.nd
-            #             ),
-            #             # invertor=lambda bmat: self._fixed_stress.mat,
-            #             invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
-            #             invertor_type="physical",
-            #             complement=SolveSchema(
-            #                 groups=[0, 2],
-            #                 solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
-            #             ),
-            #         ),
-            #     ),
-            # )
+        elif solver_type == "2_symmetric":
+            return SolveSchema(
+                groups=[4],
+                solve=lambda bmat: inv(mat=bmat[[4]].mat),
+                complement=SolveSchema(
+                    groups=[3],
+                    solve=lambda bmat: PetscILU(bmat[[3]].mat),
+                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                    complement=SolveSchema(
+                        groups=[1, 5],
+                        solve=lambda bmat: PetscAMGMechanics(
+                            mat=bmat[[1, 5]].mat,
+                            dim=self.nd,
+                            null_space=self.build_mechanics_near_null_space(),
+                        ),
+                        invertor_type="physical",
+                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
+                        complement=SolveSchema(
+                            groups=[0, 2],
+                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                        ),
+                    ),
+                ),
+            )
         elif solver_type == "2_exact":
             return SolveSchema(
                 groups=[4],
@@ -508,7 +498,7 @@ class MyPetscSolver(pp.SolutionStrategy):
                 complement=SolveSchema(
                     groups=[3],
                     # solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                    solve='direct',
+                    solve="direct",
                     invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
                     complement=SolveSchema(
                         groups=[1, 5],
@@ -517,12 +507,12 @@ class MyPetscSolver(pp.SolutionStrategy):
                         #     dim=self.nd,
                         #     null_space=self.build_mechanics_near_null_space(),
                         # ),
-                        solve='direct',
+                        solve="direct",
                         invertor_type="physical",
                         invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
                         complement=SolveSchema(
                             groups=[0, 2],
-                            solve='direct',
+                            solve="direct",
                             # solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
                         ),
                     ),
@@ -536,7 +526,7 @@ class MyPetscSolver(pp.SolutionStrategy):
                 complement=SolveSchema(
                     groups=[3],
                     # solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                    solve='direct',
+                    solve="direct",
                     # invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
                     complement=SolveSchema(
                         groups=[1, 5],
@@ -545,12 +535,12 @@ class MyPetscSolver(pp.SolutionStrategy):
                         #     dim=self.nd,
                         #     null_space=self.build_mechanics_near_null_space(),
                         # ),
-                        solve='direct',
+                        solve="direct",
                         invertor_type="physical",
                         invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
                         complement=SolveSchema(
                             groups=[0, 2],
-                            solve='direct',
+                            solve="direct",
                             # solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
                         ),
                     ),
@@ -659,8 +649,8 @@ class MyPetscSolver(pp.SolutionStrategy):
             self.Qleft = None
             self.Qright = None
             solver_type = self.params.get("solver_type", "baseline")
-            if solver_type.startswith('2'):
-                if solver_type == '2_exact_only_fs':
+            if solver_type.startswith("2"):
+                if solver_type == "2_exact_only_fs":
                     J55_inv = inv(bmat[[5]].mat)
                     eig_max_right = 1
                     eig_max_left = 1
@@ -680,6 +670,10 @@ class MyPetscSolver(pp.SolutionStrategy):
                 self.Qright = Qright
                 self._Qleft = Qleft
                 self._Qright = Qright
+
+                if "symmetric" in solver_type:
+                    self.Qright = Qright
+                    self.Qleft = Qleft
 
                 # J_Q = bmat.empty_container()
                 # J_Q.mat = Qleft.mat @ bmat.mat
@@ -732,16 +726,6 @@ class MyPetscSolver(pp.SolutionStrategy):
 
             tol = 1e-10
             pc_side = "right"
-            solver_type = self.params.get("solver_type", "baseline")
-            if solver_type == "1":
-                tol = 1e-10
-                pc_side = "left"
-
-            if solver_type == "2":
-                pc_side = "right"
-                # tol = 1e-6
-                # pc_side = 'left'
-                tol = 1e-10
 
             gmres_ = PetscGMRES(
                 mat=mat_Q_permuted.mat,
@@ -849,8 +833,8 @@ def correct_eq_groups(model):
     return eq_dofs_corrected, eq_groups_corrected
 
 
-class NewtonBacktracking(pp.SolutionStrategy):
 
+class NewtonBacktracking(pp.SolutionStrategy):
     def _test_residual_norm(self, alpha: float, delta_sol: np.ndarray):
         original_values = self.equation_system.get_variable_values(iterate_index=0)
         return (
@@ -912,13 +896,16 @@ class NewtonBacktracking(pp.SolutionStrategy):
         res_norm_groups = self.compute_nonlinear_residual() / self._newton_res_0
         res_norm = res_norm_groups.sum()
         # print(f"{res_norm = }")
-        converged = res_norm < nl_params["nl_convergence_tol"]
+        converged = res_norm < nl_params["nl_convergence_tol_res"]
         diverged = res_norm > nl_params["nl_divergence_tol"]
+        if nl_params['nl_convergence_tol'] != 1e-10:
+            assert False
         if not np.all(np.isfinite(res_norm)) or not np.all(np.isfinite(solution)):
             diverged = True
         # if diverged:
         #     print('diverged')
-        return res_norm, converged, diverged
+        return res_norm, abs(prev_solution - solution).max(), converged, diverged
+        # return res_norm, converged, diverged
 
     def compute_nonlinear_residual(
         self, replace_zeros: bool = False, state: np.ndarray = None

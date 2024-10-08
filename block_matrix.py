@@ -88,6 +88,33 @@ def color_spy(
         plt.show()
 
 
+def get_nonzero_indices(A, row_indices, col_indices):
+    """
+    Get the indices of A.data that correspond to the specified subset of rows and columns.
+
+    Parameters:
+    A (csr_matrix): The input sparse matrix.
+    row_indices (list or array): The list of row indices to consider.
+    col_indices (list or array): The list of column indices to consider.
+
+    Returns:
+    list: Indices in A.data corresponding to non-zero elements in the specified subset.
+    """
+    result_indices = []
+    col_set = set(col_indices)  # For quick lookup
+
+    for row in row_indices:
+        start_ptr = A.indptr[row]
+        end_ptr = A.indptr[row + 1]
+
+        for data_idx in range(start_ptr, end_ptr):
+            col_idx = A.indices[data_idx]
+            if col_idx in col_set:
+                result_indices.append(data_idx)
+
+    return result_indices
+
+
 class BlockMatrixStorage:
     def __init__(
         self,
@@ -378,6 +405,21 @@ class BlockMatrixStorage:
         )
         return self.mat[global_i, global_j]
 
+    def set_zeros(
+        self, row_idx: list[int] | int, col_idx: list[int] | int, grouped: bool = True
+    ) -> None:
+        """Set the values in the given block rows and columns to zeros. Does not change
+        the sparsity pattern."""
+        row_idx, col_idx = self._correct_getitem_key((row_idx, col_idx))
+        all_rows, all_cols = self.get_active_local_dofs(grouped=grouped)
+
+        nonzero_idx = get_nonzero_indices(
+            A=self.mat,
+            row_indices=np.concatenate([all_rows[i] for i in row_idx]),
+            col_indices=np.concatenate([all_cols[i] for i in col_idx]),
+        )
+        self.mat.data[nonzero_idx] = 0
+
     # Visualization
 
     def get_active_local_dofs(self, grouped=False):
@@ -466,7 +508,11 @@ class BlockMatrixStorage:
             show=show, groups=groups, color=False, hatch=True, draw_marker=False
         )
 
-    def plot_max(self, groups=True):
+    def plot_max(
+        self,
+        groups=True,
+        annot=True,
+    ):
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         data = []
 
@@ -490,7 +536,7 @@ class BlockMatrixStorage:
         sns.heatmap(
             data=np.array(data),
             square=False,
-            annot=True,
+            annot=annot,
             norm=matplotlib.colors.LogNorm(),
             fmt=".1e",
             xticklabels=x_tick_labels,

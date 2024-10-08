@@ -1,9 +1,10 @@
 # %%
-from functools import partial
+# from functools import partial
 import numpy as np
 import porepy as pp
-from porepy.models.constitutive_laws import CubicLawPermeability
-from porepy.models.poromechanics import Poromechanics
+
+# from porepy.models.constitutive_laws import CubicLawPermeability
+# from porepy.models.poromechanics import Poromechanics
 
 from pp_utils import (
     CheckStickingSlidingOpen,
@@ -16,9 +17,8 @@ from pp_utils import (
 
 XMAX = 1.0
 YMAX = 1.0
-ZMAX = 1.0
 
-NORMAL_ELASTIC_DEFORMATION = False
+NORMAL_ELASTIC_DEFORMATION = True  # Barton-Bandis
 
 fluid_material = {
     "compressibility": 4.559 * 1e-10,  # [Pa^-1], isentropic compressibility
@@ -48,55 +48,57 @@ solid_material = {
 }
 
 
-class Fpm4(
-    NewtonBacktracking,
-    # NewtonBacktrackingSimple,
-    MyPetscSolver,
-    StatisticsSavingMixin,
-    CheckStickingSlidingOpen,
-    DymanicTimeStepping,
-    CubicLawPermeability,
-    Poromechanics,
-    # MomentumBalance,
-    # SinglePhaseFlow,
-):
+class SimplifiedFPM:
 
-    def simulation_name(self):
-        try:
-            name = super().simulation_name()
-        except Exception:
-            name = "direct"
-        cell_size = self.params["cell_size_multiplier"]
-        name = f"{name}_x{cell_size}"
+    # class Fpm4(
+    #     NewtonBacktracking,
+    #     # NewtonBacktrackingSimple,
+    #     MyPetscSolver,
+    #     StatisticsSavingMixin,
+    #     CheckStickingSlidingOpen,
+    #     DymanicTimeStepping,
+    #     CubicLawPermeability,
+    #     Poromechanics,
+    #     # MomentumBalance,
+    #     # SinglePhaseFlow,
+    # ):
 
-        if NORMAL_ELASTIC_DEFORMATION:
-            name = f"{name}_Barton-Bandis"
+    # def simulation_name(self):
+    #     try:
+    #         name = super().simulation_name()
+    #     except Exception:
+    #         name = "direct"
+    #     cell_size = self.params["cell_size_multiplier"]
+    #     name = f"{name}_x{cell_size}"
 
-        return name
+    #     if NORMAL_ELASTIC_DEFORMATION:
+    #         name = f"{name}_Barton-Bandis"
 
-    def before_nonlinear_loop(self) -> None:
-        super().before_nonlinear_loop()
-        st, sl, op, tr = self.sticking_sliding_open_transition()
-        print()
-        print("num sticking:", sum(st))
-        print("num sliding:", sum(sl))
-        print("num open:", sum(op))
-        print("num transition:", sum(tr))
+    #     return name
 
-    def before_nonlinear_iteration(self) -> None:
-        subdomains = self.mdg.subdomains(dim=self.nd - 1)
-        nd_vec_to_tangential = self.tangential_component(subdomains)
+    # def before_nonlinear_loop(self) -> None:
+    #     super().before_nonlinear_loop()
+    #     st, sl, op, tr = self.sticking_sliding_open_transition()
+    #     print()
+    #     print("num sticking:", sum(st))
+    #     print("num sliding:", sum(sl))
+    #     print("num open:", sum(op))
+    #     print("num transition:", sum(tr))
 
-        t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
-        u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
+    # def before_nonlinear_iteration(self) -> None:
+    #     subdomains = self.mdg.subdomains(dim=self.nd - 1)
+    #     nd_vec_to_tangential = self.tangential_component(subdomains)
 
-        zeta = t_t / u_t
+    #     t_t: pp.ad.Operator = nd_vec_to_tangential @ self.contact_traction(subdomains)
+    #     u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(subdomains)
 
-        f_norm = pp.ad.Function(partial(pp.ad.l2_norm, self.nd - 1), "norm_function")
-        zeta_norm = f_norm(zeta)
-        zeta_norm.value(self.equation_system)
+    #     zeta = t_t / u_t
 
-        super().before_nonlinear_iteration()
+    #     f_norm = pp.ad.Function(partial(pp.ad.l2_norm, self.nd - 1), "norm_function")
+    #     zeta_norm = f_norm(zeta)
+    #     zeta_norm.value(self.equation_system)
+
+    #     super().before_nonlinear_iteration()
 
     # Geometry
 

@@ -251,7 +251,7 @@ def run(cell_size_multiplier: int, save_matrices: bool = True):
         {
             "prepare_simulation": False,
             "progressbars": True,
-            "nl_convergence_tol": 1e-6,
+            "nl_convergence_tol_res": 1e-6,
             "nl_divergence_tol": 1e8,
             "max_iterations": 25,
         },
@@ -274,8 +274,8 @@ if __name__ == "__main__":
     #     make_model=make_model,
     #     cell_size_multipliers=[0.25, 0.5, 1, 2, 3],
     # )
+    for i in [0.25, 0.5]:
+        run(cell_size_multiplier=i, save_matrices=True)
+    run(cell_size_multiplier=1, save_matrices=False)
+    run(cell_size_multiplier=2, save_matrices=False)
     run(cell_size_multiplier=3, save_matrices=False)
-    # run(cell_size_multiplier=2, save_matrices=False)
-    # for i in [0.25, 0.5]:
-    #     run(cell_size_multiplier=i, save_matrices=True)
-    # run(cell_size_multiplier=1, save_matrices=False)

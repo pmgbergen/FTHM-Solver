@@ -731,8 +731,12 @@ def plot_grid(
     if shape is None:
         shape = 3, (len(data) // 3 + len(data) % 3)
 
+    if ax_titles is None:
+        ax_titles = {}
+
     if reuse_axes is not None:
         axes = reuse_axes
+        fig = plt.gcf()
     else:
         fig, axes = plt.subplots(
             nrows=shape[0], ncols=shape[1], squeeze=False, figsize=figsize
@@ -740,9 +744,9 @@ def plot_grid(
     for i, (name, entry) in enumerate(data.items()):
         ax = axes.ravel()[i]
 
-        if ax_titles is not None:
+        try:
             ax.set_title(ax_titles[name])
-        else:
+        except KeyError:
             ax.set_title(name)
 
         plt.sca(ax)
@@ -766,13 +770,13 @@ def plot_grid(
                 if label not in labels:
                     lines.append(line)
                     labels.append(label)
-        axes[-1, -1].legend(
+        fig.legend(
             lines,
             labels,
             # loc="center left",
             # bbox_to_anchor=(1, 0.5),
             loc="upper center",
-            bbox_to_anchor=(0.5, -0.5),
+            bbox_to_anchor=(0.5, 0),
             ncol=5,
             fancybox=True,
         )
@@ -844,9 +848,11 @@ def solve_petsc_new(
     if Qleft is not None:
         assert Qleft.active_groups == mat.active_groups
         mat_Q.mat = Qleft.mat @ mat_Q.mat
+        # mat_Q.set_zeros(4, 5)
     if Qright is not None:
         assert Qright.active_groups == mat.active_groups
         mat_Q.mat = mat_Q.mat @ Qright.mat
+        # mat_Q.set_zeros(5, 4)
 
     mat_permuted, prec = make_solver(solve_schema, mat_Q)
 
