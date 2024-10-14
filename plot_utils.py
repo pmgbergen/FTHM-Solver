@@ -111,7 +111,7 @@ def plot_mat(
 ):
     mat = mat.copy()
     try:
-        mat = mat.A
+        mat = mat.toarray()
     except AttributeError:
         pass
 
@@ -126,7 +126,7 @@ def plot_mat(
 
 
 def plot_eigs(mat, label="", logx=False):
-    eigs, _ = scipy.linalg.eig(mat.A)
+    eigs, _ = scipy.linalg.eig(mat.toarray())
     if logx:
         eigs.real = abs(eigs.real)
     plt.scatter(eigs.real, eigs.imag, label=label, marker=r"$\lambda$", alpha=0.5)
@@ -269,13 +269,10 @@ def solve_petsc(
     pc_side: Literal["left", "right"] = "left",
     return_solution: bool = False,
     ksp_view: bool = False,
-    rhs_eq_groups: Sequence[np.ndarray] = None,
 ):
     if rhs is None:
         rhs = np.ones(mat.shape[0])
-    gmres = PetscGMRES(
-        mat, pc=prec, tol=tol, pc_side=pc_side, rhs_group_dofs=rhs_eq_groups
-    )
+    gmres = PetscGMRES(mat, pc=prec, tol=tol, pc_side=pc_side)
 
     if ksp_view:
         gmres.ksp.view()
@@ -307,10 +304,10 @@ def solve_petsc(
     ax.plot(residuals, label=label, marker=".", linestyle=linestyle)
     ax.set_yscale("log")
 
-    ksp_norm_type = gmres.options.getString("ksp_norm_type", "default")
-    if ksp_norm_type == "unpreconditioned":
+    ksp_norm_type = gmres.ksp.getNormType()  # 1-prec, 2-unprec
+    if ksp_norm_type == 2:
         ax.set_ylabel("true residual")
-    else:
+    elif ksp_norm_type == 1:
         ax.set_ylabel("preconditioned residual")
     ax.set_xlabel("gmres iter.")
     ax.grid(True)
@@ -339,7 +336,7 @@ def get_gmres_iterations(x: Sequence[TimeStepStats]) -> list[float]:
     result = []
     for ts in x:
         for ls in ts.linear_solves:
-            result.append(ls.gmres_iters)
+            result.append(ls.krylov_iters)
     return result
 
 
@@ -412,13 +409,22 @@ def get_petsc_converged_reason(x: Sequence[TimeStepStats]) -> list[int]:
     return result
 
 
+# def get_num_sticking_sliding_open(
+#     x: Sequence[TimeStepStats],
+# ) -> tuple[list[int], list[int], list[int]]:
+#     st, sl, op, tr = get_num_sticking_sliding_open_transition(
+#         x, transition_as_open=True
+#     )
+#     return st, sl, op
+
+
 def get_num_sticking_sliding_open(
     x: Sequence[TimeStepStats],
 ) -> tuple[list[int], list[int], list[int]]:
-    st, sl, op, tr = get_num_sticking_sliding_open_transition(
-        x, transition_as_open=True
-    )
-    return st, sl, op
+    num_sticking = [ls.num_sticking for ts in x for ls in ts.linear_solves]
+    num_sliding = [ls.num_sliding for ts in x for ls in ts.linear_solves]
+    num_open = [ls.num_open for ts in x for ls in ts.linear_solves]
+    return num_sticking, num_sliding, num_open
 
 
 def get_cell_volumes(dofs_info_path: str, cell_size_multiplier: int):
@@ -458,24 +464,24 @@ def get_volume_sticking_sliding_open_transition(
     return st, sl, op, tr
 
 
-def get_num_sticking_sliding_open_transition(
-    x: Sequence[TimeStepStats], transition_as_open: bool = True
-) -> tuple[list[int], list[int], list[int]]:
-    st = []
-    sl = []
-    op = []
-    tr = []
-    for ts in x:
-        for ls in ts.linear_solves:
-            st.append(sum(ls.sticking))
-            sl.append(sum(ls.sliding))
-            if transition_as_open:
-                op.append(sum(np.array(ls.open_) | np.array(ls.transition)))
-                tr.append(0)
-            else:
-                op.append(sum(ls.open_))
-                tr.append(sum(ls.transition))
-    return st, sl, op, tr
+# def get_num_sticking_sliding_open_transition(
+#     x: Sequence[TimeStepStats], transition_as_open: bool = True
+# ) -> tuple[list[int], list[int], list[int]]:
+#     st = []
+#     sl = []
+#     op = []
+#     tr = []
+#     for ts in x:
+#         for ls in ts.linear_solves:
+#             st.append(sum(ls.sticking))
+#             sl.append(sum(ls.sliding))
+#             if transition_as_open:
+#                 op.append(sum(np.array(ls.open_) | np.array(ls.transition)))
+#                 tr.append(0)
+#             else:
+#                 op.append(sum(ls.open_))
+#                 tr.append(sum(ls.transition))
+#     return st, sl, op, tr
 
 
 def get_num_transition_cells(x: Sequence[TimeStepStats]) -> np.ndarray:
@@ -566,7 +572,14 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
     converged_reason = get_petsc_converged_reason(data)
     intervals = group_intervals(converged_reason)
 
-    reasons_colors = {-9: "C0", -5: "C1", 2: "C2", -3: "C3", -100: "black"}
+    reasons_colors = {
+        -9: "C0",
+        -5: "C1",
+        2: "C2",
+        -3: "C3",
+        -4: "C4",
+        -100: "black",
+    }
 
     reasons_explained = {
         -3: "Diverged its",
@@ -574,6 +587,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         -5: "Diverged breakdown",
         2: "Converged reltol",
         -100: "No data",
+        -4: "Diverged dtol",
     }
 
     reasons_label = set()
@@ -721,7 +735,7 @@ def plot_grid(
     render_element,
     shape: tuple[int, int] = None,
     figsize: tuple[int, int] = (8, 8),
-    ylabel: str = "GMRES iters.",
+    ylabel: str = "Krylov iters.",
     xlabel: str = "Linear system idx.",
     legend: bool = True,
     ax_titles: dict = None,
@@ -828,7 +842,6 @@ def solve_petsc_new(
     mat: "BlockMatrixStorage",
     solve_schema: "SolveSchema" = None,
     rhs_global=None,
-    rhs=None,
     label="",
     logx_eigs=False,
     normalize_residual=False,
@@ -838,11 +851,9 @@ def solve_petsc_new(
     rhs_eq_groups: Sequence[np.ndarray] = None,
     Qleft: "BlockMatrixStorage" = None,
     Qright: "BlockMatrixStorage" = None,
+    restrict_indices: list[int] = None,
 ):
     from block_matrix import make_solver
-
-    if rhs is not None:
-        assert False, "Pass rhs_global instead"
 
     mat_Q = mat.copy()
     if Qleft is not None:
@@ -855,6 +866,12 @@ def solve_petsc_new(
         # mat_Q.set_zeros(5, 4)
 
     mat_permuted, prec = make_solver(solve_schema, mat_Q)
+    if restrict_indices is not None:
+        mat_permuted = mat_permuted[restrict_indices]
+        if Qleft is not None:
+            Qleft = Qleft[restrict_indices]
+        if Qright is not None:
+            Qright = Qright[restrict_indices]
 
     if rhs_global is None:
         rhs_local = np.ones(mat.shape[0])
@@ -909,11 +926,13 @@ def solve_petsc_new(
     ax.plot(residuals, label=label, marker=".", linestyle=linestyle)
     ax.set_yscale("log")
 
-    ksp_norm_type = gmres.options.getString("ksp_norm_type", "default")
-    if ksp_norm_type == "unpreconditioned":
+    ksp_norm_type = gmres.ksp.getNormType()  # 1-prec, 2-unprec
+    if ksp_norm_type == 2:
         ax.set_ylabel("true residual")
-    else:
+    elif ksp_norm_type == 1:
         ax.set_ylabel("preconditioned residual")
+    else:
+        raise ValueError(ksp_norm_type)
     ax.set_xlabel("gmres iter.")
     ax.grid(True)
     if label != "":

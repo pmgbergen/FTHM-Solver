@@ -70,7 +70,7 @@ def color_spy(
     ax.yaxis.set_ticks(row_label_pos)
     ax.set_yticklabels(row_names, rotation=0)
 
-    hatch_types = itertools.cycle(["|", "-"])
+    # hatch_types = itertools.cycle(["|", "-"])
 
     col_label_pos = []
     for i in range(len(col_names)):

@@ -106,7 +106,7 @@ class BlockGS:
 
 def cond(mat):
     try:
-        mat = mat.A
+        mat = mat.todense()
     except AttributeError:
         pass
     return np.linalg.cond(mat)
@@ -114,7 +114,7 @@ def cond(mat):
 
 def eigs(mat):
     try:
-        mat = mat.A
+        mat = mat.toarray()
     except AttributeError:
         pass
     return np.linalg.eigvals(mat)
@@ -125,7 +125,7 @@ def inv(mat):
 
 
 def pinv(mat):
-    return scipy.sparse.csr_matrix(np.linalg.pinv(mat.A))
+    return scipy.sparse.csr_matrix(np.linalg.pinv(mat.toarray()))
 
 
 def csr_zeros(n, m=None) -> scipy.sparse.csr_matrix:
@@ -271,7 +271,7 @@ class PetscAMGMechanics(PetscPC):
         for key in options.getAll():
             options.delValue(key)
 
-        options['pc_type'] = 'gamg'
+        options["pc_type"] = "gamg"
         options["mg_levels_ksp_type"] = "richardson"
         options["mg_levels_ksp_max_iter"] = 1
         options["mg_levels_pc_type"] = "ilu"
@@ -329,53 +329,19 @@ class PetscPythonPC:
         x.setArray(result)
 
 
-class PetscGMRES:
+class PetscKrylovSolver:
+
     def __init__(
         self,
         mat,
         pc: PETSc.PC | None = None,
         tol=1e-10,
-        pc_side: Literal["left", "right"] = "left",
-        rhs_group_dofs: list[np.ndarray] = None,
     ) -> None:
         self.shape = mat.shape
-        restart = 20
-
         self.ksp = PETSc.KSP().create()
-        options = PETSc.Options()
-        options.setValue("ksp_type", "gmres")
-        # options.setValue("ksp_type", "bcgs")
-        # options.setValue("ksp_type", "richardson")
-
-        # options.setValue('ksp_gmres_modifiedgramschmidt', None)
-        # options.setValue('ksp_gmres_cgs_refinement_type', 'refine_always')
-
-        options.setValue("ksp_divtol", 1e10)
-        options.setValue("ksp_rtol", tol)
-        options.setValue("ksp_max_it", 3 * restart)
-        options.setValue("ksp_gmres_restart", restart)
-
-        if pc_side == "left":
-            options.setValue("ksp_pc_side", "left")
-            options.setValue("ksp_norm_type", "preconditioned")
-        elif pc_side == "right":
-            options.setValue("ksp_pc_side", "right")
-            options.setValue("ksp_norm_type", "unpreconditioned")
-        else:
-            raise ValueError(pc_side)
 
         if pc is None:
-            options.setValue("pc_type", "none")
-
-        # Seems that options is a singletone
-        # I'm not sure if it's a good idea to store it.
-        self.options = options
-
-        self.ksp.setFromOptions()
-
-        self.rhs_group_dofs = rhs_group_dofs
-        # if rhs_group_dofs is not None:
-        #     self.ksp.addConvergenceTest(self.test_gmres_convergence)
+            PETSc.Options().setValue("pc_type", "none")
 
         self.ksp.setComputeEigenvalues(True)
         self.ksp.setConvergenceHistory()
@@ -400,33 +366,7 @@ class PetscGMRES:
         self.petsc_x.destroy()
         self.petsc_b.destroy()
 
-    def test_gmres_convergence(self, ksp, its, rnorm):
-        res_norms = self.compute_residual(
-            ksp.buildResidual().getArray(), replace_zeros=False
-        )
-        print(res_norms / self._initial_residual)
-        return 0
-
-    def compute_residual(self, residual, replace_zeros: bool = False):
-        residual = residual
-        group_residuals = []
-        for dofs in self.rhs_group_dofs:
-            nrm = np.linalg.norm(residual[dofs])
-            group_residuals.append(nrm)
-
-        group_residuals = np.array(group_residuals)
-
-        atol = 1e-15
-        group_residuals[group_residuals < atol] = 0
-
-        if replace_zeros:
-            group_residuals[group_residuals == 0] = 1
-            # contact mechanics always starts from 1
-            group_residuals[4] = 1
-        return group_residuals
-
     def solve(self, b):
-        # self._initial_residual = self.compute_residual(b, replace_zeros=True)
         self.petsc_b.setArray(b)
         self.petsc_x.set(0.0)
         self.ksp.solve(self.petsc_b, self.petsc_x)
@@ -438,6 +378,71 @@ class PetscGMRES:
 
     def get_residuals(self):
         return self.ksp.getConvergenceHistory()
+
+
+class PetscGMRES(PetscKrylovSolver):
+
+    def __init__(
+        self,
+        mat,
+        pc: PETSc.PC | None = None,
+        tol=1e-10,
+        pc_side: Literal["left", "right"] = "right",
+    ) -> None:
+        super().__init__(mat, pc, tol)
+        restart = 20
+
+        options = PETSc.Options()
+        options.setValue("ksp_type", "gmres")
+        # options.setValue("ksp_type", "bcgs")
+        # options.setValue("ksp_type", "richardson")
+
+        # options.setValue('ksp_gmres_modifiedgramschmidt', None)
+        # options.setValue('ksp_gmres_cgs_refinement_type', 'refine_always')
+
+        options.setValue("ksp_divtol", 1e10)
+        options.setValue("ksp_rtol", tol)
+        options.setValue("ksp_max_it", 3 * restart)
+        options.setValue("ksp_gmres_restart", restart)
+
+        if pc_side == "left":
+            options.setValue("ksp_pc_side", "left")
+            options.setValue("ksp_norm_type", "preconditioned")
+        elif pc_side == "right":
+            options.setValue("ksp_pc_side", "right")
+            options.setValue("ksp_norm_type", "unpreconditioned")
+        else:
+            raise ValueError(pc_side)
+
+        self.ksp.setFromOptions()
+
+
+class PetscRichardson(PetscKrylovSolver):
+
+    def __init__(
+        self,
+        mat,
+        pc: PETSc.PC | None = None,
+        tol=1e-10,
+        pc_side: Literal["left"] = "left",
+    ) -> None:
+        super().__init__(mat, pc, tol)
+        assert pc_side == "left"
+
+        options = PETSc.Options()
+        options.setValue("ksp_type", "richardson")
+        # options.setValue('ksp_type', 'gmres')
+        options.setValue("ksp_divtol", 1e10)
+        options.setValue("ksp_rtol", tol)
+        options.setValue("ksp_max_it", 150)
+
+        if pc_side == "left":
+            options.setValue("ksp_pc_side", "left")
+            options.setValue("ksp_norm_type", "preconditioned")
+        else:
+            raise ValueError(pc_side)
+
+        self.ksp.setFromOptions()
 
 
 class PetscJacobi(PetscPC):

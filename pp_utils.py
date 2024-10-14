@@ -2,21 +2,30 @@ import sys
 import time
 from functools import cached_property, partial
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import porepy as pp
 import scipy.sparse
 from matplotlib import pyplot as plt
+from porepy.models.solution_strategy import SolutionStrategy
 from porepy.models.fluid_mass_balance import BoundaryConditionsSinglePhaseFlow
 from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
+import scipy.sparse.linalg
 
 from block_matrix import BlockMatrixStorage, SolveSchema, make_solver
-from fixed_stress import get_fixed_stress_stabilization, make_fs, make_fs_experimental
+from fixed_stress import (
+    get_fixed_stress_stabilization,
+    make_fs,
+    make_fs_analytical,
+    make_fs_analytical_with_interface_flow,
+)
 from mat_utils import (
     PetscAMGFlow,
     PetscAMGMechanics,
     PetscGMRES,
     PetscILU,
+    PetscRichardson,
     TimerContext,
     csr_ones,
     extract_diag_inv,
@@ -29,9 +38,10 @@ from stats import LinearSolveStats, TimeStepStats
 
 
 class CheckStickingSlidingOpen:
+    # TODO: REVISIT THIS AND CHECK IT
 
     def sticking_sliding_open(self):
-        print("You might want to consider transition as well")
+        # print("You might want to consider transition as well")
         frac_dim = self.nd - 1
         subdomains = self.mdg.subdomains(dim=frac_dim)
 
@@ -109,142 +119,6 @@ class CheckStickingSlidingOpen:
         return sticking_cells, sliding_cells, open_cells, transition_cells
 
 
-class BCMechanics(BoundaryConditionsMomentumBalance):
-    def bc_type_mechanics(self, sd):
-        boundary_faces = self.domain_boundary_sides(sd)
-        bc = pp.BoundaryConditionVectorial(
-            sd, boundary_faces.south + boundary_faces.west + boundary_faces.east, "dir"
-        )
-        bc.internal_to_dirichlet(sd)
-        return bc
-
-
-class BCMechanicsSticking(BCMechanics):
-
-    bc_name = "sticking"
-
-    def bc_values_stress(self, boundary_grid):
-        stress = np.zeros((self.nd, boundary_grid.num_cells))
-        boundary_faces = self.domain_boundary_sides(boundary_grid)
-        stress[1, boundary_faces.north] = -self.solid.convert_units(
-            1000, "kg * m^-1 * s^-2"
-        )
-        return stress.ravel("F")
-
-
-class BCMechanicsOpen(BCMechanics):
-
-    bc_name = "open"
-
-    def bc_values_stress(self, boundary_grid):
-        stress = np.zeros((self.nd, boundary_grid.num_cells))
-        boundary_faces = self.domain_boundary_sides(boundary_grid)
-        stress[1, boundary_faces.north] = self.solid.convert_units(
-            1000, "kg * m^-1 * s^-2"
-        )
-        return stress.ravel("F")
-
-
-class BCMechanicsSliding(BCMechanics):
-
-    bc_name = "sliding"
-
-    def bc_values_stress(self, boundary_grid):
-        stress = np.zeros((self.nd, boundary_grid.num_cells))
-        boundary_faces = self.domain_boundary_sides(boundary_grid)
-        stress[0, boundary_faces.north] = self.solid.convert_units(
-            1000, "kg * m^-1 * s^-2"
-        )
-        return stress.ravel("F")
-
-
-class BCFlow(BoundaryConditionsSinglePhaseFlow):
-    def bc_type_darcy_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
-        bounds = self.domain_boundary_sides(sd)
-        bc = pp.BoundaryCondition(sd, bounds.north + bounds.south, "dir")
-        return bc
-
-    def bc_values_pressure(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
-        bounds = self.domain_boundary_sides(boundary_grid)
-        values = np.zeros(boundary_grid.num_cells)
-        values[bounds.north] = self.fluid.convert_units(2e5, "Pa")
-        return values
-
-
-class DymanicTimeStepping(pp.SolutionStrategy):
-    pass
-    # For some reason, PP does not increase / decrease time step.
-    # Should check whether is has been added lately.
-    # def after_nonlinear_convergence(
-    #     self, solution: np.ndarray, errors: float, iteration_counter: int
-    # ) -> None:
-    #     super().after_nonlinear_convergence(solution, errors, iteration_counter)
-    #     self.time_manager.compute_time_step(iteration_counter, recompute_solution=False)
-
-    # def after_nonlinear_failure(
-    #     self, solution: np.ndarray, errors: float, iteration_counter: int
-    # ) -> None:
-    #     prev_sol = self.equation_system.get_variable_values(time_step_index=0)
-    #     self.equation_system.set_variable_values(prev_sol, iterate_index=0)
-    #     self.time_manager.compute_time_step(recompute_solution=True)
-
-
-def make_row_col_dofs(model):
-    eq_info = []
-    eq_dofs = []
-    offset = 0
-    for (
-        eq_name,
-        data,
-    ) in model.equation_system._equation_image_space_composition.items():
-        local_offset = 0
-        for grid, dofs in data.items():
-            eq_dofs.append(dofs + offset)
-            eq_info.append((eq_name, grid))
-            local_offset += len(dofs)
-        offset += local_offset
-
-    var_info = []
-    var_dofs = []
-    for var in model.equation_system.variables:
-        var_info.append((var.name, var.domain))
-        var_dofs.append(model.equation_system.dofs_of([var]))
-    return eq_dofs, var_dofs
-
-
-def get_variables_group_ids(model, md_variables_groups):
-    variable_to_idx = {var: i for i, var in enumerate(model.equation_system.variables)}
-    indices = []
-    for md_var_group in md_variables_groups:
-        group_idx = []
-        for md_var in md_var_group:
-            group_idx.extend([variable_to_idx[var] for var in md_var.sub_vars])
-        indices.append(group_idx)
-    return indices
-
-
-def get_equations_group_ids(model, equations_group_order):
-    equation_to_idx = {}
-    idx = 0
-    for (
-        eq_name,
-        domains,
-    ) in model.equation_system._equation_image_space_composition.items():
-        for domain in domains:
-            equation_to_idx[(eq_name, domain)] = idx
-            idx += 1
-
-    indices = []
-    for group in equations_group_order:
-        group_idx = []
-        for eq_name, domains in group:
-            for domain in domains:
-                if (eq_name, domain) in equation_to_idx:
-                    group_idx.append(equation_to_idx[(eq_name, domain)])
-        indices.append(group_idx)
-    return indices
-
-
 class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
     _linear_solve_stats: LinearSolveStats
     _time_step_stats: TimeStepStats
@@ -254,20 +128,20 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         return []
 
     def simulation_name(self) -> str:
-        sim_name = self.params.get("simulation_name", "simulation")
-        if hasattr(self, "bc_name"):
-            sim_name = f"{sim_name}_{self.bc_name}"
-        use_direct = not self.params.get("iterative_solver", True)
-        if use_direct:
-            sim_name = f"{sim_name}_direct"
-        solver_type = self.params.get("solver_type", "baseline")
-        if solver_type != "2":
-            sim_name = f"{sim_name}_solver_{solver_type}"
-        return sim_name
+        name = "stats"
+        setup = self.params["setup"]
+        name = f'{name}_geo{setup["geometry"]}x{setup["grid_refinement"]}'
+        name = f'{name}_sol{setup["solver"]}'
+        name = f'{name}_ph{setup["physics"]}'
+        name = f'{name}_bb{setup["barton_bandis_stiffness_type"]}'
+        name = f'{name}_fr{setup["friction_type"]}'
+        return name
 
     def before_nonlinear_loop(self) -> None:
         self._time_step_stats = TimeStepStats()
         self.statistics.append(self._time_step_stats)
+        print()
+        print(f"Sim time: {self.time_manager.time}, Dt: {self.time_manager.dt}")
         super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(self, iteration_counter: int) -> None:
@@ -277,77 +151,160 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
     def after_nonlinear_failure(self) -> None:
         self._time_step_stats.nonlinear_convergence_status = -1
         dump_json(self.simulation_name() + ".json", self.statistics)
+        print("Time step did not converge")
         super().after_nonlinear_failure()
 
     def before_nonlinear_iteration(self) -> None:
         self._linear_solve_stats = LinearSolveStats()
         super().before_nonlinear_iteration()
-
-        data = self.sticking_sliding_open_transition()
-        self._linear_solve_stats.sticking = data[0].tolist()
-        self._linear_solve_stats.sliding = data[1].tolist()
-        self._linear_solve_stats.open_ = data[2].tolist()
-        self._linear_solve_stats.transition = data[3].tolist()
-
-        # characteristic = self._characteristic.value(self.equation_system).tolist()
-        # self._linear_solve_stats.transition_sticking_sliding = characteristic
+        self.collect_stats_sticking_sliding_open()
+        self.collect_stats_ut_mismatch()
+        self.collect_stats_coulomb_mismatch()
+        self.collect_stats_u_lambda_max()
 
     def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
+        print(f"Newton iter: {len(self._time_step_stats.linear_solves)}, "
+              f"Krylov iters: {self._linear_solve_stats.krylov_iters}")
+        self._linear_solve_stats.simulation_dt = self.time_manager.dt
+        self._time_step_stats.linear_solves.append(self._linear_solve_stats)
+        if self.params["setup"].get("save_matrix", False):
+            self.save_matrix_state()
+        dump_json(self.simulation_name() + ".json", self.statistics)
+        super().after_nonlinear_iteration(solution_vector)
+
+    def collect_stats_sticking_sliding_open(self):
+        data = self.sticking_sliding_open()
+        self._linear_solve_stats.num_sticking = int(sum(data[0]))
+        self._linear_solve_stats.num_sliding = int(sum(data[1]))
+        self._linear_solve_stats.num_open = int(sum(data[2]))
+        print(
+            f"sticking: {self._linear_solve_stats.num_sticking}, "
+            f"sliding: {self._linear_solve_stats.num_sliding}, "
+            f"open: {self._linear_solve_stats.num_open}"
+        )
+
+    def collect_stats_ut_mismatch(self):
+        sticking, _, _ = self.sticking_sliding_open()
+        fractures = self.mdg.subdomains(dim=self.nd - 1)
+        nd_vec_to_tangential = self.tangential_component(fractures)
+        u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(fractures)
+        u_t_increment = pp.ad.time_increment(u_t).value(self.equation_system)
+        assert self.nd == 2, "Will fail for 3d"
+        u_t_sticking = u_t_increment[sticking]
+        try:
+            self._linear_solve_stats.sticking_u_mismatch = abs(u_t_sticking).max()
+        except ValueError:
+            self._linear_solve_stats.sticking_u_mismatch = 0
+
+    def collect_stats_coulomb_mismatch(self):
+        _, sliding, _ = self.sticking_sliding_open()
+
+        fractures = self.mdg.subdomains(dim=self.nd - 1)
+        nd_vec_to_tangential = self.tangential_component(fractures)
+        t_t = nd_vec_to_tangential @ self.contact_traction(fractures)
+        b = self.friction_bound(fractures)
+        diff = (-t_t + b).value(self.equation_system)[sliding]
+        try:
+            self._linear_solve_stats.coulomb_mismatch = abs(diff).max()
+        except ValueError:
+            self._linear_solve_stats.coulomb_mismatch = 0
+
+    def collect_stats_u_lambda_max(self):
+        fractures = self.mdg.subdomains(dim=self.nd - 1)
+        nd_vec_to_tangential = self.tangential_component(fractures)
+        nd_vec_to_normal = self.normal_component(fractures)
+
+        t = self.contact_traction(fractures)
+        u = self.displacement_jump(fractures)
+
+        t_n = (nd_vec_to_normal @ t).value(self.equation_system)
+        t_t = (nd_vec_to_tangential @ t).value(self.equation_system)
+        u_n = (nd_vec_to_normal @ u).value(self.equation_system)
+        u_t = (nd_vec_to_tangential @ u).value(self.equation_system)
+
+        self._linear_solve_stats.lambdan_max = abs(t_n).max()
+        self._linear_solve_stats.lambdat_max = abs(t_t).max()
+        self._linear_solve_stats.un_max = abs(u_n).max()
+        self._linear_solve_stats.ut_max = abs(u_t).max()
+
+    def save_matrix_state(self):
         save_path = Path("./matrices")
         save_path.mkdir(exist_ok=True)
         mat, rhs = self.linear_system
         name = f"{self.simulation_name()}_{int(time.time() * 1000)}"
-        if self.params.get("save_arrays", True):
-            mat_id = f"{name}.npz"
-            rhs_id = f"{name}_rhs.npy"
-            state_id = f"{name}_state.npy"
-            iterate_id = f"{name}_iterate.npy"
-            scipy.sparse.save_npz(save_path / mat_id, mat)
-            np.save(save_path / rhs_id, rhs)
-            np.save(
-                save_path / state_id,
-                self.equation_system.get_variable_values(time_step_index=0),
-            )
-            np.save(
-                save_path / iterate_id,
-                self.equation_system.get_variable_values(iterate_index=0),
-            )
-            self._linear_solve_stats.iterate_id = iterate_id
-            self._linear_solve_stats.state_id = state_id
-            self._linear_solve_stats.matrix_id = mat_id
-            self._linear_solve_stats.rhs_id = rhs_id
-            self._linear_solve_stats.simulation_dt = self.time_manager.dt
-        self._time_step_stats.linear_solves.append(self._linear_solve_stats)
-        dump_json(self.simulation_name() + ".json", self.statistics)
-        super().after_nonlinear_iteration(solution_vector)
+        mat_id = f"{name}.npz"
+        rhs_id = f"{name}_rhs.npy"
+        state_id = f"{name}_state.npy"
+        iterate_id = f"{name}_iterate.npy"
+        scipy.sparse.save_npz(save_path / mat_id, mat)
+        np.save(save_path / rhs_id, rhs)
+        np.save(
+            save_path / state_id,
+            self.equation_system.get_variable_values(time_step_index=0),
+        )
+        np.save(
+            save_path / iterate_id,
+            self.equation_system.get_variable_values(iterate_index=0),
+        )
+        self._linear_solve_stats.iterate_id = iterate_id
+        self._linear_solve_stats.state_id = state_id
+        self._linear_solve_stats.matrix_id = mat_id
+        self._linear_solve_stats.rhs_id = rhs_id
 
 
 class MyPetscSolver(pp.SolutionStrategy):
 
-    _solver_initialized = False
-    _linear_solve_stats = LinearSolveStats()  # placeholder
+    _linear_solve_stats: LinearSolveStats
 
-    def before_nonlinear_loop(self) -> None:
-        if not self._solver_initialized:
-            self._initialize_solver()
-        return super().before_nonlinear_loop()
+    bmat: BlockMatrixStorage
+    """The current Jacobian."""
 
-    def _initialize_solver(self):
-        self.eq_dofs, self.var_dofs = make_row_col_dofs(self)
-        self._variable_groups = self.make_variables_groups()
-        self._equation_groups = self.make_equations_groups()
+    @cached_property
+    def var_dofs(self) -> list[np.ndarray]:
+        """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
+        (how they are arranged in the model).
 
-        self.eq_group_dofs = [
-            np.concatenate([self.eq_dofs[block] for block in group])
-            for group in self._equation_groups
-        ]
+        Each list entry correspond to one variable on one grid. Constructed when first
+        accessed.
 
-        # This is very important, iterative solver relies on this reindexing
-        self._reorder_contact = make_reorder_contact(self)
-        self._corrected_eq_dofs, self._corrected_eq_groups = correct_eq_groups(self)
-        self._solver_initialized = True
+        """
+        var_dofs: list[np.ndarray] = []
+        for var in self.equation_system.variables:
+            var_dofs.append(self.equation_system.dofs_of([var]))
+        return var_dofs
 
-    def make_variables_groups(self):
+    @cached_property
+    def _unpermuted_eq_dofs(self) -> list[np.ndarray]:
+        """The version of `eq_dofs` that does not encorporates the permutation
+        `contact_permutation`.
+
+        """
+        eq_dofs: list[np.ndarray] = []
+        offset = 0
+        for data in self.equation_system._equation_image_space_composition.values():
+            local_offset = 0
+            for dofs in data.values():
+                eq_dofs.append(dofs + offset)
+                local_offset += len(dofs)
+            offset += local_offset
+        return eq_dofs
+
+    @cached_property
+    def variable_groups(self) -> list[list[int]]:
+        """Prepares the groups of variables in the specific order, that we will use in
+        the block Jacobian to access the submatrices:
+
+        `J[x, 0]` - matrix pressure variable;
+        `J[x, 1]` - matrix displacement variable;
+        `J[x, 2]` - lower-dim pressure variable;
+        `J[x, 3]` - interface Darcy flux variable;
+        `J[x, 4]` - contact traction variable;
+        `J[x, 5]` - interface displacement variable;
+
+        This index is not equivalen to PorePy model natural ordering. Constructed when
+        first accessed.
+
+        """
         dim_max = self.mdg.dim_max()
         sd_ambient = self.mdg.subdomains(dim=dim_max)
         sd_lower = [
@@ -360,16 +317,21 @@ class MyPetscSolver(pp.SolutionStrategy):
         return get_variables_group_ids(
             model=self,
             md_variables_groups=[
-                [self.pressure(sd_ambient)],
-                [self.displacement(sd_ambient)],
-                [self.pressure(sd_lower)],
-                [self.interface_darcy_flux(intf)],
-                [self.contact_traction(sd_frac)],
-                [self.interface_displacement(intf_frac)],
+                [self.pressure(sd_ambient)],  # 0
+                [self.displacement(sd_ambient)],  # 1
+                [self.pressure(sd_lower)],  # 2
+                [self.interface_darcy_flux(intf)],  # 3
+                [self.contact_traction(sd_frac)],  # 4
+                [self.interface_displacement(intf_frac)],  # 5
             ],
         )
 
-    def make_equations_groups(self):
+    @cached_property
+    def _unpermuted_equation_groups(self) -> list[list[int]]:
+        """The version of `equation_groups` that does not encorporates the permutation
+        `contact_permutation`.
+
+        """
         dim_max = self.mdg.dim_max()
         sd_ambient = self.mdg.subdomains(dim=dim_max)
         sd_lower = [
@@ -392,237 +354,122 @@ class MyPetscSolver(pp.SolutionStrategy):
             ],
         )
 
+    @cached_property
+    def contact_permutation(self) -> np.ndarray:
+        """Permutation of the contact mechanics equations. Must be applied to the
+        Jacobian.
+
+        The PorePy arrangement is:
+        `[[C0_norm], [C1_norm], [C0_tang], [C1_tang]]`,
+        where `C0` and `C1` correspond to the contact equation on fractures 0 and 1.
+        We permute it to:
+        `[[f0_norm, f0_tang], [f1_norm, f1_tang]]`, a.k.a array of structures.
+
+        """
+        return make_reorder_contact(self)
+
+    @cached_property
+    def eq_dofs(self):
+        """Equation degrees of freedom (rows of the Jacobian) in the PorePy order (how
+        they are arranged in the model).
+
+        Each list entry correspond to one equation on one grid. Constructed when first
+        accessed. Encorporates the permutation `contact_permutation`.
+
+        """
+        if len(self._unpermuted_equation_groups[4]) == 0:
+            return self._unpermuted_eq_dofs, self._unpermuted_equation_groups
+
+        eq_dofs_corrected = [x.copy() for x in self._unpermuted_eq_dofs]
+
+        # We assume that normal equations go first.
+        num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
+        normal_subgroups = self._unpermuted_equation_groups[4][:num_fracs]
+
+        eq_dofs_corrected = []
+        for i, x in enumerate(self._unpermuted_eq_dofs):
+            if i not in self._unpermuted_equation_groups[4]:
+                eq_dofs_corrected.append(x)
+            else:
+                if i in normal_subgroups:
+                    eq_dofs_corrected.append(None)
+
+        i = self._unpermuted_eq_dofs[normal_subgroups[0]][0]
+        for normal in normal_subgroups:
+            res = i + np.arange(self._unpermuted_eq_dofs[normal].size * self.nd)
+            i = res[-1] + 1
+            eq_dofs_corrected[normal] = np.array(res)
+
+        return eq_dofs_corrected
+
+    @cached_property
+    def equation_groups(self):
+        """Prepares the groups of equation in the specific order, that we will use in
+        the block Jacobian to access the submatrices:
+
+        `J[0, x]` - matrix mass balance equation;
+        `J[1, x]` - matrix momentum balance equation;
+        `J[2, x]` - lower-dim mass balance equation;
+        `J[3, x]` - interface Darcy flux equation;
+        `J[4, x]` - contact traction equations;
+        `J[5, x]` - interface force balance equation;
+
+        This index is not equivalen to PorePy model natural ordering. Constructed when
+        first accessed. Encorporates the permutation `contact_permutation`.
+
+        """
+        if len(self._unpermuted_equation_groups[4]) == 0:
+            return self._unpermuted_equation_groups
+
+        eq_groups_corrected = [x.copy() for x in self._unpermuted_equation_groups]
+
+        # We assume that normal equations go first.
+        num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
+        # Now each dof array in group 4 corresponds normal and tangential components of
+        # contact relations on a specific fracture.
+        eq_groups_corrected[4] = self._unpermuted_equation_groups[4][:num_fracs]
+        # Since the number of groups decreased, we need to subtract the difference.
+        eq_groups_corrected[5] = (
+            np.array(self._unpermuted_equation_groups[5]) - num_fracs
+        ).tolist()
+
+        return eq_groups_corrected
+
+    def Qright(self):
+        """Assemble the right linear transformation."""
+        J = self.bmat
+        J55_inv = inv_block_diag(J[5, 5].mat, nd=self.nd, lump=False)
+        Qright = J.empty_container()
+        Qright.mat = csr_ones(Qright.shape[0])
+        eig_max_right = abs(J[5, 5].mat @ J55_inv).data.max()
+        Qright[5, 4] = -J55_inv @ J[5, 4].mat / eig_max_right
+        return Qright
+
+    def Qleft(self) -> BlockMatrixStorage:
+        """Assemble the left linear transformation."""
+        J = self.bmat
+        J55_inv = inv_block_diag(J[5, 5].mat, nd=self.nd, lump=False)
+        Qleft = J.empty_container()
+        Qleft.mat = csr_ones(Qleft.shape[0])
+        eig_max_left = abs(J55_inv @ J[5, 5].mat).data.max()
+        Qleft[4, 5] = -J[4, 5].mat @ J55_inv / eig_max_left
+        return Qleft
+
     def assemble_linear_system(self) -> None:
         super().assemble_linear_system()
         mat, rhs = self.linear_system
-        if len(self._equation_groups[4]) != 0:
-            mat = mat[self._reorder_contact]
-            rhs = rhs[self._reorder_contact]
-        self.linear_system = mat, rhs
-
-    def make_solver_schema(self):
-        solver_type = self.params.get("solver_type", "baseline")
-
-        if solver_type == "baseline":
-            return SolveSchema(
-                groups=[2, 3, 4, 5],
-                complement=SolveSchema(
-                    groups=[1],
-                    invertor=lambda bmat: get_fixed_stress_stabilization(self),
-                    invertor_type="physical",
-                    solve=lambda bmat: PetscAMGMechanics(
-                        dim=self.nd, mat=bmat[[1]].mat
-                    ),
-                    complement=SolveSchema(
-                        groups=[0],
-                        solve=lambda bmat: PetscAMGFlow(mat=bmat[[0]].mat),
-                    ),
-                ),
-            )
-
-        elif solver_type == "1":
-            return SolveSchema(
-                groups=[3],
-                solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
-                complement=SolveSchema(
-                    groups=[4],
-                    solve=lambda bmat: make_J44_inv_bdiag(self, bmat=bmat),
-                    complement=SolveSchema(
-                        groups=[1, 5],
-                        solve=lambda bmat: PetscAMGMechanics(
-                            mat=bmat[[1, 5]].mat, dim=self.nd
-                        ),
-                        # invertor=lambda bmat: make_fs(self, bmat).mat,
-                        invertor=lambda bmat: self._fixed_stress.mat,
-                        invertor_type="physical",
-                        complement=SolveSchema(
-                            groups=[0, 2],
-                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
-                        ),
-                    ),
-                ),
-            )
-        elif solver_type == "2":
-            return SolveSchema(
-                groups=[4],
-                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
-                complement=SolveSchema(
-                    groups=[3],
-                    solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
-                    complement=SolveSchema(
-                        groups=[1, 5],
-                        solve=lambda bmat: PetscAMGMechanics(
-                            mat=bmat[[1, 5]].mat,
-                            dim=self.nd,
-                            null_space=self.build_mechanics_near_null_space(),
-                        ),
-                        invertor_type="physical",
-                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
-                        complement=SolveSchema(
-                            groups=[0, 2],
-                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
-                        ),
-                    ),
-                ),
-            )
-        elif solver_type == "2_symmetric":
-            return SolveSchema(
-                groups=[4],
-                solve=lambda bmat: inv(mat=bmat[[4]].mat),
-                complement=SolveSchema(
-                    groups=[3],
-                    solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
-                    complement=SolveSchema(
-                        groups=[1, 5],
-                        solve=lambda bmat: PetscAMGMechanics(
-                            mat=bmat[[1, 5]].mat,
-                            dim=self.nd,
-                            null_space=self.build_mechanics_near_null_space(),
-                        ),
-                        invertor_type="physical",
-                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
-                        complement=SolveSchema(
-                            groups=[0, 2],
-                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
-                        ),
-                    ),
-                ),
-            )
-        elif solver_type == "2_exact":
-            return SolveSchema(
-                groups=[4],
-                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
-                complement=SolveSchema(
-                    groups=[3],
-                    # solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                    solve="direct",
-                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
-                    complement=SolveSchema(
-                        groups=[1, 5],
-                        # solve=lambda bmat: PetscAMGMechanics(
-                        #     mat=bmat[[1, 5]].mat,
-                        #     dim=self.nd,
-                        #     null_space=self.build_mechanics_near_null_space(),
-                        # ),
-                        solve="direct",
-                        invertor_type="physical",
-                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
-                        complement=SolveSchema(
-                            groups=[0, 2],
-                            solve="direct",
-                            # solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
-                        ),
-                    ),
-                    # ),
-                ),
-            )
-        elif solver_type == "2_exact_only_fs":
-            return SolveSchema(
-                groups=[4],
-                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
-                complement=SolveSchema(
-                    groups=[3],
-                    # solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                    solve="direct",
-                    # invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
-                    complement=SolveSchema(
-                        groups=[1, 5],
-                        # solve=lambda bmat: PetscAMGMechanics(
-                        #     mat=bmat[[1, 5]].mat,
-                        #     dim=self.nd,
-                        #     null_space=self.build_mechanics_near_null_space(),
-                        # ),
-                        solve="direct",
-                        invertor_type="physical",
-                        invertor=lambda bmat: make_fs_experimental(self, bmat).mat,
-                        complement=SolveSchema(
-                            groups=[0, 2],
-                            solve="direct",
-                            # solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
-                        ),
-                    ),
-                    # ),
-                ),
-            )
-
-        raise ValueError(f"{solver_type}")
-
-    def build_mechanics_near_null_space(self, groups=(1, 5)):
-        cell_centers = []
-        if 1 in groups:
-            cell_centers.append(self.mdg.subdomains(dim=self.nd)[0].cell_centers)
-        if 5 in groups:
-            cell_centers.extend(
-                [intf.cell_centers for intf in self.mdg.interfaces(dim=self.nd - 1)]
-            )
-        cell_centers = np.concatenate(cell_centers, axis=1)
-
-        x, y, z = cell_centers
-        num_dofs = cell_centers.shape[1]
-
-        null_space = []
-        if self.nd == 3:
-            vec = np.zeros((3, num_dofs))
-            vec[0] = 1
-            null_space.append(vec.ravel("f"))
-            vec = np.zeros((3, num_dofs))
-            vec[1] = 1
-            null_space.append(vec.ravel("f"))
-            vec = np.zeros((3, num_dofs))
-            vec[2] = 1
-            null_space.append(vec.ravel("f"))
-            # # 0, -z, y
-            vec = np.zeros((3, num_dofs))
-            vec[1] = -z
-            vec[2] = y
-            null_space.append(vec.ravel("f"))
-            # z, 0, -x
-            vec = np.zeros((3, num_dofs))
-            vec[0] = z
-            vec[2] = -x
-            null_space.append(vec.ravel("f"))
-            # -y, x, 0
-            vec = np.zeros((3, num_dofs))
-            vec[0] = -y
-            vec[1] = x
-            null_space.append(vec.ravel("f"))
-        elif self.nd == 2:
-            vec = np.zeros((2, num_dofs))
-            vec[0] = 1
-            null_space.append(vec.ravel("f"))
-            vec = np.zeros((2, num_dofs))
-            vec[1] = 1
-            null_space.append(vec.ravel("f"))
-            # -x, y
-            vec = np.zeros((2, num_dofs))
-            vec[0] = -x
-            vec[1] = y
-            null_space.append(vec.ravel("f"))
-        else:
-            raise ValueError
-
-        return np.array(null_space)
-
-    @cached_property
-    def _fixed_stress(self):
-        # Assuming blocks [1, 5] don't change. But the block [2, 5] changes....
-        return make_fs(self, self.bmat)
-
-    def _prepare_solver(self):
-        if not self._solver_initialized:
-            self._initialize_solver()
-        with TimerContext() as t_prepare_solver:
-            mat, rhs = self.linear_system
+        # Applies the `contact_permutation`.
+        if len(self.equation_groups[4]) != 0:
+            mat = mat[self.contact_permutation]
+            rhs = rhs[self.contact_permutation]
+            self.linear_system = mat, rhs
 
             bmat = BlockMatrixStorage(
                 mat=mat,
-                global_row_idx=self._corrected_eq_dofs,
+                global_row_idx=self.eq_dofs,
                 global_col_idx=self.var_dofs,
-                groups_row=self._corrected_eq_groups,
-                groups_col=self._variable_groups,
+                groups_row=self.equation_groups,
+                groups_col=self.variable_groups,
                 group_row_names=[
                     "Flow mat.",
                     "Force mat.",
@@ -641,135 +488,139 @@ class MyPetscSolver(pp.SolutionStrategy):
                 ],
             )
             # reordering the matrix to the order I work with, not how PorePy provides it
-            bmat = bmat[:]
+            bmat = bmat[:]  # TODO: Is this necessary?
             self.bmat = bmat
-            schema = self.make_solver_schema()
-            self._Qleft = None
-            self._Qright = None
-            self.Qleft = None
-            self.Qright = None
-            solver_type = self.params.get("solver_type", "baseline")
-            if solver_type.startswith("2"):
-                if solver_type == "2_exact_only_fs":
-                    J55_inv = inv(bmat[[5]].mat)
-                    eig_max_right = 1
-                    eig_max_left = 1
-                else:
-                    J55_inv = inv_block_diag(bmat[[5]].mat, nd=self.nd, lump=False)
-                    eig_max_right = abs(bmat[[5]].mat @ J55_inv).data.max()
-                    eig_max_left = abs(J55_inv @ bmat[[5]].mat).data.max()
 
-                Qleft = bmat.empty_container()
-                Qleft.mat = csr_ones(Qleft.shape[0])
-                Qright = Qleft.copy()
+    def solve_gmres(self, tol) -> np.ndarray:
+        mat, rhs = self.linear_system
+        schema = make_solver_schema(self)
 
-                Qleft[4, 5] = -bmat[4, 5].mat @ J55_inv / eig_max_left
-                Qright[5, 4] = -J55_inv @ bmat[5, 4].mat / eig_max_right
+        do_left_transformation = False
+        do_right_transformation = True
 
-                # self.Qleft = Qleft
-                self.Qright = Qright
-                self._Qleft = Qleft
-                self._Qright = Qright
+        mat_Q = self.bmat.copy()  # Transformed J
+        if do_left_transformation:
+            Qleft = self.Qleft()
+            assert Qleft.active_groups == self.bmat.active_groups
+            mat_Q.mat = Qleft.mat @ mat_Q.mat
+        if do_right_transformation:
+            Qright = self.Qright()
+            assert Qright.active_groups == self.bmat.active_groups
+            mat_Q.mat = mat_Q.mat @ Qright.mat
 
-                if "symmetric" in solver_type:
-                    self.Qright = Qright
-                    self.Qleft = Qleft
+        mat_Q_permuted, prec = make_solver(schema, mat_Q)
+        # Solver changes the order of groups so that the first-eliminated goes first.
 
-                # J_Q = bmat.empty_container()
-                # J_Q.mat = Qleft.mat @ bmat.mat
+        rhs_local = mat_Q_permuted.local_rhs(rhs)
+        # Permute the rhs groups according to the solver.
 
-                # bmat_reordered, preconditioner = make_solver(schema, J_Q)
-                # Q_perm = Qleft[bmat_reordered.active_groups]
-                # self.rhs_Q = Q_perm.mat @ Q_perm.local_rhs(rhs)
-                # self.Q_perm = Q_perm
-            # else:
-            #     bmat_reordered, preconditioner = make_solver(
-            #         schema=schema, mat_orig=bmat
-            #     )
+        rhs_Q = rhs_local.copy()  # If Qleft is used, need to transform the rhs.
+        if do_left_transformation:
+            # Transform Qleft groups according to the solver.
+            Qleft = Qleft[mat_Q_permuted.active_groups]
+            rhs_Q = Qleft.mat @ rhs_Q
 
-        self._linear_solve_stats.time_prepare_solver = t_prepare_solver.elapsed_time
+        gmres_ = PetscGMRES(
+            mat=mat_Q_permuted.mat,
+            pc=prec,
+            pc_side="right",
+            tol=tol,
+        )
+        sol_Q = gmres_.solve(rhs_Q)
+        info = gmres_.ksp.getConvergedReason()
 
-        # return bmat_reordered, preconditioner
-        return schema
+        # Reverse transformations
+        if do_right_transformation:
+            Qright = Qright[mat_Q_permuted.active_groups]
+            sol = mat_Q_permuted.reverse_transform_solution(Qright.mat @ sol_Q)
+        else:
+            sol = mat_Q_permuted.reverse_transform_solution(sol_Q)
+
+        # Verify that the original problem is solved and we did not do anything wrong.
+        true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
+
+        if info <= 0:
+            print(f"GMRES failed, {info=}", file=sys.stderr)
+            if info == -9:
+                sol[:] = np.nan
+        else:
+            if true_residual_nrm_drop >= 1:
+                print("True residual did not decrease")
+
+        self._linear_solve_stats.petsc_converged_reason = info
+        self._linear_solve_stats.krylov_iters = len(gmres_.get_residuals())
+        return np.atleast_1d(sol)
+
+    def solve_richardson(self, tol) -> np.ndarray:
+        mat, rhs = self.linear_system
+        schema = make_solver_schema(self)
+
+        mat_permuted, prec = make_solver(schema, self.bmat)
+        # Solver changes the order of groups so that the first-eliminated goes first.
+
+        rhs_local = mat_permuted.local_rhs(rhs)
+        # Permute the rhs groups according to the solver.
+
+        richardson = PetscRichardson(
+            mat=mat_permuted.mat, pc=prec, pc_side="left", tol=tol
+        )
+
+        sol_local = richardson.solve(rhs_local)
+        info = richardson.ksp.getConvergedReason()
+
+        sol = mat_permuted.reverse_transform_solution(sol_local)
+
+        # Verify that the original problem is solved and we did not do anything wrong.
+        true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
+
+        if info <= 0:
+            print(f"Richardson failed, {info=}", file=sys.stderr)
+            if info == -9:
+                sol[:] = np.nan
+        else:
+            if true_residual_nrm_drop >= 1:
+                print("True residual did not decrease")
+
+        self._linear_solve_stats.petsc_converged_reason = info
+        self._linear_solve_stats.krylov_iters = len(richardson.get_residuals())
+        return np.atleast_1d(sol)
 
     def solve_linear_system(self) -> np.ndarray:
-        if not self.params.get("iterative_solver", True):
-            return super().solve_linear_system()
-        mat, rhs = self.linear_system
+        rhs = self.linear_system[1]
         if not np.all(np.isfinite(rhs)):
-            self._linear_solve_stats.time_solve_linear_system = 0
-            self._linear_solve_stats.gmres_iters = 0
+            self._linear_solve_stats.krylov_iters = 0
             result = np.zeros_like(rhs)
             result[:] = np.nan
             return result
 
-        with TimerContext() as t_solve:
-            schema = self._prepare_solver()
+        tol = 1e-8
 
-            mat_Q = self.bmat.copy()
-            Qleft, Qright = self.Qleft, self.Qright
-            if Qleft is not None:
-                assert Qleft.active_groups == self.bmat.active_groups
-                mat_Q.mat = Qleft.mat @ mat_Q.mat
-            if Qright is not None:
-                assert Qright.active_groups == self.bmat.active_groups
-                mat_Q.mat = mat_Q.mat @ Qright.mat
-
-            mat_Q_permuted, prec = make_solver(schema, mat_Q)
-
-            rhs_local = mat_Q_permuted.local_rhs(rhs)
-
-            rhs_Q = rhs_local.copy()
-            if Qleft is not None:
-                Qleft = Qleft[mat_Q_permuted.active_groups]
-                rhs_Q = Qleft.mat @ rhs_Q
-
-            tol = 1e-10
-            pc_side = "right"
-
-            gmres_ = PetscGMRES(
-                mat=mat_Q_permuted.mat,
-                pc=prec,
-                pc_side=pc_side,
-                tol=tol,
-            )
-
-            with TimerContext() as t_gmres:
-                sol_Q = gmres_.solve(rhs_Q)
-                # print(len(gmres_.get_residuals()))
-                # mat_Q_permuted.color_local_rhs(rhs_Q); plt.show()
-
-            self._linear_solve_stats.time_gmres = t_gmres.elapsed_time
-
-            info = gmres_.ksp.getConvergedReason()
-
-            if Qright is not None:
-                Qright = Qright[mat_Q_permuted.active_groups]
-                sol = mat_Q_permuted.reverse_transform_solution(Qright.mat @ sol_Q)
-            else:
-                sol = mat_Q_permuted.reverse_transform_solution(sol_Q)
-
-            true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
-
-            if info <= 0:
-                print(f"GMRES failed, {info=}", file=sys.stderr)
-                if info == -9:
-                    sol[:] = np.nan
-            else:
-                if true_residual_nrm_drop >= 1:
-                    print("True residual did not decrease")
-
-        self._linear_solve_stats.petsc_converged_reason = info
-        self._linear_solve_stats.time_solve_linear_system = t_solve.elapsed_time
-        self._linear_solve_stats.gmres_iters = len(gmres_.get_residuals())
-        return np.atleast_1d(sol)
+        solver_type = self.params["setup"]["solver"]
+        direct = solver_type == 0
+        richardson = solver_type in [1]
+        gmres = solver_type in [2]
+        if direct:
+            return scipy.sparse.linalg.spsolve(*self.linear_system)
+        elif richardson:
+            return self.solve_richardson(tol=tol)
+        elif gmres:
+            return self.solve_gmres(tol=tol)
+        raise ValueError
 
 
-def make_reorder_contact(model):
-    # Combines normal and tangential equations into one equation, AoS alignment
-    if len(model._equation_groups[4]) == 0:
+def make_reorder_contact(model: MyPetscSolver) -> np.ndarray:
+    """Permutation of the contact mechanics equations. The PorePy arrangement is:
+    `[C_n^0, C_n^1, ..., C_n^K, C_y^0, C_z^0, C_y^1, C_z^1, ..., C_z^K, C_z^k]`,
+    where `C_n` is a normal component, `C_y` and `C_z` are two tangential
+    components. Superscript corresponds to its position in space. We permute it to:
+    `[C_n^0, C_y^0, C_z^0, ..., C_n^K, C_y^K, C_z^K]`, a.k.a array of structures.
+
+    """
+    if len(model._unpermuted_equation_groups[4]) == 0:
         return np.array([])
-    dofs_contact = np.concatenate([model.eq_dofs[i] for i in model._equation_groups[4]])
+    dofs_contact = np.concatenate(
+        [model._unpermuted_eq_dofs[i] for i in model._unpermuted_equation_groups[4]]
+    )
     dofs_contact_start = dofs_contact[0]
     dofs_contact_end = dofs_contact[-1] + 1
 
@@ -794,204 +645,167 @@ def make_reorder_contact(model):
     return reorder
 
 
-def correct_eq_groups(model):
-    """We reindex eq_dofs and model._equation_groups to put together normal and
-    tangential components of the contact equation for each dof.
-    Previously, the groups were: [[f0_norm], [f1_norm], [f0_tang], [f1_tang]].
-    This returns new indices: [[f0_norm, f0_tang], [f1_norm, f1_tang]].
+def make_solver_schema(model: MyPetscSolver) -> SolveSchema:
+    solver_type = model.params["setup"]["solver"]
+
+    if solver_type == 1:  # Theoretical solver.
+        return SolveSchema(
+            # Exactly solve elasticity and contact mechanics, build fixed stress.
+            groups=[1, 4, 5],
+            invertor=lambda bmat: make_fs_analytical_with_interface_flow(
+                model, bmat
+            ).mat,
+            invertor_type="physical",
+            complement=SolveSchema(
+                groups=[0, 2, 3],
+            ),
+        )
+
+    elif solver_type == 2:  # Scalable solver.
+        return SolveSchema(
+            # Exactly eliminate contact mechanics (assuming linearly-transformed system)
+            groups=[4],
+            solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=model.nd),
+            complement=SolveSchema(
+                # Eliminate interface flow, it is not coupled with (1, 4, 5)
+                # Use diag() to approximate inverse and ILU to solve linear systems
+                groups=[3],
+                solve=lambda bmat: PetscILU(bmat[[3]].mat),
+                invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                complement=SolveSchema(
+                    # Eliminate elasticity. Use AMG to solve linear systems and fixed
+                    # stress to approximate inverse.
+                    groups=[1, 5],
+                    solve=lambda bmat: PetscAMGMechanics(
+                        mat=bmat[[1, 5]].mat,
+                        dim=model.nd,
+                        null_space=build_mechanics_near_null_space(model),
+                    ),
+                    invertor_type="physical",
+                    invertor=lambda bmat: make_fs_analytical(model, bmat).mat,
+                    complement=SolveSchema(
+                        # Use AMG to solve mass balance.
+                        groups=[0, 2],
+                        solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                    ),
+                ),
+            ),
+        )
+
+    raise ValueError(f"{solver_type}")
+
+
+def build_mechanics_near_null_space(model: MyPetscSolver, groups=(1, 5)):
+    cell_centers = []
+    if 1 in groups:
+        cell_centers.append(model.mdg.subdomains(dim=model.nd)[0].cell_centers)
+    if 5 in groups:
+        cell_centers.extend(
+            [intf.cell_centers for intf in model.mdg.interfaces(dim=model.nd - 1)]
+        )
+    cell_centers = np.concatenate(cell_centers, axis=1)
+
+    x, y, z = cell_centers
+    num_dofs = cell_centers.shape[1]
+
+    null_space = []
+    if model.nd == 3:
+        vec = np.zeros((3, num_dofs))
+        vec[0] = 1
+        null_space.append(vec.ravel("f"))
+        vec = np.zeros((3, num_dofs))
+        vec[1] = 1
+        null_space.append(vec.ravel("f"))
+        vec = np.zeros((3, num_dofs))
+        vec[2] = 1
+        null_space.append(vec.ravel("f"))
+        # # 0, -z, y
+        vec = np.zeros((3, num_dofs))
+        vec[1] = -z
+        vec[2] = y
+        null_space.append(vec.ravel("f"))
+        # z, 0, -x
+        vec = np.zeros((3, num_dofs))
+        vec[0] = z
+        vec[2] = -x
+        null_space.append(vec.ravel("f"))
+        # -y, x, 0
+        vec = np.zeros((3, num_dofs))
+        vec[0] = -y
+        vec[1] = x
+        null_space.append(vec.ravel("f"))
+    elif model.nd == 2:
+        vec = np.zeros((2, num_dofs))
+        vec[0] = 1
+        null_space.append(vec.ravel("f"))
+        vec = np.zeros((2, num_dofs))
+        vec[1] = 1
+        null_space.append(vec.ravel("f"))
+        # -x, y
+        vec = np.zeros((2, num_dofs))
+        vec[0] = -x
+        vec[1] = y
+        null_space.append(vec.ravel("f"))
+    else:
+        raise ValueError
+
+    return np.array(null_space)
+
+
+def get_variables_group_ids(
+    model: SolutionStrategy,
+    md_variables_groups: Sequence[
+        Sequence[pp.ad.MixedDimensionalVariable | pp.ad.Variable]
+    ],
+) -> list[list[int]]:
+    """Used to assemble the index that will later help accessing the submatrix
+    corresponding to a group of variables, which may include one or more variable.
+
+    Example: Group 0 corresponds to the pressure on all the subdomains. It will contain
+    indices [0, 1, 2] which point to the pressure variable dofs on sd1, sd2 and sd3,
+    respectively. Combination of different variables in one group is also possible.
+
     """
-    if len(model._equation_groups[4]) == 0:
-        return model.eq_dofs, model._equation_groups
 
-    eq_dofs_corrected = [x.copy() for x in model.eq_dofs]
-    eq_groups_corrected = [x.copy() for x in model._equation_groups]
-
-    # assert model.nd == 2
-
-    # assume normal equations go first.
-    # 2 is hardcoded because both tangential component lay in the same group.
-    end_normal = len(model._equation_groups[4]) // 2
-    normal_subgroups = model._equation_groups[4][:end_normal]
-
-    eq_dofs_corrected = []
-    for i, x in enumerate(model.eq_dofs):
-        if i not in model._equation_groups[4]:
-            eq_dofs_corrected.append(x)
-        else:
-            if i in normal_subgroups:
-                eq_dofs_corrected.append(None)
-
-    i = model.eq_dofs[normal_subgroups[0]][0]
-    for normal in normal_subgroups:
-        res = i + np.arange(model.eq_dofs[normal].size * model.nd)
-        i = res[-1] + 1
-        eq_dofs_corrected[normal] = np.array(res)
-
-    eq_groups_corrected[4] = normal_subgroups
-    eq_groups_corrected[5] = (np.array(model._equation_groups[5]) - end_normal).tolist()
-
-    return eq_dofs_corrected, eq_groups_corrected
+    variable_to_idx = {var: i for i, var in enumerate(model.equation_system.variables)}
+    indices = []
+    for md_var_group in md_variables_groups:
+        group_idx = []
+        for md_var in md_var_group:
+            group_idx.extend([variable_to_idx[var] for var in md_var.sub_vars])
+        indices.append(group_idx)
+    return indices
 
 
+def get_equations_group_ids(
+    model: SolutionStrategy,
+    equations_group_order: Sequence[Sequence[tuple[str, pp.GridLikeSequence]]],
+) -> list[list[int]]:
+    """Used to assemble the index that will later help accessing the submatrix
+    corresponding to a group of equation, which may include one or more equation.
 
-class NewtonBacktracking(pp.SolutionStrategy):
-    def _test_residual_norm(self, alpha: float, delta_sol: np.ndarray):
-        original_values = self.equation_system.get_variable_values(iterate_index=0)
-        return (
-            self.compute_nonlinear_residual(state=original_values + delta_sol * alpha)
-            / self._newton_res_0
-        )
+    Example: Group 0 corresponds to the mass balance equation on all the subdomains.
+    It will contain indices [0, 1, 2] which point to the mass balance equation dofs on
+    sd1, sd2 and sd3, respectively. Combination of different equation in one group is
+    also possible.
 
-    def plot_residual_drop(self, alphas, res_norms):
-        group_names = [
-            "Mass 3d",
-            "Force 3d",
-            "Mass frac",
-            "Intf flux",
-            "Contact",
-            "Intf force",
-        ]
-        for nrm, label in zip(res_norms, group_names):
-            plt.plot(alphas, nrm, label=label)
-        plt.yscale("log")
-        plt.legend()
-        plt.show()
+    """
+    equation_to_idx = {}
+    idx = 0
+    for (
+        eq_name,
+        domains,
+    ) in model.equation_system._equation_image_space_composition.items():
+        for domain in domains:
+            equation_to_idx[(eq_name, domain)] = idx
+            idx += 1
 
-    def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
-        delta_sol = solution_vector
-        del solution_vector
-        # opt_res = minimize_scalar(
-        #     lambda a: self._test_residual_norm(a, delta_sol).max(),
-        #     bounds=[0.5, 1],
-        #     options={"maxiter": 6},
-        # )
-        # alpha = opt_res.x
-
-        alphas = np.linspace(0.5, 1.1, 7, endpoint=True)
-        alphas = alphas[alphas != 0]
-        res_norms = np.array(
-            [self._test_residual_norm(alpha, delta_sol=delta_sol) for alpha in alphas]
-        ).T
-        alpha = alphas[np.argmin(np.max(res_norms, axis=0))]
-
-        delta_sol *= alpha
-
-        # self.plot_residual_drop(alphas, res_norms)
-        # print(file=sys.stderr, flush=True)
-        # print(f"{alpha = }", flush=True)
-        super().after_nonlinear_iteration(delta_sol)
-        pass
-
-    def before_nonlinear_loop(self) -> None:
-        super().before_nonlinear_loop()
-        self._newton_res_0 = self.compute_nonlinear_residual(replace_zeros=True)
-
-    def check_convergence(
-        self,
-        solution: np.ndarray,
-        prev_solution: np.ndarray,
-        init_solution: np.ndarray,
-        nl_params,
-    ) -> tuple[float, bool, bool]:
-        res_norm_groups = self.compute_nonlinear_residual() / self._newton_res_0
-        res_norm = res_norm_groups.sum()
-        # print(f"{res_norm = }")
-        converged = res_norm < nl_params["nl_convergence_tol_res"]
-        diverged = res_norm > nl_params["nl_divergence_tol"]
-        if nl_params['nl_convergence_tol'] != 1e-10:
-            assert False
-        if not np.all(np.isfinite(res_norm)) or not np.all(np.isfinite(solution)):
-            diverged = True
-        # if diverged:
-        #     print('diverged')
-        return res_norm, abs(prev_solution - solution).max(), converged, diverged
-        # return res_norm, converged, diverged
-
-    def compute_nonlinear_residual(
-        self, replace_zeros: bool = False, state: np.ndarray = None
-    ):
-        nonlinear_residual = self.equation_system.assemble(
-            evaluate_jacobian=False, state=state
-        )
-        group_residuals = []
-        for dofs in self.eq_group_dofs:
-            nrm = np.linalg.norm(nonlinear_residual[dofs])
-            group_residuals.append(nrm)
-
-        group_residuals = np.array(group_residuals)
-
-        atol = 1e-10
-        group_residuals[group_residuals < atol] = 0
-
-        if replace_zeros:
-            group_residuals[group_residuals == 0] = 1
-            # contact mechanics always starts from 1
-            group_residuals[4] = 1
-        return group_residuals
-
-
-class NewtonBacktrackingSimple(pp.SolutionStrategy):
-
-    def _test_residual_norm(self, alpha: float, delta_sol: np.ndarray):
-        original_values = self.equation_system.get_variable_values(iterate_index=0)
-        return np.linalg.norm(
-            self.compute_nonlinear_residual(state=original_values + delta_sol * alpha)
-            / self._newton_res_0
-        )
-
-    def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
-        delta_sol = solution_vector
-        del solution_vector
-
-        alphas = np.linspace(0.5, 1.1, 7, endpoint=True)
-        alphas = alphas[alphas != 0]
-        res_norms = [
-            self._test_residual_norm(alpha, delta_sol=delta_sol) for alpha in alphas
-        ]
-
-        alpha = alphas[np.argmin(res_norms)]
-
-        delta_sol *= alpha
-
-        self.plot_residual_drop(alphas, res_norms)
-        # print(file=sys.stderr, flush=True)
-        # print(f"{alpha = }", flush=True)
-        super().after_nonlinear_iteration(delta_sol)
-
-    def before_nonlinear_loop(self) -> None:
-        super().before_nonlinear_loop()
-        self._newton_res_0 = self.compute_nonlinear_residual(replace_zeros=True)
-
-    def check_convergence(
-        self,
-        solution: np.ndarray,
-        prev_solution: np.ndarray,
-        init_solution: np.ndarray,
-        nl_params,
-    ) -> tuple[float, bool, bool]:
-        res_norm = self.compute_nonlinear_residual() / self._newton_res_0
-        # print(f"{res_norm = }")
-        converged = res_norm < nl_params["nl_convergence_tol"]
-        diverged = res_norm > nl_params["nl_divergence_tol"]
-        # if diverged:
-        #     print('diverged')
-        return res_norm, converged, diverged
-
-    def compute_nonlinear_residual(
-        self, replace_zeros: bool = False, state: np.ndarray = None
-    ):
-        res = np.linalg.norm(
-            self.equation_system.assemble(evaluate_jacobian=False, state=state)
-        )
-        atol = 1e-10
-        if res < atol:
-            if replace_zeros:
-                res = 1
-            else:
-                res = 0
-        return res
-
-    def plot_residual_drop(self, alphas, res_norms):
-        plt.plot(alphas, res_norms)
-        plt.yscale("log")
-        plt.show()
+    indices = []
+    for group in equations_group_order:
+        group_idx = []
+        for eq_name, domains in group:
+            for domain in domains:
+                if (eq_name, domain) in equation_to_idx:
+                    group_idx.append(equation_to_idx[(eq_name, domain)])
+        indices.append(group_idx)
+    return indices

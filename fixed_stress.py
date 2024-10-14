@@ -176,11 +176,22 @@ def get_fs_fractures_analytical(model):
     return scipy.sparse.diags(val)
 
 
-def make_fs_experimental(model, J):
+def make_fs_analytical(model, J):
     diag = [
         get_fixed_stress_stabilization(model),
         get_fs_fractures_analytical(model),
     ]
     result = J.empty_container()[[0, 2]]
+    result.mat = scipy.sparse.block_diag(diag, format="csr")
+    return result
+
+
+def make_fs_analytical_with_interface_flow(model, J):
+    diag = [
+        get_fixed_stress_stabilization(model),
+        get_fs_fractures_analytical(model),
+        J.empty_container()[3, 3].mat,
+    ]
+    result = J.empty_container()[[0, 2, 3]]
     result.mat = scipy.sparse.block_diag(diag, format="csr")
     return result
