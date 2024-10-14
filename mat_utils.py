@@ -249,21 +249,6 @@ class PetscPC:
         return scipy.sparse.csr_matrix((data, indices, indptr))
 
 
-class PetscCustomPC(PetscPC):
-
-    def __init__(
-        self, options: dict, mat=None, block_size=1, null_space: np.ndarray = None
-    ) -> None:
-        petsc_options = PETSc.Options()
-
-        for key in petsc_options.getAll():
-            petsc_options.delValue(key)
-        for key, value in options.items():
-            petsc_options[key] = value
-
-        super().__init__(mat, block_size, null_space)
-
-
 class PetscAMGMechanics(PetscPC):
     def __init__(self, dim: int, mat=None, null_space: np.ndarray = None) -> None:
         options = PETSc.Options()
@@ -337,18 +322,24 @@ class PetscKrylovSolver:
         pc: PETSc.PC | None = None,
         tol=1e-10,
     ) -> None:
-        self.shape = mat.shape
-        self.ksp = PETSc.KSP().create()
-
+        options = PETSc.Options()
+        options.setValue("ksp_divtol", 1e10)
+        options.setValue('ksp_atol', 1e-10)
+        options.setValue("ksp_rtol", tol)
         if pc is None:
             PETSc.Options().setValue("pc_type", "none")
 
-        self.ksp.setComputeEigenvalues(True)
-        self.ksp.setConvergenceHistory()
+        self.shape = mat.shape
+        self.ksp = PETSc.KSP().create()
+        self.ksp.setFromOptions()
+
         self.pc = PETSc.PC()
         if pc is not None:
             self.pc.createPython(PetscPythonPC(pc))
             self.ksp.setPC(self.pc)
+
+        self.ksp.setComputeEigenvalues(True)
+        self.ksp.setConvergenceHistory()
 
         self.petsc_mat = PETSc.Mat().createAIJ(
             size=mat.shape, csr=(mat.indptr, mat.indices, mat.data)
@@ -389,7 +380,6 @@ class PetscGMRES(PetscKrylovSolver):
         tol=1e-10,
         pc_side: Literal["left", "right"] = "right",
     ) -> None:
-        super().__init__(mat, pc, tol)
         restart = 20
 
         options = PETSc.Options()
@@ -400,8 +390,6 @@ class PetscGMRES(PetscKrylovSolver):
         # options.setValue('ksp_gmres_modifiedgramschmidt', None)
         # options.setValue('ksp_gmres_cgs_refinement_type', 'refine_always')
 
-        options.setValue("ksp_divtol", 1e10)
-        options.setValue("ksp_rtol", tol)
         options.setValue("ksp_max_it", 3 * restart)
         options.setValue("ksp_gmres_restart", restart)
 
@@ -414,7 +402,7 @@ class PetscGMRES(PetscKrylovSolver):
         else:
             raise ValueError(pc_side)
 
-        self.ksp.setFromOptions()
+        super().__init__(mat, pc, tol)
 
 
 class PetscRichardson(PetscKrylovSolver):
@@ -426,14 +414,11 @@ class PetscRichardson(PetscKrylovSolver):
         tol=1e-10,
         pc_side: Literal["left"] = "left",
     ) -> None:
-        super().__init__(mat, pc, tol)
         assert pc_side == "left"
 
         options = PETSc.Options()
         options.setValue("ksp_type", "richardson")
         # options.setValue('ksp_type', 'gmres')
-        options.setValue("ksp_divtol", 1e10)
-        options.setValue("ksp_rtol", tol)
         options.setValue("ksp_max_it", 150)
 
         if pc_side == "left":
@@ -442,7 +427,7 @@ class PetscRichardson(PetscKrylovSolver):
         else:
             raise ValueError(pc_side)
 
-        self.ksp.setFromOptions()
+        super().__init__(mat, pc, tol)
 
 
 class PetscJacobi(PetscPC):

@@ -136,14 +136,12 @@ def get_fs_fractures_analytical(model):
     # val = alpha_biot**2 / (lame_lambda * (1 / (compressibility * M) + porosity))
 
     # C_f_c * M * alpha^2 / (lambda * (1 + phi_0 * M * C_f))
-    val1 = (
+    val = (
         compressibility
-        * resid_aperture
         * M
         * alpha_biot**2
         / (lame_lambda * (1 + porosity * M * compressibility))
     )
-    val = val1
 
     fractures = model.mdg.subdomains(dim=model.nd - 1)
     intersections = [

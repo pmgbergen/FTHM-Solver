@@ -576,6 +576,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         -9: "C0",
         -5: "C1",
         2: "C2",
+        3: 'C2',
         -3: "C3",
         -4: "C4",
         -100: "black",
@@ -586,6 +587,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         -9: "Nan or inf",
         -5: "Diverged breakdown",
         2: "Converged reltol",
+        3: "Converged abstol",
         -100: "No data",
         -4: "Diverged dtol",
     }
