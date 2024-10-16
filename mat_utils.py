@@ -171,16 +171,6 @@ def make_permutations(row_dof, order):
     return perm
 
 
-class TimerContext:
-    def __enter__(self):
-        self.start_time = time.time()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.end_time = time.time()
-        self.elapsed_time = self.end_time - self.start_time
-
-
 class PetscPC:
     def __init__(self, mat=None, block_size=1, null_space: np.ndarray = None) -> None:
         self.pc = PETSc.PC().create()
@@ -258,7 +248,7 @@ class PetscAMGMechanics(PetscPC):
 
         options["pc_type"] = "gamg"
         options["mg_levels_ksp_type"] = "richardson"
-        options["mg_levels_ksp_max_iter"] = 1
+        options["mg_levels_ksp_max_it"] = 1
         options["mg_levels_pc_type"] = "ilu"
         if dim == 3:
             options["mg_levels_pc_factor_levels"] = 0
@@ -321,10 +311,11 @@ class PetscKrylovSolver:
         mat,
         pc: PETSc.PC | None = None,
         tol=1e-10,
+        atol=1e-10,
     ) -> None:
         options = PETSc.Options()
         options.setValue("ksp_divtol", 1e10)
-        options.setValue('ksp_atol', 1e-10)
+        options.setValue("ksp_atol", atol)
         options.setValue("ksp_rtol", tol)
         if pc is None:
             PETSc.Options().setValue("pc_type", "none")
@@ -402,7 +393,7 @@ class PetscGMRES(PetscKrylovSolver):
         else:
             raise ValueError(pc_side)
 
-        super().__init__(mat, pc, tol)
+        super().__init__(mat, pc, tol, atol=1e-15)
 
 
 class PetscRichardson(PetscKrylovSolver):
@@ -427,7 +418,9 @@ class PetscRichardson(PetscKrylovSolver):
         else:
             raise ValueError(pc_side)
 
-        super().__init__(mat, pc, tol)
+        # Absolute tolerances are different for Richardson and GMRES because the latter
+        # checks the unpreconditioned residual.
+        super().__init__(mat, pc, tol, atol=1e-10)
 
 
 class PetscJacobi(PetscPC):

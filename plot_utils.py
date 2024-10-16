@@ -464,26 +464,6 @@ def get_volume_sticking_sliding_open_transition(
     return st, sl, op, tr
 
 
-# def get_num_sticking_sliding_open_transition(
-#     x: Sequence[TimeStepStats], transition_as_open: bool = True
-# ) -> tuple[list[int], list[int], list[int]]:
-#     st = []
-#     sl = []
-#     op = []
-#     tr = []
-#     for ts in x:
-#         for ls in ts.linear_solves:
-#             st.append(sum(ls.sticking))
-#             sl.append(sum(ls.sliding))
-#             if transition_as_open:
-#                 op.append(sum(np.array(ls.open_) | np.array(ls.transition)))
-#                 tr.append(0)
-#             else:
-#                 op.append(sum(ls.open_))
-#                 tr.append(sum(ls.transition))
-#     return st, sl, op, tr
-
-
 def get_num_transition_cells(x: Sequence[TimeStepStats]) -> np.ndarray:
     transition = []
     for ts in x:
@@ -576,7 +556,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         -9: "C0",
         -5: "C1",
         2: "C2",
-        3: 'C2',
+        3: "#056608",
         -3: "C3",
         -4: "C4",
         -100: "black",
@@ -695,14 +675,10 @@ COLOR_TRANSITION = "#00bfff"
 COLOR_OPEN = "blue"
 
 
-def color_sticking_sliding_open_transition(
-    entry: Sequence[TimeStepStats], transition_as_open: bool = True
-):
-    st, sl, op, tr = get_num_sticking_sliding_open_transition(
-        entry, transition_as_open=transition_as_open
-    )
-    maximum = np.array([st, sl, op, tr]).max(axis=0)
-    seen_sticking = seen_sliding = seen_open = seen_transition = False
+def color_sticking_sliding_open(entry: Sequence[TimeStepStats]):
+    st, sl, op = get_num_sticking_sliding_open(entry)
+    maximum = np.array([st, sl, op]).max(axis=0)
+    seen_sticking = seen_sliding = seen_open = False
     for i in range(maximum.size):
         kwargs = {}
         # if sliding[i] > 0:
@@ -716,17 +692,11 @@ def color_sticking_sliding_open_transition(
             if not seen_sticking:
                 kwargs["label"] = "Sticking"
             seen_sticking = True
-        elif tr[i] == maximum[i]:
-            color = COLOR_TRANSITION
-            if not seen_transition:
-                kwargs["label"] = "Transition"
-            seen_transition = True
         else:
             color = COLOR_OPEN
             if not seen_open:
                 kwargs["label"] = "Open"
             seen_open = True
-        # matplotlib.patches.Patch(linewidth=0
         plt.axvspan(
             i - 0.5, i + 0.5, facecolor=color, edgecolor="none", alpha=0.2, **kwargs
         )
@@ -812,20 +782,6 @@ def get_friction_bound_norm(model: pp.SolutionStrategy, data: Sequence[TimeStepS
         b = model.friction_bound(fractures).value(model.equation_system)
         norms.append(abs(b).max())
     return norms
-
-
-def plot_sticking_sliding_open_transition(
-    entry: Sequence[TimeStepStats], transition_as_open: bool = True
-):
-    st, sl, op, tr = get_num_sticking_sliding_open_transition(
-        entry, transition_as_open=transition_as_open
-    )
-    color_time_steps(entry, fill=True, grid=False, legend=True)
-    plt.plot(st, label="Sticking", marker=".", color=COLOR_STICKING)
-    plt.plot(sl, label="Sliding", marker=".", color=COLOR_SLIDING)
-    plt.plot(op, label="Open", marker=".", color=COLOR_OPEN)
-    if not transition_as_open:
-        plt.plot(tr, label="Transition", marker=".", color=COLOR_TRANSITION)
 
 
 def get_rhs_norms(model: pp.SolutionStrategy, data: Sequence[TimeStepStats], ord=2):
@@ -969,27 +925,17 @@ def dump_json(name, data):
         file.write(json_data)
 
 
-def write_dofs_info(
-    model_name: str, make_model: Callable, cell_size_multipliers: list[int]
-):
-    filename = f"dofs_info_{model_name}.json"
-    data = []
-    for cell_size_multiplier in tqdm(cell_size_multipliers):
-        model = make_model(cell_size_multiplier=cell_size_multiplier)
-        model.prepare_simulation()
-        model._initialize_solver()
-        model.assemble_linear_system()
-        model._prepare_solver()
-        data_entry = dict()
-        for i in range(6):
-            data_entry[f"block {i}"] = model.bmat[5, i].shape[1]
-        data_entry["cell_size_multiplier"] = cell_size_multiplier
-        cell_volumes = np.concatenate(
-            [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]
-        ).tolist()
-        data_entry["cell_volumes"] = cell_volumes
-        data.append(data_entry)
-
+def write_dofs_info(model):
+    filename = f"dofs_info_{model.simulation_name()}.json"
+    model.prepare_simulation()
+    model.assemble_linear_system()
+    data = dict()
+    for i in range(6):
+        data[f"block {i}"] = model.bmat[0, i].shape[1]
+    cell_volumes = np.concatenate(
+        [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]
+    ).tolist()
+    data["cell_volumes"] = cell_volumes
     dump_json(filename, data)
 
 

@@ -7,16 +7,11 @@ from typing import Sequence
 import numpy as np
 import porepy as pp
 import scipy.sparse
-from matplotlib import pyplot as plt
 from porepy.models.solution_strategy import SolutionStrategy
-from porepy.models.fluid_mass_balance import BoundaryConditionsSinglePhaseFlow
-from porepy.models.momentum_balance import BoundaryConditionsMomentumBalance
 import scipy.sparse.linalg
 
 from block_matrix import BlockMatrixStorage, SolveSchema, make_solver
 from fixed_stress import (
-    get_fixed_stress_stabilization,
-    make_fs,
     make_fs_analytical,
     make_fs_analytical_with_interface_flow,
 )
@@ -26,14 +21,11 @@ from mat_utils import (
     PetscGMRES,
     PetscILU,
     PetscRichardson,
-    TimerContext,
     csr_ones,
     extract_diag_inv,
     inv_block_diag,
-    inv,
 )
 from plot_utils import dump_json
-from preconditioner_mech import make_J44_inv_bdiag
 from stats import LinearSolveStats, TimeStepStats
 
 
@@ -144,9 +136,9 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         print(f"Sim time: {self.time_manager.time}, Dt: {self.time_manager.dt}")
         super().before_nonlinear_loop()
 
-    def after_nonlinear_convergence(self, iteration_counter: int) -> None:
+    def after_nonlinear_convergence(self) -> None:
         dump_json(self.simulation_name() + ".json", self.statistics)
-        super().after_nonlinear_convergence(iteration_counter)
+        super().after_nonlinear_convergence()
 
     def after_nonlinear_failure(self) -> None:
         self._time_step_stats.nonlinear_convergence_status = -1
@@ -163,8 +155,10 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         self.collect_stats_u_lambda_max()
 
     def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
-        print(f"Newton iter: {len(self._time_step_stats.linear_solves)}, "
-              f"Krylov iters: {self._linear_solve_stats.krylov_iters}")
+        print(
+            f"Newton iter: {len(self._time_step_stats.linear_solves)}, "
+            f"Krylov iters: {self._linear_solve_stats.krylov_iters}"
+        )
         self._linear_solve_stats.simulation_dt = self.time_manager.dt
         self._time_step_stats.linear_solves.append(self._linear_solve_stats)
         if self.params["setup"].get("save_matrix", False):
@@ -189,7 +183,15 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         nd_vec_to_tangential = self.tangential_component(fractures)
         u_t: pp.ad.Operator = nd_vec_to_tangential @ self.displacement_jump(fractures)
         u_t_increment = pp.ad.time_increment(u_t).value(self.equation_system)
-        assert self.nd == 2, "Will fail for 3d"
+
+        tangential_basis: list[pp.ad.SparseArray] = self.basis(
+            fractures, dim=self.nd - 1
+        )
+        scalar_to_tangential = pp.ad.sum_operator_list(
+            [e_i for e_i in tangential_basis]
+        ).value(self.equation_system)
+        sticking = (scalar_to_tangential @ sticking).astype(bool)
+
         u_t_sticking = u_t_increment[sticking]
         try:
             self._linear_solve_stats.sticking_u_mismatch = abs(u_t_sticking).max()
@@ -201,9 +203,14 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
 
         fractures = self.mdg.subdomains(dim=self.nd - 1)
         nd_vec_to_tangential = self.tangential_component(fractures)
-        t_t = nd_vec_to_tangential @ self.contact_traction(fractures)
-        b = self.friction_bound(fractures)
-        diff = (-t_t + b).value(self.equation_system)[sliding]
+        t_t = (nd_vec_to_tangential @ self.contact_traction(fractures)).value(
+            self.equation_system
+        )
+        b = self.friction_bound(fractures).value(self.equation_system)
+        tangential_basis = self.basis(fractures, dim=self.nd - 1)
+        t_t_nrm = np.sqrt(sum(comp._mat.T @ t_t**2 for comp in tangential_basis))
+
+        diff = (-t_t_nrm + b)[sliding]
         try:
             self._linear_solve_stats.coulomb_mismatch = abs(diff).max()
         except ValueError:
@@ -236,7 +243,7 @@ class StatisticsSavingMixin(CheckStickingSlidingOpen, pp.SolutionStrategy):
         rhs_id = f"{name}_rhs.npy"
         state_id = f"{name}_state.npy"
         iterate_id = f"{name}_iterate.npy"
-        scipy.sparse.save_npz(save_path / mat_id, mat)
+        scipy.sparse.save_npz(save_path / mat_id, self.bmat.mat)
         np.save(save_path / rhs_id, rhs)
         np.save(
             save_path / state_id,
@@ -441,8 +448,12 @@ class MyPetscSolver(pp.SolutionStrategy):
         J55_inv = inv_block_diag(J[5, 5].mat, nd=self.nd, lump=False)
         Qright = J.empty_container()
         Qright.mat = csr_ones(Qright.shape[0])
-        eig_max_right = abs(J[5, 5].mat @ J55_inv).data.max()
-        Qright[5, 4] = -J55_inv @ J[5, 4].mat / eig_max_right
+        Qright[5, 4] = -J55_inv @ J[5, 4].mat
+
+        E = (scipy.sparse.eye(J55_inv.shape[0]) - J[5, 5].mat @ J55_inv) @ J[5, 4].mat
+        self._linear_solve_stats.error_matrix_contribution = (
+            abs(E.data).max() / abs(J[5, 4].mat.data).max()
+        )
         return Qright
 
     def Qleft(self) -> BlockMatrixStorage:
@@ -451,8 +462,7 @@ class MyPetscSolver(pp.SolutionStrategy):
         J55_inv = inv_block_diag(J[5, 5].mat, nd=self.nd, lump=False)
         Qleft = J.empty_container()
         Qleft.mat = csr_ones(Qleft.shape[0])
-        eig_max_left = abs(J55_inv @ J[5, 5].mat).data.max()
-        Qleft[4, 5] = -J[4, 5].mat @ J55_inv / eig_max_left
+        Qleft[4, 5] = -J[4, 5].mat @ J55_inv
         return Qleft
 
     def assemble_linear_system(self) -> None:
@@ -487,8 +497,10 @@ class MyPetscSolver(pp.SolutionStrategy):
                     r"$u_{intf}$",
                 ],
             )
-            # reordering the matrix to the order I work with, not how PorePy provides it
-            bmat = bmat[:]  # TODO: Is this necessary?
+
+            # Reordering the matrix to the order I work with, not how PorePy provides
+            # it. This is important, the solver relies on it.
+            bmat = bmat[:]
             self.bmat = bmat
 
     def solve_gmres(self, tol) -> np.ndarray:
@@ -598,7 +610,7 @@ class MyPetscSolver(pp.SolutionStrategy):
         solver_type = self.params["setup"]["solver"]
         direct = solver_type == 0
         richardson = solver_type in [1]
-        gmres = solver_type in [2]
+        gmres = solver_type in [2, 11, 12]
         if direct:
             return scipy.sparse.linalg.spsolve(*self.linear_system)
         elif richardson:
@@ -648,7 +660,7 @@ def make_reorder_contact(model: MyPetscSolver) -> np.ndarray:
 def make_solver_schema(model: MyPetscSolver) -> SolveSchema:
     solver_type = model.params["setup"]["solver"]
 
-    if solver_type == 1:  # Theoretical solver.
+    if solver_type in [1, 11]:  # Theoretical solver.
         return SolveSchema(
             # Exactly solve elasticity and contact mechanics, build fixed stress.
             groups=[1, 4, 5],
@@ -687,6 +699,32 @@ def make_solver_schema(model: MyPetscSolver) -> SolveSchema:
                         # Use AMG to solve mass balance.
                         groups=[0, 2],
                         solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                    ),
+                ),
+            ),
+        )
+    
+    elif solver_type == 12:
+        return SolveSchema(
+            # Exactly eliminate contact mechanics (assuming linearly-transformed system)
+            groups=[4],
+            solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=model.nd),
+            complement=SolveSchema(
+                # Eliminate interface flow, it is not coupled with (1, 4, 5)
+                # Use diag() to approximate inverse and ILU to solve linear systems
+                groups=[3],
+                solve=lambda bmat: PetscILU(bmat[[3]].mat),
+                invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                complement=SolveSchema(
+                    # TODO
+                    groups=[1, 5],
+                    solve='direct',
+                    invertor_type="physical",
+                    invertor=lambda bmat: make_fs_analytical(model, bmat).mat,
+                    complement=SolveSchema(
+                        # TODO
+                        groups=[0, 2],
+                        solve='direct',
                     ),
                 ),
             ),
