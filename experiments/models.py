@@ -34,18 +34,24 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
     def locate_source(self, cell_centers: np.ndarray) -> np.ndarray:
         x = cell_centers[0]
         y = cell_centers[1]
-        distance = np.sqrt((x - 0.5 * XMAX) ** 2 + (y - 0.5 * YMAX) ** 2)
+        ymean = y.mean()
+        xmean = x.mean()
+        distance = np.sqrt((x - xmean) ** 2 + (y - ymean) ** 2)
         loc = np.where(distance == distance.min())[0][0]
         return loc
 
     def get_source_intensity(self, t):
-        t_max = 6
+        t_max = 12
         peak_intensity = self.fluid.convert_units(1e-3, "m^3 * s^-1")
-        t_mid = t_max / 2
-        if t <= t_mid:
-            return t / t_mid * peak_intensity
+        tdiv4 = t_max / 4
+        if t < tdiv4:
+            return t / tdiv4 * peak_intensity
+        elif t < 3 * tdiv4:
+            return peak_intensity - peak_intensity * (t - tdiv4) / tdiv4
+        elif t < t_max:
+            return -peak_intensity + peak_intensity * (t - 3 * tdiv4) / tdiv4
         else:
-            return (2 - t / t_mid) * peak_intensity * -1
+            return 0
 
     def _fluid_source(self, sd: pp.GridLike) -> np.ndarray:
         src = np.zeros(sd.num_cells)
@@ -153,6 +159,7 @@ XMAX = 1
 YMAX = 1
 ZMAX = 1
 
+
 class Geometry2D1F(pp.SolutionStrategy):
 
     def set_domain(self) -> None:
@@ -175,7 +182,7 @@ class Geometry2D1F(pp.SolutionStrategy):
 class Geometry2D7F(pp.SolutionStrategy):
 
     def set_domain(self) -> None:
-        self._domain = pp.Domain({"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX})
+        self._domain = pp.Domain({"xmin": 0, "xmax": 2, "ymin": 0, "ymax": 1})
 
     def set_fractures(self) -> None:
         self._fractures = seven_fractures_one_L_intersection()
@@ -215,7 +222,7 @@ def get_barton_bandis_config(setup: dict):
     if bb_type == 0:
         return {
             # Barton-Bandis elastic deformation. Defaults to 0.
-            "fracture_gap": 0,
+            "fracture_gap": 1e-4,  # THIS SHOULD NOT CHANGE
             "maximum_elastic_fracture_opening": 0,
             # [Pa m^-1]  # increase this to make easier to converge (* 10) (1/10 of lame parameter)
             "fracture_normal_stiffness": 0,
@@ -271,7 +278,7 @@ def make_model(setup: dict):
     elif geometry_type == 3:
 
         class Setup(Geometry3D1F, MyPetscSolver, StatisticsSavingMixin, Physics):
-            pass 
+            pass
 
     else:
         raise ValueError(geometry_type)
@@ -289,7 +296,6 @@ def make_model(setup: dict):
                         "shear_modulus": 1.2e10,  # [Pa]
                         "lame_lambda": 1.2e10,  # [Pa]
                         "dilation_angle": 5 * np.pi / 180,  # [rad]
-                        "friction_coefficient": 0.577,  # [-]
                         "residual_aperture": 1e-4,  # [m]
                         "normal_permeability": 1e-4,
                         "permeability": 1e-14,  # [m^2]
@@ -305,8 +311,8 @@ def make_model(setup: dict):
             ),
             "fluid": pp.FluidConstants(
                 {
-                    "compressibility": 4.559
-                    * 1e-10,  # [Pa^-1], isentropic compressibility
+                    # "pressure": 1e3,  # [Pa]
+                    "compressibility": 4.559 * 1e-10,  # [Pa^-1], fluid compressibility
                     "density": 998.2,  # [kg m^-3]
                     "viscosity": 1.002e-3,  # [Pa s], absolute viscosity
                 }
@@ -316,7 +322,7 @@ def make_model(setup: dict):
         "time_manager": pp.TimeManager(
             dt_init=dt,
             # dt_min_max=(0.01, 0.5),
-            schedule=[0, 3, 6],
+            schedule=[0, 3, 6, 9, 12],
             iter_max=25,
             constant_dt=True,
         ),

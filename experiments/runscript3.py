@@ -15,7 +15,7 @@ setup_reference = {
 
 def experiment_3():
     setups = []
-    for grid_refinement in [1, 2, 3, 4, 5, 6, 10, 33, 100]:
+    for grid_refinement in [1, 2, 3, 4]:
         setups.append(
             {
                 "physics": 1,
@@ -36,5 +36,4 @@ def experiment_3():
 
 
 if __name__ == "__main__":
-    # experiment_1()
     experiment_3()

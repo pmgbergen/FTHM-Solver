@@ -403,6 +403,7 @@ class PetscRichardson(PetscKrylovSolver):
         mat,
         pc: PETSc.PC | None = None,
         tol=1e-10,
+        atol=1e-10,
         pc_side: Literal["left"] = "left",
     ) -> None:
         assert pc_side == "left"
@@ -420,7 +421,7 @@ class PetscRichardson(PetscKrylovSolver):
 
         # Absolute tolerances are different for Richardson and GMRES because the latter
         # checks the unpreconditioned residual.
-        super().__init__(mat, pc, tol, atol=1e-10)
+        super().__init__(mat, pc, tol, atol=atol)
 
 
 class PetscJacobi(PetscPC):

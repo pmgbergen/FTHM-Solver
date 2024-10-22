@@ -23,7 +23,7 @@ from stats import LinearSolveStats
 if TYPE_CHECKING:
     from block_matrix import SolveSchema, BlockMatrixStorage
 
-from mat_utils import PetscGMRES, condest, eigs
+from mat_utils import PetscGMRES, PetscRichardson, condest, eigs
 from stats import TimeStepStats
 
 BURBERRY = mpl.cycler(
@@ -354,46 +354,7 @@ def get_time_steps(x: Sequence[TimeStepStats]) -> list[float]:
     return result
 
 
-def get_F_cond(data: Sequence[TimeStepStats], model):
-    res = []
-    for i in range(sum(len(x.linear_solves) for x in data)):
-        mat, rhs = load_matrix_rhs(data, i)
-        sliced_mat = model.slice_jacobian(mat)
-        res.append(condest(sliced_mat.F))
-    return res
-
-
-def get_S_Ap_cond(data: Sequence[TimeStepStats], model):
-    res = []
-    for i in range(sum(len(x.linear_solves) for x in data)):
-        mat, rhs = load_matrix_rhs(data, i)
-        model.linear_system = mat, rhs
-        model._prepare_solver()
-        res.append(condest(model.S_Ap_fs))
-    return res
-
-
-def get_Bp_cond(data: Sequence[TimeStepStats], model):
-    res = []
-    for i in range(sum(len(x.linear_solves) for x in data)):
-        mat, rhs = load_matrix_rhs(data, i)
-        sliced_mat = model.slice_jacobian(mat)
-        omega = model.slice_omega(sliced_mat)
-        res.append(condest(omega.Bp))
-    return res
-
-
-def get_Omega_p_cond(data: Sequence[TimeStepStats], model):
-    res = []
-    for i in range(sum(len(x.linear_solves) for x in data)):
-        mat, rhs = load_matrix_rhs(data, i)
-        sliced_mat = model.slice_jacobian(mat)
-        omega = model.slice_omega(sliced_mat)
-        res.append(condest(bmat([[omega.Bp, omega.C2p], [omega.C1p, omega.Ap]])))
-    return res
-
-
-def get_jacobian_cond(data: Sequence[TimeStepStats], model):
+def get_jacobian_cond(data: Sequence[TimeStepStats]):
     res = []
     for i in range(sum(len(x.linear_solves) for x in data)):
         mat, rhs = load_matrix_rhs(data, i)
@@ -409,15 +370,6 @@ def get_petsc_converged_reason(x: Sequence[TimeStepStats]) -> list[int]:
     return result
 
 
-# def get_num_sticking_sliding_open(
-#     x: Sequence[TimeStepStats],
-# ) -> tuple[list[int], list[int], list[int]]:
-#     st, sl, op, tr = get_num_sticking_sliding_open_transition(
-#         x, transition_as_open=True
-#     )
-#     return st, sl, op
-
-
 def get_num_sticking_sliding_open(
     x: Sequence[TimeStepStats],
 ) -> tuple[list[int], list[int], list[int]]:
@@ -425,56 +377,6 @@ def get_num_sticking_sliding_open(
     num_sliding = [ls.num_sliding for ts in x for ls in ts.linear_solves]
     num_open = [ls.num_open for ts in x for ls in ts.linear_solves]
     return num_sticking, num_sliding, num_open
-
-
-def get_cell_volumes(dofs_info_path: str, cell_size_multiplier: int):
-    data = load_data(dofs_info_path)
-    data = next(
-        entry for entry in data if entry["cell_size_multiplier"] == cell_size_multiplier
-    )
-    return data["cell_volumes"]
-
-
-def get_volume_sticking_sliding_open_transition(
-    x: Sequence[TimeStepStats],
-    dofs_info_path: str,
-    cell_size_multiplier: int,
-    transition_as_open: bool = True,
-):
-    st = []
-    sl = []
-    op = []
-    tr = []
-    cell_volumes = np.array(
-        get_cell_volumes(
-            dofs_info_path=dofs_info_path, cell_size_multiplier=cell_size_multiplier
-        )
-    )
-    for ts in x:
-        for ls in ts.linear_solves:
-            st.append(sum(cell_volumes[ls.sticking]))
-            sl.append(sum(cell_volumes[ls.sliding]))
-            if transition_as_open:
-                op.append(
-                    sum(cell_volumes[np.array(ls.open_) | np.array(ls.transition)])
-                )
-            else:
-                op.append(sum(cell_volumes[ls.open_]))
-                tr.append(sum(cell_volumes[ls.transition]))
-    return st, sl, op, tr
-
-
-def get_num_transition_cells(x: Sequence[TimeStepStats]) -> np.ndarray:
-    transition = []
-    for ts in x:
-        for ls in ts.linear_solves:
-            transition.append(sum(ls.transition_sticking_sliding))
-    return np.array(transition)
-
-
-def get_transition(x: Sequence[TimeStepStats], idx: int):
-    linear_solve_data = [ls for ts in x for ls in ts.linear_solves][idx]
-    return np.array(linear_solve_data.transition_sticking_sliding)
 
 
 def get_sticking(x: Sequence[TimeStepStats], idx: int):
@@ -804,12 +706,13 @@ def solve_petsc_new(
     logx_eigs=False,
     normalize_residual=False,
     tol=1e-10,
+    atol=1e-15,
     pc_side: Literal["left", "right"] = "left",
     ksp_view: bool = False,
-    rhs_eq_groups: Sequence[np.ndarray] = None,
     Qleft: "BlockMatrixStorage" = None,
     Qright: "BlockMatrixStorage" = None,
     restrict_indices: list[int] = None,
+    use_richardson: bool = False,
 ):
     from block_matrix import make_solver
 
@@ -840,18 +743,22 @@ def solve_petsc_new(
     if Qleft is not None:
         Qleft = Qleft[mat_permuted.active_groups]
         rhs_Q = Qleft.mat @ rhs_Q
-
-    gmres = PetscGMRES(mat_permuted.mat, pc=prec, tol=tol, pc_side=pc_side)
+    if not use_richardson:
+        krylov = PetscGMRES(mat_permuted.mat, pc=prec, tol=tol, pc_side=pc_side)
+    else:
+        krylov = PetscRichardson(
+            mat_permuted.mat, pc=prec, tol=tol, pc_side=pc_side, atol=atol
+        )
 
     if ksp_view:
-        gmres.ksp.view()
+        krylov.ksp.view()
 
     t0 = time.time()
-    sol_Q = gmres.solve(rhs_Q)
+    sol_Q = krylov.solve(rhs_Q)
     print("Solve", label, "took:", round(time.time() - t0, 2))
-    residuals = gmres.get_residuals()
-    info = gmres.ksp.getConvergedReason()
-    eigs = gmres.ksp.computeEigenvalues()
+    residuals = krylov.get_residuals()
+    info = krylov.ksp.getConvergedReason()
+    eigs = krylov.ksp.computeEigenvalues()
 
     print(
         "True residual permuted:", norm(mat_permuted.mat @ sol_Q - rhs_Q) / norm(rhs_Q)
@@ -884,18 +791,18 @@ def solve_petsc_new(
     ax.plot(residuals, label=label, marker=".", linestyle=linestyle)
     ax.set_yscale("log")
 
-    ksp_norm_type = gmres.ksp.getNormType()  # 1-prec, 2-unprec
+    ksp_norm_type = krylov.ksp.getNormType()  # 1-prec, 2-unprec
     if ksp_norm_type == 2:
         ax.set_ylabel("true residual")
     elif ksp_norm_type == 1:
         ax.set_ylabel("preconditioned residual")
     else:
         raise ValueError(ksp_norm_type)
-    ax.set_xlabel("gmres iter.")
+    ax.set_xlabel(f"{'Richardson' if use_richardson else 'GMRES'} iter.")
     ax.grid(True)
     if label != "":
         ax.legend()
-    ax.set_title("GMRES Convergence")
+    ax.set_title(f"{'Richardson' if use_richardson else 'GMRES'} Convergence")
 
     ax = plt.subplot(1, 2, 2)
     if logx_eigs:

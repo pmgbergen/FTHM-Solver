@@ -13,24 +13,56 @@ setup_reference = {
 }
 
 
-def experiment_1():
+def experiment_1_barton_bandis_friction():
     setups = []
-    for physics in [1]:
-        for barton_bandis in [2]:
-            for friction_type in [1]:
-                for grid_refinement in [1, 2, 3, 4]:
-                    setups.append(
-                        {
-                            "physics": physics,
-                            "geometry": 1,  # 1 - 2D 1 fracture;
-                            "barton_bandis_stiffness_type": barton_bandis,
-                            "friction_type": friction_type,
-                            "grid_refinement": grid_refinement,
-                            "solver": 12,
-                            "save_matrix": False,
-                        }
-                    )
+    for barton_bandis in [0, 1, 2, 3]:
+        for friction in [0, 1, 2]:
+            for solver in [1, 2]:
+                setups.append(
+                    {
+                        "physics": 0,
+                        "geometry": 1,
+                        "barton_bandis_stiffness_type": barton_bandis,
+                        "friction_type": friction,
+                        "grid_refinement": 1,
+                        "solver": solver,
+                        "save_matrix": True,
+                    }
+                )
+    for setup in setups:
+        model = make_model(setup)
+        run_model(setup)
+        write_dofs_info(model)
+        print(model.simulation_name())
 
+
+def experiment_1_grid_refinement():
+    setups = []
+    for grid_refinement in [1, 2, 3, 4]:
+        for solver in [1, 11, 12, 2]:
+            setups.append(
+                {
+                    "physics": 1,
+                    "geometry": 1,
+                    "barton_bandis_stiffness_type": 2,
+                    "friction_type": 1,
+                    "grid_refinement": grid_refinement,
+                    "solver": solver,
+                    "save_matrix": True,
+                }
+            )
+    for grid_refinement in [1, 2, 3, 4, 5, 6, 10, 33, 100]:
+        setups.append(
+            {
+                "physics": 1,
+                "geometry": 1,
+                "barton_bandis_stiffness_type": 2,
+                "friction_type": 1,
+                "grid_refinement": grid_refinement,
+                "solver": 2,
+                "save_matrix": False,
+            }
+        )
     for setup in setups:
         model = make_model(setup)
         run_model(setup)
@@ -39,4 +71,5 @@ def experiment_1():
 
 
 if __name__ == "__main__":
-    experiment_1()
+    experiment_1_barton_bandis_friction()
+    experiment_1_grid_refinement()
