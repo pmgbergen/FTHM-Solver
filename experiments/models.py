@@ -41,15 +41,13 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
         return loc
 
     def get_source_intensity(self, t):
-        t_max = 12
+        t_max = self.time_manager.time_final
         peak_intensity = self.fluid.convert_units(1e-3, "m^3 * s^-1")
-        tdiv4 = t_max / 4
-        if t < tdiv4:
-            return t / tdiv4 * peak_intensity
-        elif t < 3 * tdiv4:
-            return peak_intensity - peak_intensity * (t - tdiv4) / tdiv4
+        tdiv2 = t_max / 2
+        if t < tdiv2:
+            return t / tdiv2 * peak_intensity
         elif t < t_max:
-            return -peak_intensity + peak_intensity * (t - 3 * tdiv4) / tdiv4
+            return peak_intensity - peak_intensity * (t - tdiv2) / tdiv2
         else:
             return 0
 
@@ -76,7 +74,25 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
         rho = self.fluid_density(subdomains)
         return intf_source + rho * source
 
-    # Boundary conditions
+    # Boundary and initial conditions
+
+    def initial_condition(self) -> None:
+        super().initial_condition()
+        num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
+        val = self.fluid.pressure() * np.ones(num_cells)
+        for time_step_index in self.time_step_indices:
+            self.equation_system.set_variable_values(
+                val,
+                variables=[self.pressure_variable],
+                time_step_index=time_step_index,
+            )
+
+        for iterate_index in self.iterate_indices:
+            self.equation_system.set_variable_values(
+                val,
+                variables=[self.pressure_variable],
+                iterate_index=iterate_index,
+            )
 
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
@@ -214,6 +230,19 @@ class Geometry3D1F(pp.SolutionStrategy):
                 0.8,
             ]
         ]
+
+        # Intersecting fracture
+        z = 0.6
+        pts_list.append(
+            np.array(
+                [
+                    [x * XMAX, (1 - x) * XMAX, (1 - x) * XMAX, x * XMAX],  # x
+                    [0.5 * YMAX, 0.5 * YMAX, 0.5 * YMAX, 0.5 * YMAX],  # y
+                    [z * ZMAX, (1) * ZMAX, z * ZMAX, (1) * ZMAX],
+                ]
+            )
+        )
+
         self._fractures = [pp.PlaneFracture(pts) for pts in pts_list]
 
 
@@ -231,7 +260,7 @@ def get_barton_bandis_config(setup: dict):
         return {
             "fracture_gap": 1e-4,
             "maximum_elastic_fracture_opening": 5e-5,
-            "fracture_normal_stiffness": 1.2e8,
+            "fracture_normal_stiffness": 1.2e5,
         }
     elif bb_type == 2:
         return {
@@ -243,7 +272,19 @@ def get_barton_bandis_config(setup: dict):
         return {
             "fracture_gap": 1e-4,
             "maximum_elastic_fracture_opening": 5e-5,
-            "fracture_normal_stiffness": 1.2e10,
+            "fracture_normal_stiffness": 1.2e13,
+        }
+    elif bb_type == 4:
+        return {
+            "fracture_gap": 1e-4,
+            "maximum_elastic_fracture_opening": 5e-5,
+            "fracture_normal_stiffness": 1.2e17,
+        }
+    elif bb_type == 5:
+        return {
+            "fracture_gap": 1e-4,
+            "maximum_elastic_fracture_opening": 5e-5,
+            "fracture_normal_stiffness": 1.2e19,
         }
     raise ValueError(bb_type)
 
@@ -311,7 +352,7 @@ def make_model(setup: dict):
             ),
             "fluid": pp.FluidConstants(
                 {
-                    # "pressure": 1e3,  # [Pa]
+                    "pressure": 1e6,  # [Pa]
                     "compressibility": 4.559 * 1e-10,  # [Pa^-1], fluid compressibility
                     "density": 998.2,  # [kg m^-3]
                     "viscosity": 1.002e-3,  # [Pa s], absolute viscosity
@@ -322,7 +363,7 @@ def make_model(setup: dict):
         "time_manager": pp.TimeManager(
             dt_init=dt,
             # dt_min_max=(0.01, 0.5),
-            schedule=[0, 3, 6, 9, 12],
+            schedule=[0, 3, 6],
             iter_max=25,
             constant_dt=True,
         ),

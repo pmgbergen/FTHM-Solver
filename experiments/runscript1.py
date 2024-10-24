@@ -15,7 +15,14 @@ setup_reference = {
 
 def experiment_1_barton_bandis_friction():
     setups = []
-    for barton_bandis in [0, 1, 2, 3]:
+    for barton_bandis in [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+    ]:
         for friction in [0, 1, 2]:
             for solver in [1, 2]:
                 setups.append(
@@ -39,7 +46,7 @@ def experiment_1_barton_bandis_friction():
 def experiment_1_grid_refinement():
     setups = []
     for grid_refinement in [1, 2, 3, 4]:
-        for solver in [1, 11, 12, 2]:
+        for solver in [1, 11, 12]:
             setups.append(
                 {
                     "physics": 1,
@@ -51,7 +58,7 @@ def experiment_1_grid_refinement():
                     "save_matrix": True,
                 }
             )
-    for grid_refinement in [1, 2, 3, 4, 5, 6, 10, 33, 100]:
+    for grid_refinement in [1, 2, 3, 4, 5, 6, 10, 33]:
         setups.append(
             {
                 "physics": 1,
