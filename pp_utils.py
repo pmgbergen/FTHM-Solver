@@ -10,7 +10,7 @@ import scipy.sparse
 from porepy.models.solution_strategy import SolutionStrategy, ContactIndicators
 import scipy.sparse.linalg
 
-from block_matrix import BlockMatrixStorage, SolveSchema, make_solver
+from block_matrix import BlockMatrixStorage, FieldSplitScheme, make_solver
 from fixed_stress import (
     make_fs_analytical,
     make_fs_analytical_with_interface_flow,
@@ -548,6 +548,81 @@ class MyPetscSolver(pp.SolutionStrategy):
             return self.solve_gmres(tol=tol)
         raise ValueError
 
+    def make_solver_schema(self) -> FieldSplitScheme:
+        solver_type = self.params["setup"]["solver"]
+
+        if solver_type in [1, 11]:  # Theoretical solver.
+            return FieldSplitScheme(
+                # Exactly solve elasticity and contact mechanics, build fixed stress.
+                groups=[1, 4, 5],
+                invertor=lambda bmat: make_fs_analytical_with_interface_flow(
+                    self, bmat
+                ).mat,
+                invertor_type="physical",
+                complement=FieldSplitScheme(
+                    groups=[0, 2, 3],
+                ),
+            )
+
+        elif solver_type == 2:  # Scalable solver.
+            return FieldSplitScheme(
+                # Exactly eliminate contact mechanics (assuming linearly-transformed system)
+                groups=[4],
+                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
+                complement=FieldSplitScheme(
+                    # Eliminate interface flow, it is not coupled with (1, 4, 5)
+                    # Use diag() to approximate inverse and ILU to solve linear systems
+                    groups=[3],
+                    solve=lambda bmat: PetscILU(bmat[[3]].mat),
+                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                    complement=FieldSplitScheme(
+                        # Eliminate elasticity. Use AMG to solve linear systems and fixed
+                        # stress to approximate inverse.
+                        groups=[1, 5],
+                        solve=lambda bmat: PetscAMGMechanics(
+                            mat=bmat[[1, 5]].mat,
+                            dim=self.nd,
+                            null_space=build_mechanics_near_null_space(self),
+                        ),
+                        invertor_type="physical",
+                        invertor=lambda bmat: make_fs_analytical(self, bmat).mat,
+                        complement=FieldSplitScheme(
+                            # Use AMG to solve mass balance.
+                            groups=[0, 2],
+                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                        ),
+                    ),
+                ),
+            )
+
+        elif solver_type == 12:
+            return FieldSplitScheme(
+                # Exactly eliminate contact mechanics (assuming linearly-transformed system)
+                groups=[4],
+                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
+                complement=FieldSplitScheme(
+                    # Eliminate interface flow, it is not coupled with (1, 4, 5)
+                    # Use diag() to approximate inverse and ILU to solve linear systems
+                    groups=[3],
+                    solve=lambda bmat: PetscILU(bmat[[3]].mat),
+                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                    complement=FieldSplitScheme(
+                        # TODO
+                        groups=[1, 5],
+                        solve="direct",
+                        invertor_type="physical",
+                        invertor=lambda bmat: make_fs_analytical(self, bmat).mat,
+                        complement=FieldSplitScheme(
+                            # TODO
+                            groups=[0, 2],
+                            solve="direct",
+                        ),
+                    ),
+                ),
+            )
+
+        raise ValueError(f"{solver_type}")
+
 
 def make_reorder_contact(model: MyPetscSolver) -> np.ndarray:
     """Permutation of the contact mechanics equations. The PorePy arrangement is:
@@ -584,82 +659,6 @@ def make_reorder_contact(model: MyPetscSolver) -> np.ndarray:
     else:
         raise ValueError(f"{model.nd = }")
     return reorder
-
-
-def make_solver_schema(model: MyPetscSolver) -> SolveSchema:
-    solver_type = model.params["setup"]["solver"]
-
-    if solver_type in [1, 11]:  # Theoretical solver.
-        return SolveSchema(
-            # Exactly solve elasticity and contact mechanics, build fixed stress.
-            groups=[1, 4, 5],
-            invertor=lambda bmat: make_fs_analytical_with_interface_flow(
-                model, bmat
-            ).mat,
-            invertor_type="physical",
-            complement=SolveSchema(
-                groups=[0, 2, 3],
-            ),
-        )
-
-    elif solver_type == 2:  # Scalable solver.
-        return SolveSchema(
-            # Exactly eliminate contact mechanics (assuming linearly-transformed system)
-            groups=[4],
-            solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=model.nd),
-            complement=SolveSchema(
-                # Eliminate interface flow, it is not coupled with (1, 4, 5)
-                # Use diag() to approximate inverse and ILU to solve linear systems
-                groups=[3],
-                solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
-                complement=SolveSchema(
-                    # Eliminate elasticity. Use AMG to solve linear systems and fixed
-                    # stress to approximate inverse.
-                    groups=[1, 5],
-                    solve=lambda bmat: PetscAMGMechanics(
-                        mat=bmat[[1, 5]].mat,
-                        dim=model.nd,
-                        null_space=build_mechanics_near_null_space(model),
-                    ),
-                    invertor_type="physical",
-                    invertor=lambda bmat: make_fs_analytical(model, bmat).mat,
-                    complement=SolveSchema(
-                        # Use AMG to solve mass balance.
-                        groups=[0, 2],
-                        solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
-                    ),
-                ),
-            ),
-        )
-
-    elif solver_type == 12:
-        return SolveSchema(
-            # Exactly eliminate contact mechanics (assuming linearly-transformed system)
-            groups=[4],
-            solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=model.nd),
-            complement=SolveSchema(
-                # Eliminate interface flow, it is not coupled with (1, 4, 5)
-                # Use diag() to approximate inverse and ILU to solve linear systems
-                groups=[3],
-                solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
-                complement=SolveSchema(
-                    # TODO
-                    groups=[1, 5],
-                    solve="direct",
-                    invertor_type="physical",
-                    invertor=lambda bmat: make_fs_analytical(model, bmat).mat,
-                    complement=SolveSchema(
-                        # TODO
-                        groups=[0, 2],
-                        solve="direct",
-                    ),
-                ),
-            ),
-        )
-
-    raise ValueError(f"{solver_type}")
 
 
 def build_mechanics_near_null_space(model: MyPetscSolver, groups=(1, 5)):

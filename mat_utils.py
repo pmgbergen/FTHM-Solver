@@ -227,7 +227,7 @@ class PetscPC:
         if self.null_space_petsc is not None:
             self.null_space_petsc.destroy()
 
-    def dot(self, b):
+    def dot(self, b: np.ndarray) -> np.ndarray:
         self.petsc_x.set(0.0)
         self.petsc_b.setArray(b)
         self.pc.apply(self.petsc_b, self.petsc_x)
@@ -255,13 +255,14 @@ class PetscAMGMechanics(PetscPC):
         else:
             options["mg_levels_pc_factor_levels"] = 5
 
-        # options["pc_type"] = "hypre"
-        # options["pc_hypre_type"] = "boomeramg"
-        # options["pc_hypre_boomeramg_max_iter"] = 1
-        # options["pc_hypre_boomeramg_coarsen_type"] = 'Ruge-Stueben'
-        # options["pc_hypre_boomeramg_num_functions"] = dim
-        # options["pc_hypre_boomeramg_relax_type_all"] = 'symmetric-SOR/Jacobi'
-        # options["pc_hypre_boomeramg_interp_type"] = 'ext+i'
+        # options["pc_type"] = "gamg"
+        # options["pc_gamg_type"] = "agg"
+        # options["pc_gamg_threshold"] = "0.03"
+        # options["pc_gamg_square_graph"] = "1"
+        # options["pc_gamg_sym_graph"] = None
+        # options["mg_levels_ksp_type"] = "richardson"
+        # options["mg_levels_pc_type"] = "sor"
+        # options['pc_gamg_agg_nsmooths'] = 2
 
         super().__init__(mat=mat, block_size=dim, null_space=null_space)
 

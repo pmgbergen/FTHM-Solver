@@ -21,7 +21,7 @@ from tqdm import tqdm
 from stats import LinearSolveStats
 
 if TYPE_CHECKING:
-    from block_matrix import SolveSchema, BlockMatrixStorage
+    from block_matrix import FieldSplitScheme, BlockMatrixStorage
 
 from mat_utils import PetscGMRES, PetscRichardson, condest, eigs
 from stats import TimeStepStats
@@ -506,9 +506,9 @@ def load_matrix_rhs(data: Sequence[TimeStepStats], idx: int):
     return mat, rhs
 
 
-def load_matrix_rhs_state_iterate_dt(data: Sequence[TimeStepStats], idx: int):
+def load_matrix_rhs_state_iterate_dt(data: Sequence[TimeStepStats], idx: int, dir: str = '../matrices'):
     flat_data: list[LinearSolveStats] = [y for x in data for y in x.linear_solves]
-    load_dir = Path("../matrices")
+    load_dir = Path(dir)
     mat = scipy.sparse.load_npz(load_dir / flat_data[idx].matrix_id)
     rhs = np.load(load_dir / flat_data[idx].rhs_id)
     iterate = np.load(load_dir / flat_data[idx].iterate_id)
@@ -700,14 +700,15 @@ def get_rhs_norms(model: pp.SolutionStrategy, data: Sequence[TimeStepStats], ord
 
 def solve_petsc_new(
     mat: "BlockMatrixStorage",
-    solve_schema: "SolveSchema" = None,
+    solve_schema: "FieldSplitScheme" = None,
+    prec=None,
     rhs_global=None,
     label="",
     logx_eigs=False,
     normalize_residual=False,
     tol=1e-10,
     atol=1e-15,
-    pc_side: Literal["left", "right"] = "left",
+    pc_side: Literal["left", "right"] = "right",
     ksp_view: bool = False,
     Qleft: "BlockMatrixStorage" = None,
     Qright: "BlockMatrixStorage" = None,
@@ -726,7 +727,13 @@ def solve_petsc_new(
         mat_Q.mat = mat_Q.mat @ Qright.mat
         # mat_Q.set_zeros(5, 4)
 
-    mat_permuted, prec = make_solver(solve_schema, mat_Q)
+    if solve_schema is None and prec is not None:
+        mat_permuted = mat_Q
+    elif solve_schema is not None and prec is None:
+        mat_permuted, prec = make_solver(solve_schema, mat_Q)
+    else:
+        raise ValueError
+
     if restrict_indices is not None:
         mat_permuted = mat_permuted[restrict_indices]
         if Qleft is not None:
@@ -736,6 +743,7 @@ def solve_petsc_new(
 
     if rhs_global is None:
         rhs_local = np.ones(mat.shape[0])
+        rhs_global = rhs_local.copy()
     else:
         rhs_local = mat_permuted.local_rhs(rhs_global)
 

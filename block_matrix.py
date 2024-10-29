@@ -262,20 +262,20 @@ class BlockMatrixStorage:
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         self.mat[I, J] = value
 
-    def group_shape(self, i, j=None) -> tuple[int, int]:
-        groups_i, groups_j = self._correct_getitem_key((i, j) if j is not None else i)
+    # def group_shape(self, i, j=None) -> tuple[int, int]:
+    #     groups_i, groups_j = self._correct_getitem_key((i, j) if j is not None else i)
 
-        def inner(input_dofs_idx, take_groups, all_groups):
-            num_dofs = 0
-            for group in take_groups:
-                for dof_idx in all_groups[group]:
-                    if (dofs := input_dofs_idx[dof_idx]) is not None:
-                        num_dofs += dofs.size
-            return num_dofs
+    #     def inner(input_dofs_idx, take_groups, all_groups):
+    #         num_dofs = 0
+    #         for group in take_groups:
+    #             for dof_idx in all_groups[group]:
+    #                 if (dofs := input_dofs_idx[dof_idx]) is not None:
+    #                     num_dofs += dofs.size
+    #         return num_dofs
 
-        row_shape = inner(self.local_row_idx, groups_i, self.groups_row)
-        col_shape = inner(self.local_col_idx, groups_j, self.groups_col)
-        return row_shape, col_shape
+    #     row_shape = inner(self.local_row_idx, groups_i, self.groups_row)
+    #     col_shape = inner(self.local_col_idx, groups_j, self.groups_col)
+    #     return row_shape, col_shape
 
     def slice_domain(self, i, j) -> spmatrix:
         active_subgroups_i, active_subgroups_j = self.active_subgroups
@@ -284,23 +284,9 @@ class BlockMatrixStorage:
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         return self.mat[I, J]
 
-    def build_schur_complement(
-        self, keep: Sequence[int], elim: Sequence[int], only_stab: bool = False
-    ) -> "BlockMatrixStorage":
-        m_kk = self[keep].copy()
-        m_ee = self[elim].mat
-        m_ke = self[keep, elim].mat
-        m_ek = self[elim, keep].mat
-        stab = m_ke @ inv(m_ee) @ m_ek
-        if only_stab:
-            m_kk.mat = stab
-        else:
-            m_kk.mat -= stab
-        return m_kk
-
     def block_diag(self) -> "BlockMatrixStorage":
         """Returns a copy. Keeps only diagonal blocks.
-        E.g. how removes how one fracture affects the other."""
+        E.g. removes how one fracture affects the other."""
         active_idx = [x for x in self.local_row_idx if x is not None]
         bmats = []
         for active in active_idx:
@@ -339,6 +325,20 @@ class BlockMatrixStorage:
             group_col_names=self.groups_col_names,
             group_row_names=self.groups_row_names,
         )
+
+    def make_restriction_matrix(self, to: list[int]) -> "BlockMatrixStorage":
+        self = self
+        active_cols = np.concatenate(
+            [self.local_col_idx[j] for i in to for j in self.groups_col[i]]
+        )
+        active_rows = np.arange(active_cols.size)
+        active_data = np.ones(active_rows.size)
+        result = self[to, self.active_groups[1]].empty_container()
+        proj = scipy.sparse.coo_matrix(
+            (active_data, (active_rows, active_cols)), result.shape
+        )
+        result.mat = proj.tocsr()
+        return result
 
     def local_rhs(self, global_rhs: np.ndarray) -> np.ndarray:
         row_idx = [
@@ -583,14 +583,14 @@ class BlockMatrixStorage:
 
 
 @dataclass
-class SolveSchema:
+class FieldSplitScheme:
     groups: list[int]
     solve: callable | Literal["direct", "use_invertor"] = "direct"
     invertor: callable | Literal["use_solve", "direct"] = "use_solve"
     invertor_type: Literal["physical", "algebraic", "operator", "test_vector"] = (
         "algebraic"
     )
-    complement: Optional["SolveSchema"] = None
+    complement: Optional["FieldSplitScheme"] = None
     factorization_type: Literal["full", "upper"] = "upper"
 
     compute_cond: bool = False
@@ -610,7 +610,12 @@ class SolveSchema:
         return res
 
 
-def get_complement_groups(schema: SolveSchema):
+@dataclass
+class MultiStageScheme:
+    stages: list[FieldSplitScheme]
+
+
+def get_complement_groups(schema: FieldSplitScheme):
     res = []
     if schema.complement is not None:
         res.extend(schema.complement.groups)
@@ -618,7 +623,7 @@ def get_complement_groups(schema: SolveSchema):
     return res
 
 
-def make_solver(schema: SolveSchema, mat_orig: BlockMatrixStorage):
+def make_solver(schema: FieldSplitScheme, mat_orig: BlockMatrixStorage):
     groups_0 = schema.groups
     groups_1 = get_complement_groups(schema)
 
