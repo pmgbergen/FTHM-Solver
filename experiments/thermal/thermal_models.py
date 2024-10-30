@@ -355,7 +355,7 @@ def make_model(setup: dict):
             iter_max=25,
             constant_dt=True,
         ),
-        "units": pp.Units(kg=1e10),
+        "units": pp.Units(kg=1e10, K=1e3),
         "meshing_arguments": {
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
@@ -374,7 +374,7 @@ def run_model(setup: dict):
             "prepare_simulation": False,
             "progressbars": False,
             "nl_convergence_tol": float("inf"),
-            "nl_convergence_tol_res": 1e-6,
+            "nl_convergence_tol_res": 1e-8,
             "nl_divergence_tol": 1e8,
             "max_iterations": 25,
         },

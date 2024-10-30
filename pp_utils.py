@@ -10,7 +10,7 @@ import scipy.sparse
 from porepy.models.solution_strategy import SolutionStrategy, ContactIndicators
 import scipy.sparse.linalg
 
-from block_matrix import BlockMatrixStorage, FieldSplitScheme, make_solver
+from block_matrix import BlockMatrixStorage, FieldSplitScheme
 from fixed_stress import (
     make_fs_analytical,
     make_fs_analytical_with_interface_flow,
@@ -188,9 +188,10 @@ class StatisticsSavingMixin(ContactIndicators, pp.SolutionStrategy):
         self._linear_solve_stats.rhs_id = rhs_id
 
 
-class MyPetscSolver(pp.SolutionStrategy):
+class IterativeLinearSolver(pp.SolutionStrategy):
 
-    _linear_solve_stats: LinearSolveStats
+    _linear_solve_stats = LinearSolveStats()
+    """A placeholder to statistics. The solver mixin only writes in it, not reads."""
 
     bmat: BlockMatrixStorage
     """The current Jacobian."""
@@ -210,9 +211,12 @@ class MyPetscSolver(pp.SolutionStrategy):
         return var_dofs
 
     @cached_property
-    def _unpermuted_eq_dofs(self) -> list[np.ndarray]:
-        """The version of `eq_dofs` that does not encorporates the permutation
-        `contact_permutation`.
+    def eq_dofs(self) -> list[np.ndarray]:
+        """Equation degrees of freedom (rows of the Jacobian) in the PorePy order (how
+        they are arranged in the model).
+
+        Each list entry correspond to one equation on one grid. Constructed when first
+        accessed. Encorporates the permutation `contact_permutation`.
 
         """
         eq_dofs: list[np.ndarray] = []
@@ -227,149 +231,242 @@ class MyPetscSolver(pp.SolutionStrategy):
 
     @cached_property
     def variable_groups(self) -> list[list[int]]:
-        """Prepares the groups of variables in the specific order, that we will use in
-        the block Jacobian to access the submatrices:
+        raise NotImplementedError
 
-        `J[x, 0]` - matrix pressure variable;
-        `J[x, 1]` - matrix displacement variable;
-        `J[x, 2]` - lower-dim pressure variable;
-        `J[x, 3]` - interface Darcy flux variable;
-        `J[x, 4]` - contact traction variable;
-        `J[x, 5]` - interface displacement variable;
+    @cached_property
+    def equation_groups(self) -> list[list[int]]:
+        raise NotImplementedError
 
-        This index is not equivalen to PorePy model natural ordering. Constructed when
-        first accessed.
+    def group_row_names(self) -> list[str] | None:
+        return None
 
-        """
-        dim_max = self.mdg.dim_max()
-        sd_ambient = self.mdg.subdomains(dim=dim_max)
-        sd_lower = [
-            k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
-        ]
-        sd_frac = self.mdg.subdomains(dim=dim_max - 1)
-        intf = self.mdg.interfaces()
-        intf_frac = self.mdg.interfaces(dim=dim_max - 1)
+    def group_col_names(self) -> list[str] | None:
+        return None
 
-        return get_variables_group_ids(
-            model=self,
-            md_variables_groups=[
-                [self.pressure(sd_ambient)],  # 0
-                [self.displacement(sd_ambient)],  # 1
-                [self.pressure(sd_lower)],  # 2
-                [self.interface_darcy_flux(intf)],  # 3
-                [self.contact_traction(sd_frac)],  # 4
-                [self.interface_displacement(intf_frac)],  # 5
-            ],
+    def make_solver_scheme(self) -> FieldSplitScheme:
+        raise NotImplementedError
+
+    def assemble_linear_system(self) -> None:
+        super().assemble_linear_system()
+        mat, rhs = self.linear_system
+
+        bmat = BlockMatrixStorage(
+            mat=mat,
+            global_row_idx=self.eq_dofs,
+            global_col_idx=self.var_dofs,
+            groups_row=self.equation_groups,
+            groups_col=self.variable_groups,
+            group_row_names=self.group_row_names(),
+            group_col_names=self.group_col_names(),
         )
 
-    @cached_property
-    def _unpermuted_equation_groups(self) -> list[list[int]]:
-        """The version of `equation_groups` that does not encorporates the permutation
-        `contact_permutation`.
+        # Reordering the matrix to the order we work with, not how PorePy provides it.
+        bmat = bmat[:]
+        self.bmat = bmat
 
-        """
-        dim_max = self.mdg.dim_max()
-        sd_ambient = self.mdg.subdomains(dim=dim_max)
-        sd_lower = [
-            k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
-        ]
-        intf = self.mdg.interfaces()
+    def solve_linear_system(self) -> np.ndarray:
+        # Check that rhs is finite.
+        mat, rhs = self.linear_system
+        if not np.all(np.isfinite(rhs)):
+            self._linear_solve_stats.krylov_iters = 0
+            result = np.zeros_like(rhs)
+            result[:] = np.nan
+            return result
 
-        return get_equations_group_ids(
-            model=self,
-            equations_group_order=[
-                [("mass_balance_equation", sd_ambient)],  # 0
-                [("momentum_balance_equation", sd_ambient)],  # 1
-                [("mass_balance_equation", sd_lower)],  # 2
-                [("interface_darcy_flux_equation", intf)],  # 3
-                [
-                    ("normal_fracture_deformation_equation", sd_lower),  # 4
-                    ("tangential_fracture_deformation_equation", sd_lower),
-                ],
-                [("interface_force_balance_equation", intf)],  # 5
-            ],
+        # Constructing the solver scheme.
+        scheme = self.make_solver_scheme()
+
+        # Solver changes the order of groups so that the first-eliminated goes first.
+        mat_permuted, prec = scheme.make_solver(self.bmat)
+
+        # Permute the rhs groups to match mat_permuted.
+        rhs_local = mat_permuted.local_rhs(rhs)
+
+        gmres = PetscGMRES(
+            mat=mat_permuted.mat, pc=prec, pc_side="right", tol=1e-8
         )
 
-    @cached_property
-    def contact_permutation(self) -> np.ndarray:
-        """Permutation of the contact mechanics equations. Must be applied to the
-        Jacobian.
+        sol_local = gmres.solve(rhs_local)
+        info = gmres.ksp.getConvergedReason()
 
-        The PorePy arrangement is:
-        `[[C0_norm], [C1_norm], [C0_tang], [C1_tang]]`,
-        where `C0` and `C1` correspond to the contact equation on fractures 0 and 1.
-        We permute it to:
-        `[[f0_norm, f0_tang], [f1_norm, f1_tang]]`, a.k.a array of structures.
+        # Permute the solution groups to match the original porepy arrangement.
+        sol = mat_permuted.reverse_transform_solution(sol_local)
 
-        """
-        return make_reorder_contact(self)
+        # Verify that the original problem is solved and we did not do anything wrong.
+        true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
 
-    @cached_property
-    def eq_dofs(self):
-        """Equation degrees of freedom (rows of the Jacobian) in the PorePy order (how
-        they are arranged in the model).
+        if info <= 0:
+            print(f"GMRES failed, {info=}", file=sys.stderr)
+            if info == -9:
+                sol[:] = np.nan
+        else:
+            if true_residual_nrm_drop >= 1:
+                print("True residual did not decrease")
 
-        Each list entry correspond to one equation on one grid. Constructed when first
-        accessed. Encorporates the permutation `contact_permutation`.
+        # Write statistics
+        self._linear_solve_stats.petsc_converged_reason = info
+        self._linear_solve_stats.krylov_iters = len(gmres.get_residuals())
+        return np.atleast_1d(sol)
 
-        """
-        if len(self._unpermuted_equation_groups[4]) == 0:
-            return self._unpermuted_eq_dofs, self._unpermuted_equation_groups
 
-        eq_dofs_corrected = [x.copy() for x in self._unpermuted_eq_dofs]
+class MyPetscSolver(pp.SolutionStrategy):
 
-        # We assume that normal equations go first.
-        num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
-        normal_subgroups = self._unpermuted_equation_groups[4][:num_fracs]
+    # @cached_property
+    # def _unpermuted_eq_dofs(self) -> list[np.ndarray]:
+    #     """The version of `eq_dofs` that does not encorporates the permutation
+    #     `contact_permutation`.
 
-        eq_dofs_corrected = []
-        for i, x in enumerate(self._unpermuted_eq_dofs):
-            if i not in self._unpermuted_equation_groups[4]:
-                eq_dofs_corrected.append(x)
-            else:
-                if i in normal_subgroups:
-                    eq_dofs_corrected.append(None)
+    #     """
 
-        i = self._unpermuted_eq_dofs[normal_subgroups[0]][0]
-        for normal in normal_subgroups:
-            res = i + np.arange(self._unpermuted_eq_dofs[normal].size * self.nd)
-            i = res[-1] + 1
-            eq_dofs_corrected[normal] = np.array(res)
+    # @cached_property
+    # def variable_groups(self) -> list[list[int]]:
+    #     """Prepares the groups of variables in the specific order, that we will use in
+    #     the block Jacobian to access the submatrices:
 
-        return eq_dofs_corrected
+    #     `J[x, 0]` - matrix pressure variable;
+    #     `J[x, 1]` - matrix displacement variable;
+    #     `J[x, 2]` - lower-dim pressure variable;
+    #     `J[x, 3]` - interface Darcy flux variable;
+    #     `J[x, 4]` - contact traction variable;
+    #     `J[x, 5]` - interface displacement variable;
 
-    @cached_property
-    def equation_groups(self):
-        """Prepares the groups of equation in the specific order, that we will use in
-        the block Jacobian to access the submatrices:
+    #     This index is not equivalen to PorePy model natural ordering. Constructed when
+    #     first accessed.
 
-        `J[0, x]` - matrix mass balance equation;
-        `J[1, x]` - matrix momentum balance equation;
-        `J[2, x]` - lower-dim mass balance equation;
-        `J[3, x]` - interface Darcy flux equation;
-        `J[4, x]` - contact traction equations;
-        `J[5, x]` - interface force balance equation;
+    #     """
+    #     dim_max = self.mdg.dim_max()
+    #     sd_ambient = self.mdg.subdomains(dim=dim_max)
+    #     sd_lower = [
+    #         k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
+    #     ]
+    #     sd_frac = self.mdg.subdomains(dim=dim_max - 1)
+    #     intf = self.mdg.interfaces()
+    #     intf_frac = self.mdg.interfaces(dim=dim_max - 1)
 
-        This index is not equivalen to PorePy model natural ordering. Constructed when
-        first accessed. Encorporates the permutation `contact_permutation`.
+    #     return get_variables_group_ids(
+    #         model=self,
+    #         md_variables_groups=[
+    #             [self.pressure(sd_ambient)],  # 0
+    #             [self.displacement(sd_ambient)],  # 1
+    #             [self.pressure(sd_lower)],  # 2
+    #             [self.interface_darcy_flux(intf)],  # 3
+    #             [self.contact_traction(sd_frac)],  # 4
+    #             [self.interface_displacement(intf_frac)],  # 5
+    #         ],
+    #     )
 
-        """
-        if len(self._unpermuted_equation_groups[4]) == 0:
-            return self._unpermuted_equation_groups
+    # @cached_property
+    # def _unpermuted_equation_groups(self) -> list[list[int]]:
+    #     """The version of `equation_groups` that does not encorporates the permutation
+    #     `contact_permutation`.
 
-        eq_groups_corrected = [x.copy() for x in self._unpermuted_equation_groups]
+    #     """
+    #     dim_max = self.mdg.dim_max()
+    #     sd_ambient = self.mdg.subdomains(dim=dim_max)
+    #     sd_lower = [
+    #         k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
+    #     ]
+    #     intf = self.mdg.interfaces()
 
-        # We assume that normal equations go first.
-        num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
-        # Now each dof array in group 4 corresponds normal and tangential components of
-        # contact relations on a specific fracture.
-        eq_groups_corrected[4] = self._unpermuted_equation_groups[4][:num_fracs]
-        # Since the number of groups decreased, we need to subtract the difference.
-        eq_groups_corrected[5] = (
-            np.array(self._unpermuted_equation_groups[5]) - num_fracs
-        ).tolist()
+    #     return get_equations_group_ids(
+    #         model=self,
+    #         equations_group_order=[
+    #             [("mass_balance_equation", sd_ambient)],  # 0
+    #             [("momentum_balance_equation", sd_ambient)],  # 1
+    #             [("mass_balance_equation", sd_lower)],  # 2
+    #             [("interface_darcy_flux_equation", intf)],  # 3
+    #             [
+    #                 ("normal_fracture_deformation_equation", sd_lower),  # 4
+    #                 ("tangential_fracture_deformation_equation", sd_lower),
+    #             ],
+    #             [("interface_force_balance_equation", intf)],  # 5
+    #         ],
+    #     )
 
-        return eq_groups_corrected
+    # @cached_property
+    # def contact_permutation(self) -> np.ndarray:
+    #     """Permutation of the contact mechanics equations. Must be applied to the
+    #     Jacobian.
+
+    #     The PorePy arrangement is:
+    #     `[[C0_norm], [C1_norm], [C0_tang], [C1_tang]]`,
+    #     where `C0` and `C1` correspond to the contact equation on fractures 0 and 1.
+    #     We permute it to:
+    #     `[[f0_norm, f0_tang], [f1_norm, f1_tang]]`, a.k.a array of structures.
+
+    #     """
+    #     return make_reorder_contact(self)
+
+    # @cached_property
+    # def eq_dofs(self):
+    #     """Equation degrees of freedom (rows of the Jacobian) in the PorePy order (how
+    #     they are arranged in the model).
+
+    #     Each list entry correspond to one equation on one grid. Constructed when first
+    #     accessed. Encorporates the permutation `contact_permutation`.
+
+    #     """
+    #     if len(self._unpermuted_equation_groups[4]) == 0:
+    #         return self._unpermuted_eq_dofs, self._unpermuted_equation_groups
+
+    #     eq_dofs_corrected = [x.copy() for x in self._unpermuted_eq_dofs]
+
+    #     # We assume that normal equations go first.
+    #     num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
+    #     normal_subgroups = self._unpermuted_equation_groups[4][:num_fracs]
+
+    #     eq_dofs_corrected = []
+    #     for i, x in enumerate(self._unpermuted_eq_dofs):
+    #         if i not in self._unpermuted_equation_groups[4]:
+    #             eq_dofs_corrected.append(x)
+    #         else:
+    #             if i in normal_subgroups:
+    #                 eq_dofs_corrected.append(None)
+
+    #     i = self._unpermuted_eq_dofs[normal_subgroups[0]][0]
+    #     for normal in normal_subgroups:
+    #         res = i + np.arange(self._unpermuted_eq_dofs[normal].size * self.nd)
+    #         i = res[-1] + 1
+    #         eq_dofs_corrected[normal] = np.array(res)
+
+    #     return eq_dofs_corrected
+
+    # def correct_contact_equations_permutations(
+    #     self, equation_groups: list[list[int]], contact_group: int
+    # ):
+    #     if len(equation_groups[contact_group]) == 0:
+    #         return equation_groups
+
+    #     eq_groups_corrected = [x.copy() for x in equation_groups]
+
+    #     # We assume that normal equations go first.
+    #     num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
+    #     # Now each dof array in group 4 corresponds normal and tangential components of
+    #     # contact relations on a specific fracture.
+    #     eq_groups_corrected[4] = self._unpermuted_equation_groups[4][:num_fracs]
+    #     # Since the number of groups decreased, we need to subtract the difference.
+    #     eq_groups_corrected[5] = (
+    #         np.array(self._unpermuted_equation_groups[5]) - num_fracs
+    #     ).tolist()
+
+    #     return eq_groups_corrected
+
+    # @cached_property
+    # def equation_groups(self):
+    #     """Prepares the groups of equation in the specific order, that we will use in
+    #     the block Jacobian to access the submatrices:
+
+    #     `J[0, x]` - matrix mass balance equation;
+    #     `J[1, x]` - matrix momentum balance equation;
+    #     `J[2, x]` - lower-dim mass balance equation;
+    #     `J[3, x]` - interface Darcy flux equation;
+    #     `J[4, x]` - contact traction equations;
+    #     `J[5, x]` - interface force balance equation;
+
+    #     This index is not equivalen to PorePy model natural ordering. Constructed when
+    #     first accessed. Encorporates the permutation `contact_permutation`.
+
+    #     """
 
     def Qright(self):
         """Assemble the right linear transformation."""
@@ -397,44 +494,51 @@ class MyPetscSolver(pp.SolutionStrategy):
     def assemble_linear_system(self) -> None:
         super().assemble_linear_system()
         mat, rhs = self.linear_system
-        # Applies the `contact_permutation`.
-        if len(self.equation_groups[4]) != 0:
-            mat = mat[self.contact_permutation]
-            rhs = rhs[self.contact_permutation]
-            self.linear_system = mat, rhs
 
-            bmat = BlockMatrixStorage(
-                mat=mat,
-                global_row_idx=self.eq_dofs,
-                global_col_idx=self.var_dofs,
-                groups_row=self.equation_groups,
-                groups_col=self.variable_groups,
-                group_row_names=[
-                    "Flow mat.",
-                    "Force mat.",
-                    "Flow frac.",
-                    "Flow intf.",
-                    "Contact frac.",
-                    "Force intf.",
-                ],
-                group_col_names=[
-                    r"$p_{3D}$",
-                    r"$u_{3D}$",
-                    r"$p_{frac}$",
-                    r"$v_{intf}$",
-                    r"$\lambda_{frac}$",
-                    r"$u_{intf}$",
-                ],
-            )
+        # # Applies the `contact_permutation`.
+        # if len(self.equation_groups[4]) != 0:
+        #     mat = mat[self.contact_permutation]
+        #     rhs = rhs[self.contact_permutation]
+        #     self.linear_system = mat, rhs
 
-            # Reordering the matrix to the order I work with, not how PorePy provides
-            # it. This is important, the solver relies on it.
-            bmat = bmat[:]
-            self.bmat = bmat
+        bmat = BlockMatrixStorage(
+            mat=mat,
+            global_row_idx=self.eq_dofs,
+            global_col_idx=self.var_dofs,
+            groups_row=self.equation_groups,
+            groups_col=self.variable_groups,
+            group_row_names=self.group_row_names(),
+            group_col_names=self.group_col_names(),
+        )
+
+        # Reordering the matrix to the order I work with, not how PorePy provides
+        # it. This is important, the solver relies on it.
+        bmat = bmat[:]
+        self.bmat = bmat
+
+    def group_row_names(self) -> list[str]:
+        return [
+            "Flow mat.",
+            "Force mat.",
+            "Flow frac.",
+            "Flow intf.",
+            "Contact frac.",
+            "Force intf.",
+        ]
+
+    def group_col_names(self) -> list[str]:
+        return [
+            r"$p_{3D}$",
+            r"$u_{3D}$",
+            r"$p_{frac}$",
+            r"$v_{intf}$",
+            r"$\lambda_{frac}$",
+            r"$u_{intf}$",
+        ]
 
     def solve_gmres(self, tol) -> np.ndarray:
         mat, rhs = self.linear_system
-        schema = make_solver_schema(self)
+        schema = self.make_solver_schema()
 
         do_left_transformation = False
         do_right_transformation = True
@@ -449,7 +553,7 @@ class MyPetscSolver(pp.SolutionStrategy):
             assert Qright.active_groups == self.bmat.active_groups
             mat_Q.mat = mat_Q.mat @ Qright.mat
 
-        mat_Q_permuted, prec = make_solver(schema, mat_Q)
+        mat_Q_permuted, prec = schema.make_solver(mat_Q)
         # Solver changes the order of groups so that the first-eliminated goes first.
 
         rhs_local = mat_Q_permuted.local_rhs(rhs)
@@ -494,9 +598,9 @@ class MyPetscSolver(pp.SolutionStrategy):
 
     def solve_richardson(self, tol) -> np.ndarray:
         mat, rhs = self.linear_system
-        schema = make_solver_schema(self)
+        schema = self.make_solver_schema()
 
-        mat_permuted, prec = make_solver(schema, self.bmat)
+        mat_permuted, prec = schema.make_solver(self.bmat)
         # Solver changes the order of groups so that the first-eliminated goes first.
 
         rhs_local = mat_permuted.local_rhs(rhs)

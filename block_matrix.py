@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Optional, Sequence
+from typing import Any, Callable, Literal, Optional, Sequence
 import itertools
 
 import seaborn as sns
@@ -9,7 +9,7 @@ import scipy.sparse
 from scipy.sparse import spmatrix, csr_matrix
 from matplotlib import pyplot as plt
 
-from mat_utils import FieldSplit, inv, cond
+from mat_utils import FieldSplit, TwoStagePreconditioner, inv, cond
 from plot_utils import plot_mat, spy
 
 
@@ -277,24 +277,24 @@ class BlockMatrixStorage:
     #     col_shape = inner(self.local_col_idx, groups_j, self.groups_col)
     #     return row_shape, col_shape
 
-    def slice_domain(self, i, j) -> spmatrix:
-        active_subgroups_i, active_subgroups_j = self.active_subgroups
-        row_idx = self.local_row_idx[active_subgroups_i[i]]
-        col_idx = self.local_col_idx[active_subgroups_j[j]]
-        I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
-        return self.mat[I, J]
+    # def slice_domain(self, i, j) -> spmatrix:
+    #     active_subgroups_i, active_subgroups_j = self.active_subgroups
+    #     row_idx = self.local_row_idx[active_subgroups_i[i]]
+    #     col_idx = self.local_col_idx[active_subgroups_j[j]]
+    #     I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
+    #     return self.mat[I, J]
 
-    def block_diag(self) -> "BlockMatrixStorage":
-        """Returns a copy. Keeps only diagonal blocks.
-        E.g. removes how one fracture affects the other."""
-        active_idx = [x for x in self.local_row_idx if x is not None]
-        bmats = []
-        for active in active_idx:
-            I, J = np.meshgrid(active, active, sparse=True, indexing="ij", copy=False)
-            bmats.append(self.mat[I, J])
-        tmp = self.empty_container()
-        tmp.mat = scipy.sparse.block_diag(bmats, format="csr")
-        return tmp
+    # def block_diag(self) -> "BlockMatrixStorage":
+    #     """Returns a copy. Keeps only diagonal blocks.
+    #     E.g. removes how one fracture affects the other."""
+    #     active_idx = [x for x in self.local_row_idx if x is not None]
+    #     bmats = []
+    #     for active in active_idx:
+    #         I, J = np.meshgrid(active, active, sparse=True, indexing="ij", copy=False)
+    #         bmats.append(self.mat[I, J])
+    #     tmp = self.empty_container()
+    #     tmp.mat = scipy.sparse.block_diag(bmats, format="csr")
+    #     return tmp
 
     def copy(self) -> "BlockMatrixStorage":
         return BlockMatrixStorage(
@@ -341,6 +341,9 @@ class BlockMatrixStorage:
         return result
 
     def local_rhs(self, global_rhs: np.ndarray) -> np.ndarray:
+        """Global rhs is the rhs arranged in the porepy model manner. This method
+        permutes and restricts the global rhs to make it match the current matrix
+        arrangement."""
         row_idx = [
             self.global_row_idx[j]
             for i in self.active_groups[0]
@@ -350,6 +353,9 @@ class BlockMatrixStorage:
         return global_rhs[row_idx]
 
     def global_rhs(self, local_rhs: np.ndarray) -> np.ndarray:
+        """Local rhs is the rhs arranged to match the current matrix. This method
+        permutes and prolongates with zeros the local rhs to restore the global
+        arrangement."""
         row_idx = np.concatenate(
             [
                 self.global_row_idx[j]
@@ -363,6 +369,7 @@ class BlockMatrixStorage:
         return result
 
     def reverse_transform_solution(self, x: np.ndarray) -> np.ndarray:
+        """The same as `global_rhs, but in the solution space."""
         col_idx = [
             self.global_col_idx[j]
             for i in self.active_groups[1]
@@ -406,17 +413,19 @@ class BlockMatrixStorage:
         return self.mat[global_i, global_j]
 
     def set_zeros(
-        self, row_idx: list[int] | int, col_idx: list[int] | int, grouped: bool = True
+        self, group_row_idx: list[int] | int, group_col_idx: list[int] | int
     ) -> None:
         """Set the values in the given block rows and columns to zeros. Does not change
         the sparsity pattern."""
-        row_idx, col_idx = self._correct_getitem_key((row_idx, col_idx))
-        all_rows, all_cols = self.get_active_local_dofs(grouped=grouped)
+        group_row_idx, group_col_idx = self._correct_getitem_key(
+            (group_row_idx, group_col_idx)
+        )
+        all_rows, all_cols = self.get_active_local_dofs(grouped=True)
 
         nonzero_idx = get_nonzero_indices(
             A=self.mat,
-            row_indices=np.concatenate([all_rows[i] for i in row_idx]),
-            col_indices=np.concatenate([all_cols[i] for i in col_idx]),
+            row_indices=np.concatenate([all_rows[i] for i in group_row_idx]),
+            col_indices=np.concatenate([all_cols[i] for i in group_col_idx]),
         )
         self.mat.data[nonzero_idx] = 0
 
@@ -583,6 +592,11 @@ class BlockMatrixStorage:
 
 
 @dataclass
+class SolveScheme:
+    pass
+
+
+@dataclass
 class FieldSplitScheme:
     groups: list[int]
     solve: callable | Literal["direct", "use_invertor"] = "direct"
@@ -609,101 +623,109 @@ class FieldSplitScheme:
             res += complement_str
         return res
 
+    def make_solver(self, mat_orig: BlockMatrixStorage):
+        groups_0 = self.groups
+        if self.complement is not None:
+            groups_1 = self.complement.get_groups()
+        else:
+            groups_1 = []
+
+        assert len(set(groups_0).intersection(groups_1)) == 0
+
+        submat_00 = mat_orig[groups_0, groups_0]
+
+        if self.color_spy:
+            submat_00.color_spy()
+            plt.show()
+        if self.compute_cond:
+            print(
+                f"Blocks: {submat_00.active_groups[0]} cond: {cond(submat_00.mat):.2e}"
+            )
+        solve = self.solve
+        invertor = self.invertor
+        if solve == "use_invertor":
+            solve = self.invertor
+            invertor = "use_solve"
+        if solve == "direct":
+            submat_00_solve = inv(submat_00.mat)
+        else:
+            submat_00_solve = solve(mat_orig)
+
+        if len(groups_1) == 0:
+            return submat_00, submat_00_solve
+
+        submat_10 = mat_orig[groups_1, groups_0]
+        submat_01 = mat_orig[groups_0, groups_1]
+        submat_11 = mat_orig[groups_1, groups_1]
+
+        if self.invertor_type == "physical":
+            submat_11.mat += invertor(mat_orig)
+
+        elif self.invertor_type == "operator":
+            submat_11.mat = invertor(mat_orig)
+
+        elif self.invertor_type == "algebraic":
+            if invertor == "use_solve":
+                submat_00_inv = submat_00_solve
+            elif invertor == "direct":
+                submat_00_inv = inv(submat_00.mat)
+            else:
+                submat_00_inv = invertor(mat_orig)
+
+            submat_11.mat -= submat_10.mat @ submat_00_inv @ submat_01.mat
+
+        elif self.invertor_type == "test_vector":
+            if invertor == "use_solve":
+                submat_00_inv = submat_00_solve
+            elif invertor == "direct":
+                submat_00_inv = inv(submat_00.mat)
+            else:
+                submat_00_inv = invertor(mat_orig)
+
+            test_vector = np.ones(submat_11.shape[0])
+            diag_approx = submat_10.mat @ submat_00_inv.dot(submat_01.mat @ test_vector)
+            submat_11.mat -= scipy.sparse.diags(diag_approx)
+
+        else:
+            raise ValueError(f"{self.invertor_type=}")
+
+        complement_mat, complement_solve = self.complement.make_solver(submat_11)
+        if self.only_complement:
+            print("Returning only Schur complement based on", groups_1)
+            return complement_mat, complement_solve
+
+        mat_permuted = mat_orig[groups_0 + groups_1, groups_0 + groups_1]
+
+        assert self.factorization_type in ("upper", "lower", "full")
+
+        prec = FieldSplit(
+            solve_momentum=submat_00_solve,
+            solve_mass=complement_solve,
+            C1=submat_10.mat,
+            C2=submat_01.mat,
+            groups_0=groups_0,
+            groups_1=groups_1,
+            factorization_type=self.factorization_type,
+        )
+        return mat_permuted, prec
+
+    def get_groups(self) -> list[int]:
+        groups = [g for g in self.groups]
+        if self.complement is not None:
+            groups.extend(self.complement.get_groups())
+        return groups
+
 
 @dataclass
 class MultiStageScheme:
-    stages: list[FieldSplitScheme]
+    stages: list[Callable[[BlockMatrixStorage], Any]]
+    groups: list[int]
 
+    def make_solver(self, mat_orig: BlockMatrixStorage):
+        return mat_orig, TwoStagePreconditioner(
+            mat_orig,
+            stages=[stage(mat_orig) for stage in self.stages],
+        )
 
-def get_complement_groups(schema: FieldSplitScheme):
-    res = []
-    if schema.complement is not None:
-        res.extend(schema.complement.groups)
-        res.extend(get_complement_groups(schema=schema.complement))
-    return res
-
-
-def make_solver(schema: FieldSplitScheme, mat_orig: BlockMatrixStorage):
-    groups_0 = schema.groups
-    groups_1 = get_complement_groups(schema)
-
-    assert len(set(groups_0).intersection(groups_1)) == 0
-
-    submat_00 = mat_orig[groups_0, groups_0]
-
-    if schema.color_spy:
-        submat_00.color_spy()
-        plt.show()
-    if schema.compute_cond:
-        print(f"Blocks: {submat_00.active_groups[0]} cond: {cond(submat_00.mat):.2e}")
-    solve = schema.solve
-    invertor = schema.invertor
-    if solve == "use_invertor":
-        solve = schema.invertor
-        invertor = "use_solve"
-    if solve == "direct":
-        submat_00_solve = inv(submat_00.mat)
-    else:
-        submat_00_solve = solve(mat_orig)
-
-    if len(groups_1) == 0:
-        return submat_00, submat_00_solve
-
-    submat_10 = mat_orig[groups_1, groups_0]
-    submat_01 = mat_orig[groups_0, groups_1]
-    submat_11 = mat_orig[groups_1, groups_1]
-
-    if schema.invertor_type == "physical":
-        submat_11.mat += invertor(mat_orig)
-
-    elif schema.invertor_type == "operator":
-        submat_11.mat = invertor(mat_orig)
-
-    elif schema.invertor_type == "algebraic":
-        if invertor == "use_solve":
-            submat_00_inv = submat_00_solve
-        elif invertor == "direct":
-            submat_00_inv = inv(submat_00.mat)
-        else:
-            submat_00_inv = invertor(mat_orig)
-
-        submat_11.mat -= submat_10.mat @ submat_00_inv @ submat_01.mat
-
-    elif schema.invertor_type == "test_vector":
-        if invertor == "use_solve":
-            submat_00_inv = submat_00_solve
-        elif invertor == "direct":
-            submat_00_inv = inv(submat_00.mat)
-        else:
-            submat_00_inv = invertor(mat_orig)
-
-        test_vector = np.ones(submat_11.shape[0])
-        diag_approx = submat_10.mat @ submat_00_inv.dot(submat_01.mat @ test_vector)
-        submat_11.mat -= scipy.sparse.diags(diag_approx)
-
-    # elif schme.invertor_type == 'block_test_vector'
-
-    else:
-        raise ValueError(f"{schema.invertor_type=}")
-
-    complement_mat, complement_solve = make_solver(
-        schema=schema.complement, mat_orig=submat_11
-    )
-    if schema.only_complement:
-        print("Returning only Schur complement based on", groups_1)
-        return complement_mat, complement_solve
-
-    mat_permuted = mat_orig[groups_0 + groups_1, groups_0 + groups_1]
-
-    assert schema.factorization_type in ("upper", "lower", "full")
-
-    prec = FieldSplit(
-        solve_momentum=submat_00_solve,
-        solve_mass=complement_solve,
-        C1=submat_10.mat,
-        C2=submat_01.mat,
-        groups_0=groups_0,
-        groups_1=groups_1,
-        factorization_type=schema.factorization_type,
-    )
-    return mat_permuted, prec
+    def get_groups(self) -> list[int]:
+        return self.groups

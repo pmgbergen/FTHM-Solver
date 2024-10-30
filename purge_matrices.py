@@ -10,7 +10,15 @@ data_dir = Path('./matrices')
 
 for stats_file in os.listdir(stats_dir):
     stats = load_data(stats_dir / stats_file)
-    if not isinstance(stats[0], TimeStepStats):
+    skip = False
+    try:
+        stats[0]
+    except KeyError:
+        skip = True
+    else:
+        skip = not isinstance(stats[0], TimeStepStats)
+
+    if skip:
         print('Skipping', stats_file)
         continue
     for ts in stats:

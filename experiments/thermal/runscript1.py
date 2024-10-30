@@ -58,14 +58,14 @@ def experiment_1_grid_refinement():
     #             }
     #         )
     for grid_refinement in [
-        1,
+        # 1,
         # 2,
         # 3,
         # 4,
         # 5,
         # 6,
         # 10,
-        # 33,
+        33,
     ]:
         setups.append(
             {
@@ -74,7 +74,7 @@ def experiment_1_grid_refinement():
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": grid_refinement,
-                "solver": 0,
+                "solver": 2,
                 "save_matrix": True,
             }
         )

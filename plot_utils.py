@@ -3,7 +3,7 @@ import json
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, Sequence
+from typing import TYPE_CHECKING, Literal, Sequence
 
 import matplotlib as mpl
 import numpy as np
@@ -16,12 +16,11 @@ from numpy.linalg import norm
 from pyamg.krylov import gmres
 from scipy.sparse import bmat
 from scipy.sparse.linalg import LinearOperator  # , gmres, bicgstab
-from tqdm import tqdm
 
 from stats import LinearSolveStats
 
 if TYPE_CHECKING:
-    from block_matrix import FieldSplitScheme, BlockMatrixStorage
+    from block_matrix import FieldSplitScheme, MultiStageScheme, BlockMatrixStorage
 
 from mat_utils import PetscGMRES, PetscRichardson, condest, eigs
 from stats import TimeStepStats
@@ -700,7 +699,7 @@ def get_rhs_norms(model: pp.SolutionStrategy, data: Sequence[TimeStepStats], ord
 
 def solve_petsc_new(
     mat: "BlockMatrixStorage",
-    solve_schema: "FieldSplitScheme" = None,
+    solve_schema: "FieldSplitScheme | MultiStageScheme" = None,
     prec=None,
     rhs_global=None,
     label="",
@@ -715,8 +714,6 @@ def solve_petsc_new(
     restrict_indices: list[int] = None,
     use_richardson: bool = False,
 ):
-    from block_matrix import make_solver
-
     mat_Q = mat.copy()
     if Qleft is not None:
         assert Qleft.active_groups == mat.active_groups
@@ -730,7 +727,7 @@ def solve_petsc_new(
     if solve_schema is None and prec is not None:
         mat_permuted = mat_Q
     elif solve_schema is not None and prec is None:
-        mat_permuted, prec = make_solver(solve_schema, mat_Q)
+        mat_permuted, prec = solve_schema.make_solver(mat_Q)
     else:
         raise ValueError
 
@@ -845,7 +842,7 @@ def write_dofs_info(model):
     model.prepare_simulation()
     model.assemble_linear_system()
     data = dict()
-    for i in range(6):
+    for i in range(len(model.bmat.active_groups[0])):
         data[f"block {i}"] = model.bmat[0, i].shape[1]
     cell_volumes = np.concatenate(
         [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]

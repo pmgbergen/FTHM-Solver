@@ -1,6 +1,5 @@
 import sys
-import time
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
 from numba import njit
@@ -8,6 +7,9 @@ import petsc4py
 import scipy.linalg
 import scipy.sparse
 import scipy.sparse.linalg
+
+if TYPE_CHECKING:
+    from block_matrix import BlockMatrixStorage
 
 petsc4py.init(sys.argv)
 
@@ -62,6 +64,34 @@ class FieldSplit:
             tmp_2 = tmp_0
         y[: self.sep] = tmp_2
         return y
+
+
+class RestrictedOperator:
+
+    def __init__(self, mat: "BlockMatrixStorage", to_groups: list, prec):
+        self.R = mat.make_restriction_matrix(to_groups).mat
+        self.prec = prec(mat[to_groups])
+        self.shape = mat.shape
+
+    def dot(self, x: np.ndarray) -> np.ndarray:
+        x_local = self.R @ x
+        y_local = self.prec.dot(x_local)
+        return self.R.T @ y_local
+
+
+class TwoStagePreconditioner:
+
+    def __init__(self, mat: "BlockMatrixStorage", stages: list):
+        assert len(stages) == 2
+        self.mat: "BlockMatrixStorage" = mat
+        self.shape = mat.shape
+        self.stages: list = stages
+
+    def dot(self, x: np.ndarray) -> np.ndarray:
+        y1 = self.stages[0].dot(x)
+        r1 = x - self.mat.mat.dot(y1)
+        y2 = self.stages[1].dot(r1)
+        return y1 + y2
 
 
 class BlockJacobi:

@@ -1,7 +1,8 @@
 from functools import cached_property
-from block_matrix import BlockMatrixStorage, FieldSplitScheme
+from block_matrix import BlockMatrixStorage, FieldSplitScheme, MultiStageScheme
 from fixed_stress import make_fs_analytical
 from mat_utils import (
+    RestrictedOperator,
     extract_diag_inv,
     inv_block_diag,
     PetscAMGFlow,
@@ -19,49 +20,32 @@ import porepy as pp
 
 
 class ThermalSolver(MyPetscSolver):
-    def assemble_linear_system(self) -> None:
-        pp.SolutionStrategy.assemble_linear_system(self)  # TODO
-        mat, rhs = self.linear_system
-        # Applies the `contact_permutation`.
-        if len(self.equation_groups[4]) != 0:
-            mat = mat[self.contact_permutation]
-            rhs = rhs[self.contact_permutation]
-            self.linear_system = mat, rhs
 
-            bmat = BlockMatrixStorage(
-                mat=mat,
-                global_row_idx=self.eq_dofs,
-                global_col_idx=self.var_dofs,
-                groups_row=self.equation_groups,
-                groups_col=self.variable_groups,
-                group_row_names=[
-                    "Flow mat.",
-                    "Force mat.",
-                    "Flow frac.",
-                    "Flow intf.",
-                    "Contact frac.",
-                    "Force intf.",
-                    "Energy mat.",
-                    "Energy frac.",
-                    "Energy intf.",
-                ],
-                group_col_names=[
-                    r"$p_{3D}$",
-                    r"$u_{3D}$",
-                    r"$p_{frac}$",
-                    r"$v_{intf}$",
-                    r"$\lambda_{frac}$",
-                    r"$u_{intf}$",
-                    "$T_{3D}$",
-                    "$T_{frac}$",
-                    "$T_{intf}$",
-                ],
-            )
+    def group_row_names(self) -> list[str]:
+        return [
+            "Flow mat.",
+            "Force mat.",
+            "Flow frac.",
+            "Flow intf.",
+            "Contact frac.",
+            "Force intf.",
+            "Energy mat.",
+            "Energy frac.",
+            "Energy intf.",
+        ]
 
-            # Reordering the matrix to the order I work with, not how PorePy provides
-            # it. This is important, the solver relies on it.
-            bmat = bmat[:]
-            self.bmat = bmat
+    def group_col_names(self) -> list[str]:
+        return [
+            r"$p_{3D}$",
+            r"$u_{3D}$",
+            r"$p_{frac}$",
+            r"$v_{intf}$",
+            r"$\lambda_{frac}$",
+            r"$u_{intf}$",
+            "$T_{3D}$",
+            "$T_{frac}$",
+            "$T_{intf}$",
+        ]
 
     @cached_property
     def variable_groups(model) -> list[list[int]]:
@@ -157,29 +141,35 @@ class ThermalSolver(MyPetscSolver):
                     solve=lambda bmat: PetscILU(bmat[[3]].mat),
                     invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
                     complement=FieldSplitScheme(
-                        # Eliminate elasticity. Use AMG to solve linear systems and fixed
-                        # stress to approximate inverse.
-                        groups=[1, 5],
-                        solve=lambda bmat: PetscAMGMechanics(
-                            mat=bmat[[1, 5]].mat,
-                            dim=self.nd,
-                            null_space=build_mechanics_near_null_space(self),
-                        ),
-                        invertor_type="physical",
-                        invertor=lambda bmat: make_fs_analytical(self, bmat).mat,
+                        # Eliminate interface temperature
+                        # Use diag() to approximate inverse and ILU to solve linear systems
+                        groups=[8],
+                        solve=lambda bmat: PetscILU(bmat[[8]].mat),
+                        invertor=lambda bmat: extract_diag_inv(bmat[[8]].mat),
                         complement=FieldSplitScheme(
-                            # Use AMG to solve mass balance.
-                            groups=[0, 2],
-                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
-                            complement=FieldSplitScheme(
-                                groups=[8],
-                                solve=lambda bmat: inv_block_diag(
-                                    bmat[[8]].mat, nd=self.nd, lump=True
-                                ),
-                                complement=FieldSplitScheme(
-                                    groups=[6, 7],
-                                    solve=lambda bmat: PetscAMGFlow(bmat[[6, 7]].mat),
-                                ),
+                            # Eliminate elasticity. Use AMG to solve linear systems and fixed
+                            # stress to approximate inverse.
+                            groups=[1, 5],
+                            solve=lambda bmat: PetscAMGMechanics(
+                                mat=bmat[[1, 5]].mat,
+                                dim=self.nd,
+                                null_space=build_mechanics_near_null_space(self),
+                            ),
+                            invertor_type="physical",
+                            invertor=lambda bmat: make_fs_analytical(
+                                self, bmat, blocks=[0, 2, 6, 7]
+                            ).mat,
+                            complement=MultiStageScheme(
+                                # CPR for P-T coupling
+                                groups=[0, 2, 6, 7],
+                                stages=[
+                                    lambda bmat: RestrictedOperator(
+                                        bmat,
+                                        to_groups=[0, 2],
+                                        prec=lambda bmat: PetscAMGFlow(bmat.mat),
+                                    ),
+                                    lambda bmat: PetscILU(bmat.mat),
+                                ],
                             ),
                         ),
                     ),
