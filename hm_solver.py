@@ -1,9 +1,13 @@
 from functools import cached_property
 import sys
 from typing import Sequence
-from block_matrix import BlockMatrixStorage, FieldSplitScheme
+from block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 from fixed_stress import make_fs_analytical
-from iterative_solver import IterativeLinearSolver, get_equations_group_ids, get_variables_group_ids
+from iterative_solver import (
+    IterativeLinearSolver,
+    get_equations_group_ids,
+    get_variables_group_ids,
+)
 
 import numpy as np
 import scipy.sparse
@@ -23,26 +27,26 @@ from mat_utils import (
 
 class IterativeHMSolver(IterativeLinearSolver):
 
-    CONTACT_GROUP = 4
+    CONTACT_GROUP = 0
 
     def group_row_names(self) -> list[str]:
         return [
-            "Flow mat.",
-            "Force mat.",
-            "Flow frac.",
-            "Flow intf.",
             "Contact frac.",
+            "Flow intf.",
+            "Force mat.",
             "Force intf.",
+            "Flow mat.",
+            "Flow frac.",
         ]
 
     def group_col_names(self) -> list[str]:
         return [
-            r"$p_{3D}$",
-            r"$u_{3D}$",
-            r"$p_{frac}$",
-            r"$v_{intf}$",
             r"$\lambda_{frac}$",
+            r"$v_{intf}$",
+            r"$u_{3D}$",
             r"$u_{intf}$",
+            r"$p_{3D}$",
+            r"$p_{frac}$",
         ]
 
     @cached_property
@@ -73,12 +77,12 @@ class IterativeHMSolver(IterativeLinearSolver):
         return get_variables_group_ids(
             model=self,
             md_variables_groups=[
-                [self.pressure(sd_ambient)],  # 0
-                [self.displacement(sd_ambient)],  # 1
-                [self.pressure(sd_lower)],  # 2
-                [self.interface_darcy_flux(intf)],  # 3
-                [self.contact_traction(sd_frac)],  # 4
-                [self.interface_displacement(intf_frac)],  # 5
+                [self.contact_traction(sd_frac)],  # 0
+                [self.interface_darcy_flux(intf)],  # 1
+                [self.displacement(sd_ambient)],  # 2
+                [self.interface_displacement(intf_frac)],  # 3
+                [self.pressure(sd_ambient)],  # 4
+                [self.pressure(sd_lower)],  # 5
             ],
         )
 
@@ -109,15 +113,15 @@ class IterativeHMSolver(IterativeLinearSolver):
             equation_groups=get_equations_group_ids(
                 model=self,
                 equations_group_order=[
-                    [("mass_balance_equation", sd_ambient)],  # 0
-                    [("momentum_balance_equation", sd_ambient)],  # 1
-                    [("mass_balance_equation", sd_lower)],  # 2
-                    [("interface_darcy_flux_equation", intf)],  # 3
-                    [
-                        ("normal_fracture_deformation_equation", sd_lower),  # 4
+                    [  # 0
+                        ("normal_fracture_deformation_equation", sd_lower),
                         ("tangential_fracture_deformation_equation", sd_lower),
                     ],
-                    [("interface_force_balance_equation", intf)],  # 5
+                    [("interface_darcy_flux_equation", intf)],  # 1
+                    [("momentum_balance_equation", sd_ambient)],  # 2
+                    [("interface_force_balance_equation", intf)],  # 3
+                    [("mass_balance_equation", sd_ambient)],  # 4
+                    [("mass_balance_equation", sd_lower)],  # 5
                 ],
             ),
             contact_group=self.CONTACT_GROUP,
@@ -198,27 +202,42 @@ class IterativeHMSolver(IterativeLinearSolver):
                     blocks[i] -= num_fracs
         return eq_groups_corrected
 
-    def Qright(self) -> BlockMatrixStorage:
+    def Qright(self, contact_group: int, u_intf_group: int) -> BlockMatrixStorage:
         """Assemble the right linear transformation."""
         J = self.bmat
-        J55_inv = inv_block_diag(J[5, 5].mat, nd=self.nd, lump=False)
-        Qright = J.empty_container()
+        J55_inv = inv_block_diag(
+            J[u_intf_group, u_intf_group].mat, nd=self.nd, lump=False
+        )
+        # Sorted according to groups. If not done, the matrix can be in porepy order,
+        # which does not guarantee that diagonal groups are truly on diagonals.
+        Qright = J.empty_container()[:]
         Qright.mat = csr_ones(Qright.shape[0])
-        Qright[5, 4] = -J55_inv @ J[5, 4].mat
+        Qright[u_intf_group, contact_group] = (
+            -J55_inv @ J[u_intf_group, contact_group].mat
+        )
 
-        E = (scipy.sparse.eye(J55_inv.shape[0]) - J[5, 5].mat @ J55_inv) @ J[5, 4].mat
+        E = (
+            scipy.sparse.eye(J55_inv.shape[0])
+            - J[u_intf_group, u_intf_group].mat @ J55_inv
+        ) @ J[u_intf_group, contact_group].mat
         self._linear_solve_stats.error_matrix_contribution = (
-            abs(E.data).max() / abs(J[5, 4].mat.data).max()
+            abs(E.data).max() / abs(J[u_intf_group, contact_group].mat.data).max()
         )
         return Qright
 
-    def Qleft(self) -> BlockMatrixStorage:
+    def Qleft(self, contact_group: int, u_intf_group: int) -> BlockMatrixStorage:
         """Assemble the left linear transformation."""
         J = self.bmat
-        J55_inv = inv_block_diag(J[5, 5].mat, nd=self.nd, lump=False)
-        Qleft = J.empty_container()
+        J55_inv = inv_block_diag(
+            J[u_intf_group, u_intf_group].mat, nd=self.nd, lump=False
+        )
+        # Sorted according to groups. If not done, the matrix can be in porepy order,
+        # which does not guarantee that diagonal groups are truly on diagonals.
+        Qleft = J.empty_container()[:]
         Qleft.mat = csr_ones(Qleft.shape[0])
-        Qleft[4, 5] = -J[4, 5].mat @ J55_inv
+        Qleft[contact_group, u_intf_group] = (
+            -J[contact_group, u_intf_group].mat @ J55_inv
+        )
         return Qleft
 
     def assemble_linear_system(self) -> None:
@@ -231,105 +250,6 @@ class IterativeHMSolver(IterativeLinearSolver):
         self.bmat.mat = mat
         self.linear_system = mat, rhs
 
-    def solve_gmres(self, tol) -> np.ndarray:
-        mat, rhs = self.linear_system
-        schema = self.make_solver_scheme()
-
-        do_left_transformation = False
-        do_right_transformation = True
-
-        # Rearrange the matrix according to the groups. For some reason, it is important
-        # and without it does not work. Did not find exactly why, but this is related to
-        # the linear transformations.
-        self.bmat = self.bmat[:]
-
-        mat_Q = self.bmat.copy()  # Transformed J
-        if do_left_transformation:
-            Qleft = self.Qleft()
-            assert Qleft.active_groups == self.bmat.active_groups
-            mat_Q.mat = Qleft.mat @ mat_Q.mat
-        if do_right_transformation:
-            Qright = self.Qright()
-            assert Qright.active_groups == self.bmat.active_groups
-            mat_Q.mat = mat_Q.mat @ Qright.mat
-
-        mat_Q_permuted, prec = schema.make_solver(mat_Q)
-        # Solver changes the order of groups so that the first-eliminated goes first.
-
-        rhs_local = mat_Q_permuted.project_rhs_to_local(rhs)
-        # Permute the rhs groups according to the solver.
-
-        rhs_Q = rhs_local.copy()  # If Qleft is used, need to transform the rhs.
-        if do_left_transformation:
-            # Transform Qleft groups according to the solver.
-            Qleft = Qleft[mat_Q_permuted.active_groups]
-            rhs_Q = Qleft.mat @ rhs_Q
-
-        gmres_ = PetscGMRES(
-            mat=mat_Q_permuted.mat,
-            pc=prec,
-            pc_side="right",
-            tol=tol,
-        )
-        sol_Q = gmres_.solve(rhs_Q)
-        info = gmres_.ksp.getConvergedReason()
-
-        # Reverse transformations
-        if do_right_transformation:
-            Qright = Qright[mat_Q_permuted.active_groups]
-            sol = mat_Q_permuted.project_solution_to_global(Qright.mat @ sol_Q)
-        else:
-            sol = mat_Q_permuted.project_solution_to_global(sol_Q)
-
-        # Verify that the original problem is solved and we did not do anything wrong.
-        true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
-
-        if info <= 0:
-            print(f"GMRES failed, {info=}", file=sys.stderr)
-            if info == -9:
-                sol[:] = np.nan
-        else:
-            if true_residual_nrm_drop >= 1:
-                print("True residual did not decrease")
-
-        self._linear_solve_stats.petsc_converged_reason = info
-        self._linear_solve_stats.krylov_iters = len(gmres_.get_residuals())
-        return np.atleast_1d(sol)
-
-    def solve_richardson(self, tol) -> np.ndarray:
-        mat, rhs = self.linear_system
-        schema = self.make_solver_scheme()
-
-        mat_permuted, prec = schema.make_solver(self.bmat)
-        # Solver changes the order of groups so that the first-eliminated goes first.
-
-        rhs_local = mat_permuted.project_rhs_to_local(rhs)
-        # Permute the rhs groups according to the solver.
-
-        richardson = PetscRichardson(
-            mat=mat_permuted.mat, pc=prec, pc_side="left", tol=tol, atol=1e-8
-        )
-
-        sol_local = richardson.solve(rhs_local)
-        info = richardson.ksp.getConvergedReason()
-
-        sol = mat_permuted.project_solution_to_global(sol_local)
-
-        # Verify that the original problem is solved and we did not do anything wrong.
-        true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
-
-        if info <= 0:
-            print(f"Richardson failed, {info=}", file=sys.stderr)
-            if info == -9:
-                sol[:] = np.nan
-        else:
-            if true_residual_nrm_drop >= 1:
-                print("True residual did not decrease")
-
-        self._linear_solve_stats.petsc_converged_reason = info
-        self._linear_solve_stats.krylov_iters = len(richardson.get_residuals())
-        return np.atleast_1d(sol)
-
     def solve_linear_system(self) -> np.ndarray:
         rhs = self.linear_system[1]
         if not np.all(np.isfinite(rhs)):
@@ -338,94 +258,117 @@ class IterativeHMSolver(IterativeLinearSolver):
             result[:] = np.nan
             return result
 
-        tol = 1e-8
-
         solver_type = self.params["setup"]["solver"]
         direct = solver_type == 0
-        richardson = solver_type in [1]
-        gmres = solver_type in [2, 11, 12]
         if direct:
             return scipy.sparse.linalg.spsolve(*self.linear_system)
-        elif richardson:
-            return self.solve_richardson(tol=tol)
-        elif gmres:
-            return self.solve_gmres(tol=tol)
-        raise ValueError
+        else:
+            return super().solve_linear_system()
 
     def make_solver_scheme(self) -> FieldSplitScheme:
         solver_type = self.params["setup"]["solver"]
 
         if solver_type in [1, 11]:  # Theoretical solver.
-            return FieldSplitScheme(
+            prec = FieldSplitScheme(
                 # Exactly solve elasticity and contact mechanics, build fixed stress.
-                groups=[1, 4, 5],
+                groups=[0, 2, 3],
                 invertor=lambda bmat: make_fs_analytical(
-                    self, bmat, blocks=[0, 2, 3]
+                    self, bmat, p_mat_group=4, p_frac_group=5, groups=[1, 4, 5]
                 ).mat,
                 invertor_type="physical",
                 complement=FieldSplitScheme(
-                    groups=[0, 2, 3],
+                    groups=[1, 4, 5],
                 ),
             )
 
         elif solver_type == 2:  # Scalable solver.
-            return FieldSplitScheme(
+            prec = FieldSplitScheme(
                 # Exactly eliminate contact mechanics (assuming linearly-transformed system)
-                groups=[4],
-                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
+                groups=[0],
+                solve=lambda bmat: inv_block_diag(mat=bmat[[0]].mat, nd=self.nd),
                 complement=FieldSplitScheme(
-                    # Eliminate interface flow, it is not coupled with (1, 4, 5)
+                    # Eliminate interface flow,
                     # Use diag() to approximate inverse and ILU to solve linear systems
-                    groups=[3],
-                    solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                    groups=[1],
+                    solve=lambda bmat: PetscILU(bmat[[1]].mat),
+                    invertor=lambda bmat: extract_diag_inv(bmat[[1]].mat),
                     complement=FieldSplitScheme(
                         # Eliminate elasticity. Use AMG to solve linear systems and fixed
                         # stress to approximate inverse.
-                        groups=[1, 5],
+                        groups=[2, 3],
                         solve=lambda bmat: PetscAMGMechanics(
-                            mat=bmat[[1, 5]].mat,
+                            mat=bmat[[2, 3]].mat,
                             dim=self.nd,
                             null_space=build_mechanics_near_null_space(self),
                         ),
                         invertor_type="physical",
-                        invertor=lambda bmat: make_fs_analytical(self, bmat).mat,
+                        invertor=lambda bmat: make_fs_analytical(
+                            self, bmat, p_mat_group=4, p_frac_group=5
+                        ).mat,
                         complement=FieldSplitScheme(
                             # Use AMG to solve mass balance.
-                            groups=[0, 2],
-                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[0, 2]].mat),
+                            groups=[4, 5],
+                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[4, 5]].mat),
                         ),
                     ),
                 ),
             )
 
         elif solver_type == 12:
-            return FieldSplitScheme(
+            prec = FieldSplitScheme(
                 # Exactly eliminate contact mechanics (assuming linearly-transformed system)
-                groups=[4],
-                solve=lambda bmat: inv_block_diag(mat=bmat[[4]].mat, nd=self.nd),
+                groups=[0],
+                solve=lambda bmat: inv_block_diag(mat=bmat[[0]].mat, nd=self.nd),
                 complement=FieldSplitScheme(
-                    # Eliminate interface flow, it is not coupled with (1, 4, 5)
+                    # Eliminate interface flow,
                     # Use diag() to approximate inverse and ILU to solve linear systems
-                    groups=[3],
-                    solve=lambda bmat: PetscILU(bmat[[3]].mat),
-                    invertor=lambda bmat: extract_diag_inv(bmat[[3]].mat),
+                    groups=[1],
+                    solve=lambda bmat: PetscILU(bmat[[1]].mat),
+                    invertor=lambda bmat: extract_diag_inv(bmat[[1]].mat),
                     complement=FieldSplitScheme(
                         # TODO
-                        groups=[1, 5],
+                        groups=[2, 3],
                         solve="direct",
                         invertor_type="physical",
-                        invertor=lambda bmat: make_fs_analytical(self, bmat).mat,
+                        invertor=lambda bmat: make_fs_analytical(
+                            self, bmat, p_mat_group=4, p_frac_group=5
+                        ).mat,
                         complement=FieldSplitScheme(
                             # TODO
-                            groups=[0, 2],
+                            groups=[4, 5],
                             solve="direct",
                         ),
                     ),
                 ),
             )
+        else:
+            raise ValueError(f"{solver_type}")
 
-        raise ValueError(f"{solver_type}")
+        if solver_type == 1:
+            return KSPScheme(
+                ksp="richardson",
+                preconditioner=prec,
+                atol=1e-8,
+                rtol=1e-8,
+                pc_side="left",
+                right_transformations=[
+                    lambda bmat: self.Qright(
+                        contact_group=self.CONTACT_GROUP, u_intf_group=3
+                    )
+                ],
+            )
+        else:
+            return KSPScheme(
+                ksp="gmres",
+                preconditioner=prec,
+                rtol=1e-8,
+                pc_side="right",
+                right_transformations=[
+                    lambda bmat: self.Qright(
+                        contact_group=self.CONTACT_GROUP, u_intf_group=3
+                    )
+                ],
+            )
 
 
 def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.ndarray:
@@ -465,11 +408,13 @@ def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.nda
     return reorder
 
 
-def build_mechanics_near_null_space(model: IterativeHMSolver, groups=(1, 5)):
+def build_mechanics_near_null_space(
+    model: IterativeHMSolver, include_sd=True, include_intf=True
+):
     cell_centers = []
-    if 1 in groups:
+    if include_sd:
         cell_centers.append(model.mdg.subdomains(dim=model.nd)[0].cell_centers)
-    if 5 in groups:
+    if include_intf:
         cell_centers.extend(
             [intf.cell_centers for intf in model.mdg.interfaces(dim=model.nd - 1)]
         )

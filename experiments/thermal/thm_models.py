@@ -298,12 +298,12 @@ def make_model(setup: dict):
                 # t = self.temperature(self.mdg.subdomains()).value(self.equation_system)
                 # print(f"{min(t) }, {max(t) }")
 
-                # 3072
-                frac = self.mdg.subdomains(dim=self.nd-1)
-                intersec = self.mdg.subdomains(dim=self.nd-2)
-                # self.energy_balance_equation(intersec)
+                # # 3072
+                # frac = self.mdg.subdomains(dim=self.nd-1)
+                # intersec = self.mdg.subdomains(dim=self.nd-2)
+                # # self.energy_balance_equation(intersec)
 
-                self.mass_balance_equation(frac + intersec)
+                # self.mass_balance_equation(frac + intersec)
 
                 super().before_nonlinear_iteration()
 

@@ -204,33 +204,6 @@ def condest(mat):
     return data.max() / data.min()
 
 
-class UpperBlockPreconditioner:
-
-    def __init__(self, F_inv, Omega_inv, Phi):
-        self.F_inv = F_inv
-        self.Omega_inv = Omega_inv
-        self.Phi = Phi
-        shape = F_inv.shape[0] + Omega_inv.shape[0]
-        self.shape = shape, shape
-        self.sep = F_inv.shape[0]
-
-    def dot(self, x):
-        x_K, x_Omega = x[: self.sep], x[self.sep :]
-        y = np.zeros_like(x)
-        y_Omega = self.Omega_inv.dot(x_Omega)
-        tmp = x_K - self.Phi.dot(y_Omega)
-        y[: self.sep] = self.F_inv.dot(tmp)
-        y[self.sep :] = y_Omega
-        return y
-
-
-def make_permutations(row_dof, order):
-    indices = np.concatenate([row_dof[i] for i in order])
-    perm = scipy.sparse.eye(indices.size).tocsr()
-    perm.indices[:] = indices
-    return perm
-
-
 class PetscPC:
     def __init__(self, mat=None, block_size=1, null_space: np.ndarray = None) -> None:
         self.pc = PETSc.PC().create()
@@ -387,7 +360,7 @@ class PetscKrylovSolver:
         tol=1e-10,
         atol=1e-10,
     ) -> None:
-        options = make_сlear_petsc_options()
+        options = PETSc.Options()
         options.setValue("ksp_divtol", 1e10)
         options.setValue("ksp_atol", atol)
         options.setValue("ksp_rtol", tol)
@@ -445,6 +418,7 @@ class PetscGMRES(PetscKrylovSolver):
         tol=1e-10,
         pc_side: Literal["left", "right"] = "right",
     ) -> None:
+        self.mat = mat
         restart = 20
 
         options = make_сlear_petsc_options()
@@ -646,10 +620,68 @@ def inv_block_diag_3x3(mat):
     return scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)
 
 
-def make_scaling(bmat: "BlockMatrixStorage") -> "BlockMatrixStorage":
+def make_scaling(bmat: "BlockMatrixStorage", scale_groups: list[int] = None) -> "BlockMatrixStorage":
+    if scale_groups is None:
+        scale_groups = bmat.active_groups[0]
     R = bmat.empty_container()
     assert R.active_groups[0] == R.active_groups[1]
     for i in R.active_groups[0]:
         tmp = bmat[i, i].mat
-        R[i, i] = scipy.sparse.eye(*tmp.shape) / abs(tmp).max()
+        vals = scipy.sparse.eye(*tmp.shape)
+        if i in scale_groups:
+            vals /= abs(tmp).max()
+        R[i, i] = vals
     return R
+
+
+class RearrangeAOS:
+
+    def __init__(
+        self, bmat: "BlockMatrixStorage", solve, together: list[list[int]] = None
+    ):
+        if together is None:
+            together = [[i] for i in bmat.active_groups[0]]
+
+        row_dofs = []
+        col_dofs = []
+        for groups in together:
+            row_dofs.append(
+                np.concatenate(
+                    [
+                        bmat.local_dofs_row[block]
+                        for group in groups
+                        for block in bmat.groups_to_blocks_row[group]
+                    ]
+                )
+            )
+            col_dofs.append(
+                np.concatenate(
+                    [
+                        bmat.local_dofs_col[block]
+                        for group in groups
+                        for block in bmat.groups_to_blocks_col[group]
+                    ]
+                )
+            )
+
+        row_transformation = np.stack(row_dofs).ravel(order="F")
+        self.Rrow = scipy.sparse.coo_matrix(
+            (
+                np.ones_like(row_transformation),
+                (np.arange(row_transformation.size), row_transformation),
+            )
+        ).tocsr()
+        col_transformation = np.stack(col_dofs).ravel(order="F")
+        self.Rcol = scipy.sparse.coo_matrix(
+            (
+                np.ones_like(col_transformation),
+                (col_transformation, np.arange(col_transformation.size)),
+            )
+        ).tocsr()
+        self.solve = solve(self.Rrow @ bmat.mat @ self.Rcol)
+
+    def dot(self, rhs) -> np.ndarray:
+        rhs_transformed = self.Rrow @ rhs
+        x_transformed = self.solve.dot(rhs_transformed)
+        x = self.Rcol @ x_transformed
+        return x

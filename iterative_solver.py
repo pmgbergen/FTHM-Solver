@@ -93,8 +93,6 @@ class IterativeLinearSolver(pp.SolutionStrategy):
             group_names_col=self.group_col_names(),
         )
 
-        # # Reordering the matrix to the order we work with, not how PorePy provides it.
-        # bmat = bmat[:]
         self.bmat = bmat
 
     def solve_linear_system(self) -> np.ndarray:
@@ -105,23 +103,20 @@ class IterativeLinearSolver(pp.SolutionStrategy):
             result = np.zeros_like(rhs)
             result[:] = np.nan
             return result
-
-        # Constructing the solver scheme.
+        
         scheme = self.make_solver_scheme()
-
-        # Solver changes the order of groups so that the first-eliminated goes first.
-        mat_permuted, prec = scheme.make_solver(self.bmat)
+        # Constructing the solver.
+        bmat = self.bmat[scheme.get_groups()]
+        solver = scheme.make_solver(self.bmat)
 
         # Permute the rhs groups to match mat_permuted.
-        rhs_local = mat_permuted.project_rhs_to_local(rhs)
+        rhs_local = bmat.project_rhs_to_local(rhs)
 
-        gmres = PetscGMRES(mat=mat_permuted.mat, pc=prec, pc_side="right", tol=1e-8)
-
-        sol_local = gmres.solve(rhs_local)
-        info = gmres.ksp.getConvergedReason()
+        sol_local = solver.solve(rhs_local)
+        info = solver.ksp.getConvergedReason()
 
         # Permute the solution groups to match the original porepy arrangement.
-        sol = mat_permuted.project_solution_to_global(sol_local)
+        sol = bmat.project_solution_to_global(sol_local)
 
         # Verify that the original problem is solved and we did not do anything wrong.
         true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
@@ -136,7 +131,7 @@ class IterativeLinearSolver(pp.SolutionStrategy):
 
         # Write statistics
         self._linear_solve_stats.petsc_converged_reason = info
-        self._linear_solve_stats.krylov_iters = len(gmres.get_residuals())
+        self._linear_solve_stats.krylov_iters = len(solver.get_residuals())
         return np.atleast_1d(sol)
 
 

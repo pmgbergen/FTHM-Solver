@@ -830,8 +830,9 @@ def write_dofs_info(model):
     model.prepare_simulation()
     model.assemble_linear_system()
     data = dict()
-    for i in range(len(model.bmat.active_groups[0])):
-        data[f"block {i}"] = model.bmat[0, i].shape[1]
+    bmat = model.bmat[:]
+    for i in range(len(bmat.active_groups[0])):
+        data[f"block {i}"] = bmat[0, i].shape[1]
     cell_volumes = np.concatenate(
         [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]
     ).tolist()

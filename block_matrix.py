@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal, Optional, Sequence
 import itertools
 
+import scipy.linalg
 import seaborn as sns
 import numpy as np
 import matplotlib
@@ -239,7 +240,10 @@ class BlockMatrixStorage:
                         np.arange(len(input_dofs_idx[dof_idx])) + offset
                     )
                     offset += len(input_dofs_idx[dof_idx])
-            return np.concatenate(dofs_global_idx), dofs_local_idx
+            if len(dofs_global_idx):
+                return np.concatenate(dofs_global_idx), dofs_local_idx
+            else:
+                return np.array([], dtype=int), dofs_local_idx
 
         row_idx, local_row_idx = inner(
             self.local_dofs_row, groups_i, self.groups_to_blocks_row
@@ -692,6 +696,7 @@ class LinearSolverWithTransformations:
         rhs_Q = rhs
         if self.Qleft is not None:
             rhs_Q = self.Qleft.mat @ rhs_Q
+
         sol_Q = self.inner.solve(rhs_Q)
 
         if self.Qright is not None:
@@ -700,7 +705,7 @@ class LinearSolverWithTransformations:
             sol = sol_Q
 
         return sol
-    
+
     def get_residuals(self):
         return self.inner.get_residuals()
 
@@ -737,13 +742,17 @@ def apply_ksp_scheme(
 class KSPScheme:
     # groups: list[int]
     preconditioner: PreconditionerScheme
-    ksp: Literal["gmres", "richardson"] = 'gmres'
+    ksp: Literal["gmres", "richardson"] = "gmres"
     rtol: float = 1e-10
     # max_iter: int = 60
     dtol: Optional[float] = None
     atol: Optional[float] = None
-    left_transformation: Optional[BlockMatrixStorage] = None
-    right_transformation: Optional[BlockMatrixStorage] = None
+    left_transformations: Optional[
+        list[Callable[[BlockMatrixStorage], BlockMatrixStorage]]
+    ] = None
+    right_transformations: Optional[
+        list[Callable[[BlockMatrixStorage], BlockMatrixStorage]]
+    ] = None
     pc_side: Literal["left", "right", "auto"] = "auto"
 
     def make_solver(self, mat_orig: BlockMatrixStorage):
@@ -751,25 +760,30 @@ class KSPScheme:
         # assert prec_groups == self.groups
         bmat = mat_orig[groups]
 
-        Qleft = self.left_transformation
-        Qright = self.right_transformation
+        if self.left_transformations is None or len(self.left_transformations) == 0:
+            Qleft = None
+        else:
+            Qleft = self.left_transformations[0](bmat)[groups]
+            for tmp in self.left_transformations[1:]:
+                tmp = tmp(bmat)[groups]
+                Qleft.mat @= tmp.mat
+
+        if self.right_transformations is None or len(self.right_transformations) == 0:
+            Qright = None
+        else:
+            Qright = self.right_transformations[0](bmat)[groups]
+            for tmp in self.right_transformations[1:]:
+                tmp = tmp(bmat)[groups]
+                Qright.mat @= tmp.mat
 
         bmat_Q = bmat
         if Qleft is not None:
-            Qleft = Qleft[groups]
-            assert Qleft.active_groups == bmat.active_groups
-            assert Qleft.groups_to_blocks_col == bmat.groups_to_blocks_col
-            assert Qleft.groups_to_blocks_row == bmat.groups_to_blocks_row
             bmat_Q.mat = Qleft.mat @ bmat_Q.mat
         if Qright is not None:
-            Qright = Qright[groups]
-            assert bmat_Q.active_groups == bmat.active_groups
-            assert bmat_Q.groups_to_blocks_col == bmat.groups_to_blocks_col
-            assert bmat_Q.groups_to_blocks_row == bmat.groups_to_blocks_row
-            bmat_Q.mat = bmat_Q.mat @ bmat_Q.mat
+            bmat_Q.mat = bmat_Q.mat @ Qright.mat
 
         tmp, prec = self.preconditioner.make_solver(bmat_Q)
-        assert tmp.active_groups[0] == groups
+        assert tmp.active_groups == bmat.active_groups
 
         if self.ksp == "gmres":
             pc_side = "right" if self.pc_side == "auto" else self.pc_side

@@ -174,13 +174,16 @@ def get_fs_fractures_analytical(model):
     return scipy.sparse.diags(val)
 
 
-def make_fs_analytical(model, J, blocks=None):
-    if blocks is None:
-        blocks = [0, 2]
+def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int, groups=None):
+    if groups is None:
+        groups = [p_mat_group, p_frac_group]
+    assert p_mat_group in groups
+    assert p_frac_group in groups
+    
     diag = [
         get_fixed_stress_stabilization(model),
         get_fs_fractures_analytical(model),
     ]
-    result = J.empty_container()[blocks]
-    result[blocks].mat = scipy.sparse.block_diag(diag, format="csr")
+    result = J.empty_container()[groups]
+    result[groups].mat = scipy.sparse.block_diag(diag, format="csr")
     return result
