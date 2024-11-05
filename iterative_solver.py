@@ -121,7 +121,7 @@ class IterativeLinearSolver(pp.SolutionStrategy):
         info = gmres.ksp.getConvergedReason()
 
         # Permute the solution groups to match the original porepy arrangement.
-        sol = mat_permuted.reverse_transform_solution(sol_local)
+        sol = mat_permuted.project_solution_to_global(sol_local)
 
         # Verify that the original problem is solved and we did not do anything wrong.
         true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()

@@ -19,7 +19,12 @@ from scipy.sparse.linalg import LinearOperator
 from stats import LinearSolveStats, dump_json
 
 if TYPE_CHECKING:
-    from block_matrix import FieldSplitScheme, MultiStageScheme, BlockMatrixStorage
+    from block_matrix import (
+        FieldSplitScheme,
+        MultiStageScheme,
+        BlockMatrixStorage,
+        KSPScheme,
+    )
 
 from mat_utils import PetscGMRES, PetscRichardson, condest, eigs
 from stats import TimeStepStats
@@ -498,7 +503,9 @@ def load_matrix_rhs(data: Sequence[TimeStepStats], idx: int):
     return mat, rhs
 
 
-def load_matrix_rhs_state_iterate_dt(data: Sequence[TimeStepStats], idx: int, dir: str = '../matrices'):
+def load_matrix_rhs_state_iterate_dt(
+    data: Sequence[TimeStepStats], idx: int, dir: str = "../matrices"
+):
     flat_data: list[LinearSolveStats] = [y for x in data for y in x.linear_solves]
     load_dir = Path(dir)
     mat = scipy.sparse.load_npz(load_dir / flat_data[idx].matrix_id)
@@ -844,3 +851,87 @@ def plot_eigs_exact(mat, logx: bool = True):
         plt.xscale("log")
         real = abs(real)
     plt.scatter(real, imag, marker="x")
+
+
+def solve_petsc_3(
+    bmat: "BlockMatrixStorage",
+    rhs_global: np.ndarray,
+    ksp_scheme: "KSPScheme" = None,
+    label="",
+    logx_eigs=False,
+    normalize_residual=False,
+    ksp_view: bool = False,
+):
+    bmat = bmat[ksp_scheme.get_groups()]
+    krylov = ksp_scheme.make_solver(bmat)
+    
+    rhs_local = bmat.project_rhs_to_local(rhs_global)
+
+    if ksp_view:
+        krylov.ksp.view()
+
+    t0 = time.time()
+    sol_local = krylov.solve(rhs_local)
+    print("Solve", label, "took:", round(time.time() - t0, 2))
+    residuals = krylov.get_residuals()
+    info = krylov.ksp.getConvergedReason()
+    eigs = krylov.ksp.computeEigenvalues()
+
+    # print(
+    #     "True residual permuted:", norm(mat_permuted.mat @ sol_Q - rhs_Q) / norm(rhs_Q)
+    # )
+
+    # if Qright is not None:
+    #     Qright = Qright[mat_permuted.active_groups]
+    #     sol = mat.project_rhs_to_local(Qright.project_rhs_to_global(Qright.mat @ sol_Q))
+    print(
+        "True residual:",
+        norm(bmat.mat @ sol_local - rhs_local)
+        / norm(rhs_local),
+    )
+    # else:
+    #     sol = sol_Q
+
+    print("PETSc Converged Reason:", info)
+    linestyle = "-"
+    if info <= 0:
+        linestyle = "--"
+        if len(eigs) > 0:
+            print("lambda min:", min(abs(eigs)))
+
+    plt.gcf().set_size_inches(14, 4)
+
+    # ax = plt.gca()
+    ax = plt.subplot(1, 2, 1)
+    if normalize_residual:
+        residuals /= residuals[0]
+    ax.plot(residuals, label=label, marker=".", linestyle=linestyle)
+    ax.set_yscale("log")
+
+    ksp_norm_type = krylov.ksp.getNormType()  # 1-prec, 2-unprec
+    if ksp_norm_type == 2:
+        ax.set_ylabel("true residual")
+    elif ksp_norm_type == 1:
+        ax.set_ylabel("preconditioned residual")
+    else:
+        raise ValueError(ksp_norm_type)
+    ax.set_xlabel("Krylov iter.")
+    ax.grid(True)
+    if label != "":
+        ax.legend()
+    ax.set_title("Krylov Convergence")
+
+    ax = plt.subplot(1, 2, 2)
+    if logx_eigs:
+        eigs.real = abs(eigs.real)
+    # ax.scatter(eigs.real, eigs.imag, label=label, marker="$\lambda$", alpha=0.9)
+    ax.scatter(eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS))
+    ax.set_xlabel(r"Re($\lambda)$")
+    ax.set_ylabel(r"Im($\lambda$)")
+    ax.grid(True)
+    if label != "":
+        ax.legend()
+    if logx_eigs:
+        plt.xscale("log")
+    ax.set_title("Eigenvalues estimate")
+    # return {"mat": bmat, "rhs": rhs_local, "prec": p}

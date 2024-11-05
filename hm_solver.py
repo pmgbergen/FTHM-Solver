@@ -277,9 +277,9 @@ class IterativeHMSolver(IterativeLinearSolver):
         # Reverse transformations
         if do_right_transformation:
             Qright = Qright[mat_Q_permuted.active_groups]
-            sol = mat_Q_permuted.reverse_transform_solution(Qright.mat @ sol_Q)
+            sol = mat_Q_permuted.project_solution_to_global(Qright.mat @ sol_Q)
         else:
-            sol = mat_Q_permuted.reverse_transform_solution(sol_Q)
+            sol = mat_Q_permuted.project_solution_to_global(sol_Q)
 
         # Verify that the original problem is solved and we did not do anything wrong.
         true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
@@ -313,7 +313,7 @@ class IterativeHMSolver(IterativeLinearSolver):
         sol_local = richardson.solve(rhs_local)
         info = richardson.ksp.getConvergedReason()
 
-        sol = mat_permuted.reverse_transform_solution(sol_local)
+        sol = mat_permuted.project_solution_to_global(sol_local)
 
         # Verify that the original problem is solved and we did not do anything wrong.
         true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()

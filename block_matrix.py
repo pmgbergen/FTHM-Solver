@@ -9,7 +9,14 @@ import scipy.sparse
 from scipy.sparse import spmatrix, csr_matrix
 from matplotlib import pyplot as plt
 
-from mat_utils import FieldSplit, TwoStagePreconditioner, inv, cond
+from mat_utils import (
+    FieldSplit,
+    TwoStagePreconditioner,
+    inv,
+    cond,
+    PetscGMRES,
+    PetscRichardson,
+)
 from plot_utils import plot_mat, spy
 
 
@@ -326,8 +333,8 @@ class BlockMatrixStorage:
         result[row_idx] = local_rhs
         return result
 
-    def reverse_transform_solution(self, x: np.ndarray) -> np.ndarray:
-        """The same as `global_rhs, but in the solution space."""
+    def project_solution_to_global(self, x: np.ndarray) -> np.ndarray:
+        """The same as `project_rhs_to_global, but in the solution space."""
         col_idx = [
             self.global_dofs_col[j]
             for i in self.active_groups[1]
@@ -667,19 +674,124 @@ class MultiStageScheme(PreconditionerScheme):
         return self.groups
 
 
+class LinearSolverWithTransformations:
+
+    def __init__(
+        self,
+        inner,
+        Qleft: Optional[BlockMatrixStorage] = None,
+        Qright: Optional[BlockMatrixStorage] = None,
+    ):
+        self.Qleft: BlockMatrixStorage | None = Qleft
+        self.Qright: BlockMatrixStorage | None = Qright
+        self.inner = inner
+        self.pc = inner.pc
+        self.ksp = inner.ksp
+
+    def solve(self, rhs):
+        rhs_Q = rhs
+        if self.Qleft is not None:
+            rhs_Q = self.Qleft.mat @ rhs_Q
+        sol_Q = self.inner.solve(rhs_Q)
+
+        if self.Qright is not None:
+            sol = self.Qright.mat @ sol_Q
+        else:
+            sol = sol_Q
+
+        return sol
+    
+    def get_residuals(self):
+        return self.inner.get_residuals()
+
+
+def apply_ksp_scheme(
+    scheme: "KSPScheme",
+    bmat: BlockMatrixStorage,
+    rhs_global: np.ndarray,
+) -> np.ndarray:
+    solver = scheme.make_solver(bmat)
+    rhs_local = solver.bmat.project_rhs_to_local(rhs_global)
+    sol_local = solver.solve(rhs_local)
+    info = solver.ksp.getConvergedReason()
+
+    sol_global = solver.bmat.project_solution_to_global(sol_local)
+
+    # Verify that the original problem is solved and we did not do anything wrong.
+    r_global_nrm = abs(bmat.mat @ sol_global - rhs_global).max() / abs(rhs_global).max()
+
+    if info <= 0:
+        print(f"GMRES failed, {info=}")
+        if info == -9:
+            sol_global[:] = np.nan
+    else:
+        if r_global_nrm >= 1:
+            print("True residual did not decrease")
+
+    # self._linear_solve_stats.petsc_converged_reason = info
+    # self._linear_solve_stats.krylov_iters = len(gmres_.get_residuals())
+    return np.atleast_1d(sol_global)
+
+
 @dataclass
 class KSPScheme:
-    ksp: Literal["gmres", "richardson"]
-    groups: list[int]
-    max_iter: int
-    rtol: float
-    dtol: float
-    atol: float
+    # groups: list[int]
     preconditioner: PreconditionerScheme
-    left_transformation: Callable[[BlockMatrixStorage], BlockMatrixStorage]
-    right_transformation: Callable[[BlockMatrixStorage], BlockMatrixStorage]
+    ksp: Literal["gmres", "richardson"] = 'gmres'
+    rtol: float = 1e-10
+    # max_iter: int = 60
+    dtol: Optional[float] = None
+    atol: Optional[float] = None
+    left_transformation: Optional[BlockMatrixStorage] = None
+    right_transformation: Optional[BlockMatrixStorage] = None
+    pc_side: Literal["left", "right", "auto"] = "auto"
 
     def make_solver(self, mat_orig: BlockMatrixStorage):
-        prec_groups = self.preconditioner.get_groups()
-        assert prec_groups == self.groups
-        mat_permuted = mat_orig[self.groups]
+        groups = self.get_groups()
+        # assert prec_groups == self.groups
+        bmat = mat_orig[groups]
+
+        Qleft = self.left_transformation
+        Qright = self.right_transformation
+
+        bmat_Q = bmat
+        if Qleft is not None:
+            Qleft = Qleft[groups]
+            assert Qleft.active_groups == bmat.active_groups
+            assert Qleft.groups_to_blocks_col == bmat.groups_to_blocks_col
+            assert Qleft.groups_to_blocks_row == bmat.groups_to_blocks_row
+            bmat_Q.mat = Qleft.mat @ bmat_Q.mat
+        if Qright is not None:
+            Qright = Qright[groups]
+            assert bmat_Q.active_groups == bmat.active_groups
+            assert bmat_Q.groups_to_blocks_col == bmat.groups_to_blocks_col
+            assert bmat_Q.groups_to_blocks_row == bmat.groups_to_blocks_row
+            bmat_Q.mat = bmat_Q.mat @ bmat_Q.mat
+
+        tmp, prec = self.preconditioner.make_solver(bmat_Q)
+        assert tmp.active_groups[0] == groups
+
+        if self.ksp == "gmres":
+            pc_side = "right" if self.pc_side == "auto" else self.pc_side
+            if self.atol is not None or self.dtol is not None:
+                print("Ignoring atol and rtol!")
+            solver = PetscGMRES(bmat_Q.mat, pc=prec, tol=self.rtol, pc_side=pc_side)
+        elif self.ksp == "richardson":
+            pc_side = "left" if self.pc_side == "auto" else self.pc_side
+            if self.dtol is not None:
+                print("Ignoring dtol!")
+            solver = PetscRichardson(
+                bmat_Q.mat, pc=prec, tol=self.rtol, atol=self.atol, pc_side=pc_side
+            )
+        else:
+            raise ValueError(self.ksp)
+
+        if Qleft is not None or Qright is not None:
+            solver = LinearSolverWithTransformations(
+                inner=solver, Qright=Qright, Qleft=Qleft
+            )
+
+        return solver
+
+    def get_groups(self) -> list[int]:
+        return self.preconditioner.get_groups()

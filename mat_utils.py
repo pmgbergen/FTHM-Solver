@@ -646,9 +646,10 @@ def inv_block_diag_3x3(mat):
     return scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)
 
 
-def make_scaling(bmat: "BlockMatrixStorage", right=True) -> "BlockMatrixStorage":
+def make_scaling(bmat: "BlockMatrixStorage") -> "BlockMatrixStorage":
     R = bmat.empty_container()
-    for i in R.active_groups[1 if right else 0]:
+    assert R.active_groups[0] == R.active_groups[1]
+    for i in R.active_groups[0]:
         tmp = bmat[i, i].mat
         R[i, i] = scipy.sparse.eye(*tmp.shape) / abs(tmp).max()
     return R
