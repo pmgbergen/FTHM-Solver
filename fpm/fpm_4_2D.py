@@ -5,10 +5,10 @@ import porepy as pp
 from porepy.models.constitutive_laws import CubicLawPermeability
 from porepy.models.poromechanics import Poromechanics
 
-from pp_utils import (
+from iterative_solver import (
     CheckStickingSlidingOpen,
     DymanicTimeStepping,
-    MyPetscSolver,
+    IterativeHMSolver,
     NewtonBacktracking,
     NewtonBacktrackingSimple,
     StatisticsSavingMixin,
@@ -51,7 +51,7 @@ solid_material = {
 class Fpm4(
     NewtonBacktracking,
     # NewtonBacktrackingSimple,
-    MyPetscSolver,
+    IterativeHMSolver,
     StatisticsSavingMixin,
     CheckStickingSlidingOpen,
     DymanicTimeStepping,

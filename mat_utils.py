@@ -9,7 +9,7 @@ import scipy.sparse
 import scipy.sparse.linalg
 
 if TYPE_CHECKING:
-    from block_matrix import BlockMatrixStorage
+    from block_matrix import BlockMatrixStorage, FieldSplitScheme
 
 petsc4py.init(sys.argv)
 
@@ -20,6 +20,16 @@ def assert_finite(vals, groups):
     pass
     # if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
     #     print("Divergence", groups)
+
+
+def make_сlear_petsc_options() -> PETSc.Options:
+    """ "Options is a singletone. This ensures that no unwanted options from some previous
+    setup reach the current setup."""
+    options = PETSc.Options()
+
+    for key in options.getAll():
+        options.delValue(key)
+    return options
 
 
 class FieldSplit:
@@ -68,10 +78,27 @@ class FieldSplit:
 
 class RestrictedOperator:
 
-    def __init__(self, mat: "BlockMatrixStorage", to_groups: list, prec):
-        self.R = mat.make_restriction_matrix(to_groups).mat
-        self.prec = prec(mat[to_groups])
+    def __init__(self, mat: "BlockMatrixStorage", solve_scheme: "FieldSplitScheme"):
+        to_groups = solve_scheme.get_groups()
+        self.R = self.make_restriction_matrix(mat, to_groups).mat
+        _, self.prec = solve_scheme.make_solver(mat[to_groups])
         self.shape = mat.shape
+
+    @staticmethod
+    def make_restriction_matrix(
+        bmat: "BlockMatrixStorage", to: list[int]
+    ) -> "BlockMatrixStorage":
+        active_cols = np.concatenate(
+            [bmat.local_dofs_col[j] for i in to for j in bmat.groups_to_blocks_col[i]]
+        )
+        active_rows = np.arange(active_cols.size)
+        active_data = np.ones(active_rows.size)
+        result = bmat[to, bmat.active_groups[1]].empty_container()
+        proj = scipy.sparse.coo_matrix(
+            (active_data, (active_rows, active_cols)), result.shape
+        )
+        result.mat = proj.tocsr()
+        return result
 
     def dot(self, x: np.ndarray) -> np.ndarray:
         x_local = self.R @ x
@@ -88,6 +115,7 @@ class TwoStagePreconditioner:
         self.stages: list = stages
 
     def dot(self, x: np.ndarray) -> np.ndarray:
+        # from matplotlib import pyplot as plt
         y1 = self.stages[0].dot(x)
         r1 = x - self.mat.mat.dot(y1)
         y2 = self.stages[1].dot(r1)
@@ -151,7 +179,9 @@ def eigs(mat):
 
 
 def inv(mat):
-    return scipy.sparse.linalg.inv(scipy.sparse.csc_matrix(mat))
+    return scipy.sparse.csr_matrix(
+        scipy.sparse.linalg.inv(scipy.sparse.csc_matrix(mat))
+    )
 
 
 def pinv(mat):
@@ -269,12 +299,21 @@ class PetscPC:
         return scipy.sparse.csr_matrix((data, indices, indptr))
 
 
+class PetscAMGVector(PetscPC):
+    def __init__(self, dim: int, mat=None) -> None:
+        options = make_сlear_petsc_options()
+
+        options["pc_type"] = "hypre"
+        options["pc_hypre_type"] = "boomeramg"
+        options["pc_hypre_boomeramg_max_iter"] = 1
+        # options["pc_hypre_boomeramg_cycle_type"] = "W"
+        options["pc_hypre_boomeramg_truncfactor"] = 0.3
+        super().__init__(mat=mat, block_size=dim)
+
+
 class PetscAMGMechanics(PetscPC):
     def __init__(self, dim: int, mat=None, null_space: np.ndarray = None) -> None:
-        options = PETSc.Options()
-
-        for key in options.getAll():
-            options.delValue(key)
+        options = make_сlear_petsc_options()
 
         options["pc_type"] = "gamg"
         options["mg_levels_ksp_type"] = "richardson"
@@ -296,13 +335,10 @@ class PetscAMGMechanics(PetscPC):
 
         super().__init__(mat=mat, block_size=dim, null_space=null_space)
 
-        for key in options.getAll():
-            options.delValue(key)
-
 
 class PetscAMGFlow(PetscPC):
     def __init__(self, mat=None) -> None:
-        options = PETSc.Options()
+        options = make_сlear_petsc_options()
 
         options["pc_type"] = "hypre"
         options["pc_hypre_type"] = "boomeramg"
@@ -313,9 +349,16 @@ class PetscAMGFlow(PetscPC):
         super().__init__(mat=mat, block_size=1)
 
 
+class PetscSOR(PetscPC):
+    def __init__(self, mat=None, factor_levels: int = 0) -> None:
+        options = make_сlear_petsc_options()
+        options.setValue("pc_type", "sor")
+        super().__init__(mat=mat)
+
+
 class PetscILU(PetscPC):
     def __init__(self, mat=None, factor_levels: int = 0) -> None:
-        options = PETSc.Options()
+        options = make_сlear_petsc_options()
         options.setValue("pc_type", "ilu")
         options.setValue("pc_factor_levels", factor_levels)
         options.setValue("pc_factor_diagonal_fill", None)  # Doesn't affect
@@ -344,7 +387,7 @@ class PetscKrylovSolver:
         tol=1e-10,
         atol=1e-10,
     ) -> None:
-        options = PETSc.Options()
+        options = make_сlear_petsc_options()
         options.setValue("ksp_divtol", 1e10)
         options.setValue("ksp_atol", atol)
         options.setValue("ksp_rtol", tol)
@@ -404,7 +447,7 @@ class PetscGMRES(PetscKrylovSolver):
     ) -> None:
         restart = 20
 
-        options = PETSc.Options()
+        options = make_сlear_petsc_options()
         options.setValue("ksp_type", "gmres")
         # options.setValue("ksp_type", "bcgs")
         # options.setValue("ksp_type", "richardson")
@@ -439,7 +482,7 @@ class PetscRichardson(PetscKrylovSolver):
     ) -> None:
         assert pc_side == "left"
 
-        options = PETSc.Options()
+        options = make_сlear_petsc_options()
         options.setValue("ksp_type", "richardson")
         # options.setValue('ksp_type', 'gmres')
         options.setValue("ksp_max_it", 150)
@@ -457,14 +500,14 @@ class PetscRichardson(PetscKrylovSolver):
 
 class PetscJacobi(PetscPC):
     def __init__(self, mat=None) -> None:
-        options = PETSc.Options()
+        options = make_сlear_petsc_options()
         options["pc_type"] = "jacobi"
         super().__init__(mat=mat)
 
 
 class PetscSOR(PetscPC):
     def __init__(self, mat=None) -> None:
-        options = PETSc.Options()
+        options = make_сlear_petsc_options()
         options["pc_type"] = "sor"
         options["pc_type_symmetric"] = True
         super().__init__(mat=mat)
@@ -601,3 +644,11 @@ def inv_block_diag_3x3(mat):
     ).transpose(2, 0, 1)
     mats_3x3_inv = inv_list_of_matrices(mats_3x3)
     return scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)
+
+
+def make_scaling(bmat: "BlockMatrixStorage", right=True) -> "BlockMatrixStorage":
+    R = bmat.empty_container()
+    for i in R.active_groups[1 if right else 0]:
+        tmp = bmat[i, i].mat
+        R[i, i] = scipy.sparse.eye(*tmp.shape) / abs(tmp).max()
+    return R

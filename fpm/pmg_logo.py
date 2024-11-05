@@ -12,12 +12,12 @@ from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.numerics.ad.operators import Operator
 from porepy.viz.diagnostics_mixin import DiagnosticsMixin
 
-from pp_utils import (
+from iterative_solver import (
     BCFlow,
     BCMechanicsOpen,
     BCMechanicsSliding,
     BCMechanicsSticking,
-    MyPetscSolver,
+    IterativeHMSolver,
     DymanicTimeStepping,
 )
 

@@ -6,9 +6,12 @@ from porepy.applications.md_grids.fracture_sets import (
 )
 from porepy.models.thermoporomechanics import Thermoporomechanics
 
-from experiments.thermal.thermal_solver import ThermalSolver
+from experiments.thermal.thm_solver import ThermalSolver
 from plot_utils import get_gmres_iterations, load_data, load_matrix_rhs_state_iterate_dt
-from pp_utils import StatisticsSavingMixin
+from stats import StatisticsSavingMixin
+
+from porepy.applications.md_grids.model_geometries import CubeDomainOrthogonalFractures
+from porepy.numerics.nonlinear import line_search
 
 
 SETUP_REFERENCE = {
@@ -41,6 +44,8 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
         t_max = self.time_manager.time_final
         peak_intensity = self.fluid.convert_units(1e-3, "m^3 * s^-1")
         tdiv2 = t_max / 2
+        # if t <= 0.5:
+        #     return 0
         if t < tdiv2:
             return t / tdiv2 * peak_intensity
         elif t < t_max:
@@ -76,7 +81,9 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
         volumetric_source_intensity = pp.ad.TimeDependentDenseArray(
             self.fluid_source_key, domains=subdomains
         )
-        temperature_inlet = pp.ad.Scalar(self.fluid.convert_units(350, "K"))
+        temperature_inlet = pp.ad.Scalar(
+            self.fluid.convert_units(300, "K") - self.fluid.temperature()
+        )
         cp = pp.ad.Scalar(self.fluid.specific_heat_capacity())
         rho = self.fluid_density(subdomains)
         source = temperature_inlet * cp * rho * volumetric_source_intensity
@@ -269,30 +276,36 @@ def get_friction_coef_config(setup: dict):
     raise ValueError(friction_type)
 
 
+class ConstraintLineSearchNonlinearSolver(
+    line_search.ConstraintLineSearch,  # The tailoring to contact constraints.
+    line_search.SplineInterpolationLineSearch,  # Technical implementation of the actual search along given update direction
+    line_search.LineSearchNewtonSolver,  # General line search.
+):
+    """Collect all the line search methods in one class."""
+
+
 def make_model(setup: dict):
     geometry_type = setup["geometry"]
     if geometry_type == 1:
 
         class Setup(Geometry2D1F, ThermalSolver, StatisticsSavingMixin, Physics):
-
-            def simulation_name(self) -> str:
-                name = "stats_thermal"
-                setup = self.params["setup"]
-                name = f'{name}_geo{setup["geometry"]}x{setup["grid_refinement"]}'
-                name = f'{name}_sol{setup["solver"]}'
-                name = f'{name}_bb{setup["barton_bandis_stiffness_type"]}'
-                name = f'{name}_fr{setup["friction_type"]}'
-                return name
-            
-            def before_nonlinear_iteration(self):
-                self.fluid
-                self.thermal_stress(self.mdg.subdomains(dim=self.nd))
-                return super().before_nonlinear_iteration()
+            pass
 
     elif geometry_type == 2:
 
         class Setup(Geometry2D7F, ThermalSolver, StatisticsSavingMixin, Physics):
-            pass
+            def before_nonlinear_iteration(self):
+                # t = self.temperature(self.mdg.subdomains()).value(self.equation_system)
+                # print(f"{min(t) }, {max(t) }")
+
+                # 3072
+                frac = self.mdg.subdomains(dim=self.nd-1)
+                intersec = self.mdg.subdomains(dim=self.nd-2)
+                # self.energy_balance_equation(intersec)
+
+                self.mass_balance_equation(frac + intersec)
+
+                super().before_nonlinear_iteration()
 
     elif geometry_type == 3:
 
@@ -326,8 +339,8 @@ def make_model(setup: dict):
                         # Thermal
                         "specific_heat_capacity": 920.0,
                         "thermal_conductivity": 1.7295772056,  # Diffusion coefficient
-                        "thermal_expansion": 2.5e-4,
-                        "temperature": 288.706,
+                        "thermal_expansion": 2.5e-6,
+                        "temperature": 350,
                     }
                     | get_barton_bandis_config(setup)
                     | get_friction_coef_config(setup)
@@ -342,7 +355,7 @@ def make_model(setup: dict):
                     # Thermal
                     "specific_heat_capacity": 2093.4,  # Вместимость
                     "thermal_conductivity": 0.15,  # Diffusion coefficient
-                    "temperature": 288.706,
+                    "temperature": 350,
                     "thermal_expansion": 2.5e-4,  # Density(T)
                 }
             ),
@@ -355,7 +368,7 @@ def make_model(setup: dict):
             iter_max=25,
             constant_dt=True,
         ),
-        "units": pp.Units(kg=1e10, K=1e3),
+        "units": pp.Units(kg=1e9),
         "meshing_arguments": {
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
@@ -374,9 +387,14 @@ def run_model(setup: dict):
             "prepare_simulation": False,
             "progressbars": False,
             "nl_convergence_tol": float("inf"),
-            "nl_convergence_tol_res": 1e-8,
+            "nl_convergence_tol_res": 1e-7,
             "nl_divergence_tol": 1e8,
             "max_iterations": 25,
+            # # experimental
+            "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
+            # "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
+            "Local_line_search": 1,  # Set to 0 to use turn off the tailored line search
+            "adaptive_indicator_scaling": 1,  # Scale the indicator adaptively to increase robustness
         },
     )
 

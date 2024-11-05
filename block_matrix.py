@@ -119,57 +119,64 @@ class BlockMatrixStorage:
     def __init__(
         self,
         mat: spmatrix,
-        global_row_idx: Sequence[np.ndarray],
-        global_col_idx: Sequence[np.ndarray],
-        groups_row: list[list[int]],
-        groups_col: list[list[int]],
-        local_row_idx: Sequence[np.ndarray] = None,
-        local_col_idx: Sequence[np.ndarray] = None,
-        active_groups_col=None,
-        active_groups_row=None,
-        group_row_names: Sequence[str] = None,
-        group_col_names: Sequence[str] = None,
+        global_dofs_row: list[np.ndarray],
+        global_dofs_col: list[np.ndarray],
+        groups_to_blocks_row: list[list[int]],
+        groups_to_blocks_col: list[list[int]],
+        local_dofs_row: Optional[list[np.ndarray]] = None,
+        local_dofs_col: Optional[list[np.ndarray]] = None,
+        active_groups_row: Optional[list[int]] = None,
+        active_groups_col: Optional[list[int]] = None,
+        group_names_row: list[str] = None,
+        group_names_col: list[str] = None,
     ):
         self.mat: spmatrix = mat
-        self.groups_row: list[list[int]] = groups_row
-        self.groups_col: list[list[int]] = groups_col
-        self.groups_row_names: Optional[Sequence[str]] = group_row_names
-        self.groups_col_names: Optional[Sequence[str]] = group_col_names
+        self.groups_to_blocks_row: list[list[int]] = groups_to_blocks_row
+        self.groups_to_blocks_col: list[list[int]] = groups_to_blocks_col
+        self.group_names_row: Optional[list[str]] = group_names_row
+        self.group_names_col: Optional[list[str]] = group_names_col
 
-        if local_row_idx is None:
-            local_row_idx = global_row_idx
-        if local_col_idx is None:
-            local_col_idx = global_col_idx
-        self.local_row_idx: list[np.ndarray] = [
-            np.atleast_1d(x) if x is not None else x for x in local_row_idx
-        ]
-        self.local_col_idx: list[np.ndarray] = [
-            np.atleast_1d(x) if x is not None else x for x in local_col_idx
-        ]
-        self.global_row_idx: list[np.ndarray] = [
-            np.atleast_1d(x) for x in global_row_idx
-        ]
-        self.global_col_idx: list[np.ndarray] = [
-            np.atleast_1d(x) for x in global_col_idx
-        ]
+        def init_global_dofs(global_dofs: list[np.ndarray]):
+            # Cast dofs to numpy arrays.
+            return [np.atleast_1d(x) for x in global_dofs]
 
-        if active_groups_row is None:
-            # This does not work if groups_row include [] for inactive groups
-            active_groups_row = list(np.argsort([x[0] for x in groups_row]))
-        if active_groups_col is None:
-            active_groups_col = list(np.argsort([x[0] for x in groups_col]))
-        self.active_groups = active_groups_row, active_groups_col
+        self.global_dofs_row: list[np.ndarray] = init_global_dofs(global_dofs_row)
+        self.global_dofs_col: list[np.ndarray] = init_global_dofs(global_dofs_col)
+
+        def init_local_dofs(
+            local_dofs: list[np.ndarray] | None, global_dofs: list[np.ndarray]
+        ):
+            if local_dofs is None:
+                local_dofs = global_dofs
+            return [np.atleast_1d(x) if x is not None else x for x in local_dofs]
+
+        self.local_dofs_row: list[np.ndarray] = init_local_dofs(
+            local_dofs_row, self.global_dofs_row
+        )
+        self.local_dofs_col: list[np.ndarray] = init_local_dofs(
+            local_dofs_col, self.global_dofs_col
+        )
+
+        def init_active_groups(
+            groups_to_blocks: list[list[int]], active_groups: list[int] | None
+        ) -> list[int]:
+            if active_groups is not None:
+                tmp = active_groups
+            else:
+                tmp = list(
+                    np.argsort([x[0] if len(x) else -1 for x in groups_to_blocks])
+                )
+            # Filter empty groups, e.g., when no fractures are present.
+            return [group_idx for group_idx in tmp if len(groups_to_blocks[group_idx])]
+
+        self.active_groups: tuple[list[int], list[int]] = (
+            init_active_groups(groups_to_blocks_row, active_groups_row),
+            init_active_groups(groups_to_blocks_col, active_groups_col),
+        )
 
     @property
     def shape(self) -> tuple[int, int]:
         return self.mat.shape
-
-    @property
-    def active_subgroups(self):
-        return (
-            [i for i, x in enumerate(self.local_row_idx) if x is not None],
-            [j for j, x in enumerate(self.local_col_idx) if x is not None],
-        )
 
     def __repr__(self) -> str:
         return (
@@ -179,6 +186,11 @@ class BlockMatrixStorage:
         )
 
     def _correct_getitem_key(self, key) -> tuple[list[int], list[int]]:
+        """User can index the matrix: `J[1, 2]`, `J[[1, 2]]`, `J[[1, 2], [3, 4]]`,
+        `J[:, [1, 2]]`, `J[[1, 2], :]`. This returns the key in the format
+        `J[[1, 2], [1, 2]]`.
+
+        """
         if isinstance(key, list):
             key = key, key
         if isinstance(key, slice):
@@ -199,8 +211,8 @@ class BlockMatrixStorage:
             return k
 
         groups_i, groups_j = key
-        groups_i = correct_key(groups_i, total=len(self.groups_row))
-        groups_j = correct_key(groups_j, total=len(self.groups_col))
+        groups_i = correct_key(groups_i, total=len(self.groups_to_blocks_row))
+        groups_j = correct_key(groups_j, total=len(self.groups_to_blocks_col))
         return groups_i, groups_j
 
     def __getitem__(self, key) -> "BlockMatrixStorage":
@@ -222,23 +234,27 @@ class BlockMatrixStorage:
                     offset += len(input_dofs_idx[dof_idx])
             return np.concatenate(dofs_global_idx), dofs_local_idx
 
-        row_idx, local_row_idx = inner(self.local_row_idx, groups_i, self.groups_row)
-        col_idx, local_col_idx = inner(self.local_col_idx, groups_j, self.groups_col)
+        row_idx, local_row_idx = inner(
+            self.local_dofs_row, groups_i, self.groups_to_blocks_row
+        )
+        col_idx, local_col_idx = inner(
+            self.local_dofs_col, groups_j, self.groups_to_blocks_col
+        )
 
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         submat = self.mat[I, J]
         return BlockMatrixStorage(
             mat=submat,
-            local_row_idx=local_row_idx,
-            local_col_idx=local_col_idx,
-            global_row_idx=self.global_row_idx,
-            global_col_idx=self.global_col_idx,
-            groups_col=self.groups_col,
-            groups_row=self.groups_row,
+            local_dofs_row=local_row_idx,
+            local_dofs_col=local_col_idx,
+            global_dofs_row=self.global_dofs_row,
+            global_dofs_col=self.global_dofs_col,
+            groups_to_blocks_col=self.groups_to_blocks_col,
+            groups_to_blocks_row=self.groups_to_blocks_row,
             active_groups_row=tuple(groups_i),
             active_groups_col=tuple(groups_j),
-            group_col_names=self.groups_col_names,
-            group_row_names=self.groups_row_names,
+            group_names_col=self.group_names_col,
+            group_names_row=self.group_names_row,
         )
 
     def __setitem__(self, key, value):
@@ -257,113 +273,55 @@ class BlockMatrixStorage:
                     dofs_idx.append(input_dofs_idx[dof_idx])
             return np.concatenate(dofs_idx)
 
-        row_idx = inner(self.local_row_idx, groups_i, self.groups_row)
-        col_idx = inner(self.local_col_idx, groups_j, self.groups_col)
+        row_idx = inner(self.local_dofs_row, groups_i, self.groups_to_blocks_row)
+        col_idx = inner(self.local_dofs_col, groups_j, self.groups_to_blocks_col)
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         self.mat[I, J] = value
 
-    # def group_shape(self, i, j=None) -> tuple[int, int]:
-    #     groups_i, groups_j = self._correct_getitem_key((i, j) if j is not None else i)
-
-    #     def inner(input_dofs_idx, take_groups, all_groups):
-    #         num_dofs = 0
-    #         for group in take_groups:
-    #             for dof_idx in all_groups[group]:
-    #                 if (dofs := input_dofs_idx[dof_idx]) is not None:
-    #                     num_dofs += dofs.size
-    #         return num_dofs
-
-    #     row_shape = inner(self.local_row_idx, groups_i, self.groups_row)
-    #     col_shape = inner(self.local_col_idx, groups_j, self.groups_col)
-    #     return row_shape, col_shape
-
-    # def slice_domain(self, i, j) -> spmatrix:
-    #     active_subgroups_i, active_subgroups_j = self.active_subgroups
-    #     row_idx = self.local_row_idx[active_subgroups_i[i]]
-    #     col_idx = self.local_col_idx[active_subgroups_j[j]]
-    #     I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
-    #     return self.mat[I, J]
-
-    # def block_diag(self) -> "BlockMatrixStorage":
-    #     """Returns a copy. Keeps only diagonal blocks.
-    #     E.g. removes how one fracture affects the other."""
-    #     active_idx = [x for x in self.local_row_idx if x is not None]
-    #     bmats = []
-    #     for active in active_idx:
-    #         I, J = np.meshgrid(active, active, sparse=True, indexing="ij", copy=False)
-    #         bmats.append(self.mat[I, J])
-    #     tmp = self.empty_container()
-    #     tmp.mat = scipy.sparse.block_diag(bmats, format="csr")
-    #     return tmp
-
     def copy(self) -> "BlockMatrixStorage":
-        return BlockMatrixStorage(
-            mat=self.mat.copy(),
-            local_row_idx=self.local_row_idx,
-            local_col_idx=self.local_col_idx,
-            global_row_idx=self.global_row_idx,
-            global_col_idx=self.global_col_idx,
-            groups_row=self.groups_row,
-            groups_col=self.groups_col,
-            active_groups_row=self.active_groups[0],
-            active_groups_col=self.active_groups[1],
-            group_col_names=self.groups_col_names,
-            group_row_names=self.groups_row_names,
-        )
+        res = self.empty_container()
+        res.mat = self.mat.copy()
+        return res
 
     def empty_container(self) -> "BlockMatrixStorage":
         return BlockMatrixStorage(
             mat=scipy.sparse.csr_matrix(self.mat.shape),
-            local_row_idx=self.local_row_idx,
-            local_col_idx=self.local_col_idx,
-            global_row_idx=self.global_row_idx,
-            global_col_idx=self.global_col_idx,
-            groups_row=self.groups_row,
-            groups_col=self.groups_col,
+            local_dofs_row=self.local_dofs_row,
+            local_dofs_col=self.local_dofs_col,
+            global_dofs_row=self.global_dofs_row,
+            global_dofs_col=self.global_dofs_col,
+            groups_to_blocks_row=self.groups_to_blocks_row,
+            groups_to_blocks_col=self.groups_to_blocks_col,
             active_groups_row=self.active_groups[0],
             active_groups_col=self.active_groups[1],
-            group_col_names=self.groups_col_names,
-            group_row_names=self.groups_row_names,
+            group_names_col=self.group_names_col,
+            group_names_row=self.group_names_row,
         )
 
-    def make_restriction_matrix(self, to: list[int]) -> "BlockMatrixStorage":
-        self = self
-        active_cols = np.concatenate(
-            [self.local_col_idx[j] for i in to for j in self.groups_col[i]]
-        )
-        active_rows = np.arange(active_cols.size)
-        active_data = np.ones(active_rows.size)
-        result = self[to, self.active_groups[1]].empty_container()
-        proj = scipy.sparse.coo_matrix(
-            (active_data, (active_rows, active_cols)), result.shape
-        )
-        result.mat = proj.tocsr()
-        return result
-
-    def local_rhs(self, global_rhs: np.ndarray) -> np.ndarray:
+    def project_rhs_to_local(self, global_rhs: np.ndarray) -> np.ndarray:
         """Global rhs is the rhs arranged in the porepy model manner. This method
         permutes and restricts the global rhs to make it match the current matrix
         arrangement."""
         row_idx = [
-            self.global_row_idx[j]
+            self.global_dofs_row[j]
             for i in self.active_groups[0]
-            for j in self.groups_row[i]
+            for j in self.groups_to_blocks_row[i]
         ]
         row_idx = np.concatenate(row_idx)
         return global_rhs[row_idx]
 
-    def global_rhs(self, local_rhs: np.ndarray) -> np.ndarray:
+    def project_rhs_to_global(self, local_rhs: np.ndarray) -> np.ndarray:
         """Local rhs is the rhs arranged to match the current matrix. This method
         permutes and prolongates with zeros the local rhs to restore the global
         arrangement."""
         row_idx = np.concatenate(
             [
-                self.global_row_idx[j]
+                self.global_dofs_row[j]
                 for i in self.active_groups[0]
-                for j in self.groups_row[i]
+                for j in self.groups_to_blocks_row[i]
             ]
         )
-        total_size = sum(x.size for x in self.global_col_idx)
+        total_size = sum(x.size for x in self.global_dofs_col)
         result = np.zeros(total_size, dtype=local_rhs.dtype)
         result[row_idx] = local_rhs
         return result
@@ -371,52 +329,21 @@ class BlockMatrixStorage:
     def reverse_transform_solution(self, x: np.ndarray) -> np.ndarray:
         """The same as `global_rhs, but in the solution space."""
         col_idx = [
-            self.global_col_idx[j]
+            self.global_dofs_col[j]
             for i in self.active_groups[1]
-            for j in self.groups_col[i]
+            for j in self.groups_to_blocks_col[i]
         ]
         col_idx = np.concatenate(col_idx)
-        total_size = sum(x.size for x in self.global_col_idx)
+        total_size = sum(x.size for x in self.global_dofs_col)
         result = np.zeros(total_size)
         result[col_idx] = x
         return result
-
-    def get_global_indices(
-        self,
-        local_indices,
-        group: tuple[int, int],
-        subgroup: tuple[int, int] = (0, 0),
-    ):
-        assert group[0] in self.active_groups[0]
-        assert group[1] in self.active_groups[1]
-
-        group_row = self.groups_row[group[0]]
-        group_col = self.groups_col[group[1]]
-        subgroup_row = group_row[subgroup[0]]
-        subgroup_col = group_col[subgroup[1]]
-        offset_i = self.local_row_idx[subgroup_row][0]
-        offset_j = self.local_col_idx[subgroup_col][0]
-
-        global_i = np.array(local_indices[0]) + offset_i
-        global_j = np.array(local_indices[1]) + offset_j
-        return global_i, global_j
-
-    def slice_submatrix(
-        self, local_indices, group: tuple[int, int], subgroup: tuple[int, int] = (0, 0)
-    ) -> spmatrix:
-        global_i, global_j = self.get_global_indices(
-            local_indices=local_indices, group=group, subgroup=subgroup
-        )
-        global_i, global_j = np.meshgrid(
-            global_i, global_j, sparse=True, indexing="ij", copy=False
-        )
-        return self.mat[global_i, global_j]
 
     def set_zeros(
         self, group_row_idx: list[int] | int, group_col_idx: list[int] | int
     ) -> None:
         """Set the values in the given block rows and columns to zeros. Does not change
-        the sparsity pattern."""
+        the sparsity pattern, so this is much cheaper than doing it in the naive way."""
         group_row_idx, group_col_idx = self._correct_getitem_key(
             (group_row_idx, group_col_idx)
         )
@@ -446,8 +373,12 @@ class BlockMatrixStorage:
                     data.append(group_data)
             return data
 
-        row_idx = inner(self.local_row_idx, self.groups_row, self.active_groups[0])
-        col_idx = inner(self.local_col_idx, self.groups_col, self.active_groups[1])
+        row_idx = inner(
+            self.local_dofs_row, self.groups_to_blocks_row, self.active_groups[0]
+        )
+        col_idx = inner(
+            self.local_dofs_col, self.groups_to_blocks_col, self.active_groups[1]
+        )
         if not grouped:
             row_idx = [y for x in row_idx for y in x]
             col_idx = [y for x in col_idx for y in x]
@@ -467,8 +398,8 @@ class BlockMatrixStorage:
                 names = active_groups
             return names
 
-        row_names = inner(self.groups_row_names, self.active_groups[0])
-        col_names = inner(self.groups_col_names, self.active_groups[1])
+        row_names = inner(self.group_names_row, self.active_groups[0])
+        col_names = inner(self.group_names_col, self.active_groups[1])
         return row_names, col_names
 
     def color_spy(
@@ -557,7 +488,7 @@ class BlockMatrixStorage:
             cmap=sns.color_palette("coolwarm", as_cmap=True),
         )
 
-    def color_local_rhs(
+    def color_left_vector(
         self, local_rhs: np.ndarray, groups: bool = True, log: bool = True, label=None
     ):
         y_tick_labels, x_tick_labels = self.get_active_group_names()
@@ -591,13 +522,17 @@ class BlockMatrixStorage:
         plt.plot(local_rhs, label=label)
 
 
-@dataclass
-class SolveScheme:
-    pass
+class PreconditionerScheme:
+
+    def make_solver(self, mat_orig: BlockMatrixStorage):
+        pass
+
+    def get_groups(self) -> list[int]:
+        pass
 
 
 @dataclass
-class FieldSplitScheme:
+class FieldSplitScheme(PreconditionerScheme):
     groups: list[int]
     solve: callable | Literal["direct", "use_invertor"] = "direct"
     invertor: callable | Literal["use_solve", "direct"] = "use_solve"
@@ -605,7 +540,7 @@ class FieldSplitScheme:
         "algebraic"
     )
     complement: Optional["FieldSplitScheme"] = None
-    factorization_type: Literal["full", "upper"] = "upper"
+    factorization_type: Literal["full", "upper", "lower"] = "upper"
 
     compute_cond: bool = False
     color_spy: bool = False
@@ -717,15 +652,34 @@ class FieldSplitScheme:
 
 
 @dataclass
-class MultiStageScheme:
+class MultiStageScheme(PreconditionerScheme):
     stages: list[Callable[[BlockMatrixStorage], Any]]
     groups: list[int]
 
     def make_solver(self, mat_orig: BlockMatrixStorage):
-        return mat_orig, TwoStagePreconditioner(
-            mat_orig,
-            stages=[stage(mat_orig) for stage in self.stages],
+        mat_permuted = mat_orig[self.groups]
+        return mat_permuted, TwoStagePreconditioner(
+            mat_permuted,
+            stages=[stage(mat_permuted) for stage in self.stages],
         )
 
     def get_groups(self) -> list[int]:
         return self.groups
+
+
+@dataclass
+class KSPScheme:
+    ksp: Literal["gmres", "richardson"]
+    groups: list[int]
+    max_iter: int
+    rtol: float
+    dtol: float
+    atol: float
+    preconditioner: PreconditionerScheme
+    left_transformation: Callable[[BlockMatrixStorage], BlockMatrixStorage]
+    right_transformation: Callable[[BlockMatrixStorage], BlockMatrixStorage]
+
+    def make_solver(self, mat_orig: BlockMatrixStorage):
+        prec_groups = self.preconditioner.get_groups()
+        assert prec_groups == self.groups
+        mat_permuted = mat_orig[self.groups]

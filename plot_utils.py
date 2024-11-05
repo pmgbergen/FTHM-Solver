@@ -1,7 +1,6 @@
 import itertools
 import json
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Sequence
 
@@ -15,21 +14,15 @@ from matplotlib.ticker import MaxNLocator
 from numpy.linalg import norm
 from pyamg.krylov import gmres
 from scipy.sparse import bmat
-from scipy.sparse.linalg import LinearOperator  # , gmres, bicgstab
+from scipy.sparse.linalg import LinearOperator
 
-from stats import LinearSolveStats
+from stats import LinearSolveStats, dump_json
 
 if TYPE_CHECKING:
     from block_matrix import FieldSplitScheme, MultiStageScheme, BlockMatrixStorage
 
 from mat_utils import PetscGMRES, PetscRichardson, condest, eigs
 from stats import TimeStepStats
-
-BURBERRY = mpl.cycler(
-    color=["#A70100", "#513819", "#956226", "#B8A081", "#747674", "#0D100E"]
-)
-
-# mpl.rcParams['axes.prop_cycle'] = BURBERRY
 
 
 def trim_label(label: str) -> str:
@@ -689,11 +682,11 @@ def get_rhs_norms(model: pp.SolutionStrategy, data: Sequence[TimeStepStats], ord
     bmat, prec = model._prepare_solver()
     num_ls = len([ls for ts in data for ls in ts.linear_solves])
     norms = [[] for i in range(6)]
-    J_list = [bmat[[i]] for i in range(6)]
+    J_list: list["BlockMatrixStorage"] = [bmat[[i]] for i in range(6)]
     for i in range(num_ls):
         mat, rhs, state, iterate, dt = load_matrix_rhs_state_iterate_dt(data, i)
         for nrm_list, J_i in zip(norms, J_list):
-            nrm_list.append(np.linalg.norm(J_i.local_rhs(rhs), ord=ord))
+            nrm_list.append(np.linalg.norm(J_i.project_rhs_to_local(rhs), ord=ord))
     return norms
 
 
@@ -742,7 +735,7 @@ def solve_petsc_new(
         rhs_local = np.ones(mat.shape[0])
         rhs_global = rhs_local.copy()
     else:
-        rhs_local = mat_permuted.local_rhs(rhs_global)
+        rhs_local = mat_permuted.project_rhs_to_local(rhs_global)
 
     rhs_Q = rhs_local.copy()
     if Qleft is not None:
@@ -771,11 +764,11 @@ def solve_petsc_new(
 
     if Qright is not None:
         Qright = Qright[mat_permuted.active_groups]
-        sol = mat.local_rhs(Qright.global_rhs(Qright.mat @ sol_Q))
+        sol = mat.project_rhs_to_local(Qright.project_rhs_to_global(Qright.mat @ sol_Q))
         print(
             "True residual:",
-            norm(mat.mat @ sol - mat.local_rhs(rhs_global))
-            / norm(mat.local_rhs(rhs_global)),
+            norm(mat.mat @ sol - mat.project_rhs_to_local(rhs_global))
+            / norm(mat.project_rhs_to_local(rhs_global)),
         )
     else:
         sol = sol_Q
@@ -823,18 +816,6 @@ def solve_petsc_new(
         plt.xscale("log")
     ax.set_title("Eigenvalues estimate")
     return {"mat_Q": mat_permuted, "rhs_Q": rhs_Q, "prec": prec}
-
-
-def dump_json(name, data):
-    save_path = Path("./stats")
-    save_path.mkdir(exist_ok=True)
-    try:
-        dict_data = [asdict(x) for x in data]
-    except TypeError:
-        dict_data = data
-    json_data = json.dumps(dict_data)
-    with open(save_path / name, "w") as file:
-        file.write(json_data)
 
 
 def write_dofs_info(model):

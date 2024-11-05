@@ -8,9 +8,9 @@ from porepy.models.constitutive_laws import CubicLawPermeability, DarcysLawAd
 from porepy.applications.md_grids.fracture_sets import orthogonal_fractures_3d
 
 from plot_utils import write_dofs_info
-from pp_utils import (
+from iterative_solver import (
     CheckStickingSlidingOpen,
-    MyPetscSolver,
+    IterativeHMSolver,
     DymanicTimeStepping,
     NewtonBacktracking,
     NewtonBacktrackingSimple,
@@ -49,7 +49,7 @@ solid_material = {
 BaseClasses = [
     NewtonBacktracking,
     # NewtonBacktrackingSimple,
-    MyPetscSolver,
+    IterativeHMSolver,
     StatisticsSavingMixin,
     CheckStickingSlidingOpen,
     DymanicTimeStepping,

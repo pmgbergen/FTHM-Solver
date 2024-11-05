@@ -12,18 +12,27 @@ setup_reference = {
 }
 
 
-def experiment_1_grid_refinement():
+def experiment_2():
     setups = []
 
-    for grid_refinement in [1, 2, 3, 4, 5, 6, 10, 33]:
+    for grid_refinement in [
+        1,
+        # 2,
+        # 3,
+        # 4,
+        # 5,
+        # 6,
+        # 10,
+        # 33,
+    ]:
         setups.append(
             {
                 "physics": 1,
-                "geometry": 1,
+                "geometry": 2,
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": grid_refinement,
-                "solver": 2,
+                "solver": 0,
                 "save_matrix": True,
             }
         )
@@ -35,4 +44,4 @@ def experiment_1_grid_refinement():
 
 
 if __name__ == "__main__":
-    experiment_1_grid_refinement()
+    experiment_2()

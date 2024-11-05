@@ -45,19 +45,19 @@ def experiment_1_barton_bandis_friction():
 
 def experiment_1_grid_refinement():
     setups = []
-    for grid_refinement in [1, 2, 3, 4]:
-        for solver in [1, 11, 12]:
-            setups.append(
-                {
-                    "physics": 1,
-                    "geometry": 1,
-                    "barton_bandis_stiffness_type": 2,
-                    "friction_type": 1,
-                    "grid_refinement": grid_refinement,
-                    "solver": solver,
-                    "save_matrix": True,
-                }
-            )
+    # for grid_refinement in [1, 2, 3, 4]:
+    #     for solver in [1, 11, 12]:
+    #         setups.append(
+    #             {
+    #                 "physics": 1,
+    #                 "geometry": 1,
+    #                 "barton_bandis_stiffness_type": 2,
+    #                 "friction_type": 1,
+    #                 "grid_refinement": grid_refinement,
+    #                 "solver": solver,
+    #                 "save_matrix": True,
+    #             }
+    #         )
     for grid_refinement in [1, 2, 3, 4, 5, 6, 10, 33]:
         setups.append(
             {
@@ -78,5 +78,5 @@ def experiment_1_grid_refinement():
 
 
 if __name__ == "__main__":
-    experiment_1_barton_bandis_friction()
+    # experiment_1_barton_bandis_friction()
     experiment_1_grid_refinement()

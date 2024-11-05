@@ -9,10 +9,10 @@ from porepy.applications.md_grids.fracture_sets import (
 from matplotlib import pyplot as plt
 
 from plot_utils import write_dofs_info
-from pp_utils import (
+from iterative_solver import (
     CheckStickingSlidingOpen,
     DymanicTimeStepping,
-    MyPetscSolver,
+    IterativeHMSolver,
     NewtonBacktracking,
     NewtonBacktrackingSimple,
     StatisticsSavingMixin,
@@ -25,7 +25,7 @@ ZMAX = 1.0
 BaseClasses = [
     NewtonBacktracking,
     # NewtonBacktrackingSimple,
-    MyPetscSolver,
+    IterativeHMSolver,
     StatisticsSavingMixin,
     CheckStickingSlidingOpen,
     DymanicTimeStepping,

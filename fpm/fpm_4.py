@@ -7,9 +7,9 @@ from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.models.constitutive_laws import CubicLawPermeability
 from matplotlib import pyplot as plt
 
-from pp_utils import (
+from iterative_solver import (
     CheckStickingSlidingOpen,
-    MyPetscSolver,
+    IterativeHMSolver,
     DymanicTimeStepping,
     NewtonBacktracking,
     NewtonBacktrackingSimple,
@@ -48,7 +48,7 @@ solid_material = {
 class Fpm4(
     NewtonBacktracking,
     # NewtonBacktrackingSimple,
-    MyPetscSolver,
+    IterativeHMSolver,
     StatisticsSavingMixin,
     CheckStickingSlidingOpen,
     DymanicTimeStepping,

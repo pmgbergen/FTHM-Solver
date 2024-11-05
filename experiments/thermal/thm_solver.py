@@ -6,20 +6,32 @@ from mat_utils import (
     extract_diag_inv,
     inv_block_diag,
     PetscAMGFlow,
-    PetscAMGFlow,
     PetscAMGMechanics,
     PetscILU,
 )
-from pp_utils import (
-    MyPetscSolver,
+from hm_solver import (
+    IterativeHMSolver,
     build_mechanics_near_null_space,
+)
+from iterative_solver import (
     get_equations_group_ids,
     get_variables_group_ids,
 )
 import porepy as pp
 
 
-class ThermalSolver(MyPetscSolver):
+class ThermalSolver(IterativeHMSolver):
+
+    def simulation_name(self) -> str:
+        name = "stats_thermal"
+        setup = self.params["setup"]
+        name = f'{name}_geo{setup["geometry"]}x{setup["grid_refinement"]}'
+        name = f'{name}_sol{setup["solver"]}'
+        name = f'{name}_bb{setup["barton_bandis_stiffness_type"]}'
+        name = f'{name}_fr{setup["friction_type"]}'
+        return name
+
+    CONTACT_GROUP = 4
 
     def group_row_names(self) -> list[str]:
         return [
@@ -31,7 +43,9 @@ class ThermalSolver(MyPetscSolver):
             "Force intf.",
             "Energy mat.",
             "Energy frac.",
+            "Energy lower",
             "Energy intf.",
+            "Flow lower",
         ]
 
     def group_col_names(self) -> list[str]:
@@ -44,11 +58,13 @@ class ThermalSolver(MyPetscSolver):
             r"$u_{intf}$",
             "$T_{3D}$",
             "$T_{frac}$",
+            "$T_{lower}$",
             "$T_{intf}$",
+            '$p_{lower}$',
         ]
 
     @cached_property
-    def variable_groups(model) -> list[list[int]]:
+    def variable_groups(self) -> list[list[int]]:
         """Prepares the groups of variables in the specific order, that we will use in
         the block Jacobian to access the submatrices:
 
@@ -63,70 +79,78 @@ class ThermalSolver(MyPetscSolver):
         first accessed.
 
         """
-        dim_max = model.mdg.dim_max()
-        sd_ambient = model.mdg.subdomains(dim=dim_max)
+        dim_max = self.mdg.dim_max()
+        sd_ambient = self.mdg.subdomains(dim=dim_max)
+        sd_frac = self.mdg.subdomains(dim=dim_max - 1)
         sd_lower = [
-            k for i in reversed(range(0, dim_max)) for k in model.mdg.subdomains(dim=i)
+            k
+            for i in reversed(range(0, dim_max - 1))
+            for k in self.mdg.subdomains(dim=i)
         ]
-        sd_frac = model.mdg.subdomains(dim=dim_max - 1)
-        intf = model.mdg.interfaces()
-        intf_frac = model.mdg.interfaces(dim=dim_max - 1)
+        intf = self.mdg.interfaces()
+        intf_frac = self.mdg.interfaces(dim=dim_max - 1)
 
         return get_variables_group_ids(
-            model=model,
+            model=self,
             md_variables_groups=[
-                [model.pressure(sd_ambient)],  # 0
-                [model.displacement(sd_ambient)],  # 1
-                [model.pressure(sd_lower)],  # 2
-                [model.interface_darcy_flux(intf)],  # 3
-                [model.contact_traction(sd_frac)],  # 4
-                [model.interface_displacement(intf_frac)],  # 5
-                [model.temperature(sd_ambient)],  # 6
-                [model.temperature(sd_lower)],  # 7
-                [  # 8
-                    model.interface_fourier_flux(intf),
-                    model.interface_enthalpy_flux(intf),
-                    model.well_enthalpy_flux(intf),
+                [self.pressure(sd_ambient)],  # 0
+                [self.displacement(sd_ambient)],  # 1
+                [self.pressure(sd_frac)],  # 2
+                [self.interface_darcy_flux(intf)],  # 3
+                [self.contact_traction(sd_frac)],  # 4
+                [self.interface_displacement(intf_frac)],  # 5
+                [self.temperature(sd_ambient)],  # 6
+                [self.temperature(sd_frac)],  # 7
+                [self.temperature(sd_lower)],  # 8
+                [  # 9
+                    self.interface_fourier_flux(intf),
+                    self.interface_enthalpy_flux(intf),
+                    self.well_enthalpy_flux(intf),
                 ],
+                [self.pressure(sd_lower)],  # 10
             ],
         )
 
     @cached_property
-    def _unpermuted_equation_groups(self) -> list[list[int]]:
-        """The version of `equation_groups` that does not encorporates the permutation
-        `contact_permutation`.
-
-        """
+    def equation_groups(self) -> list[list[int]]:
         dim_max = self.mdg.dim_max()
         sd_ambient = self.mdg.subdomains(dim=dim_max)
+        sd_frac = self.mdg.subdomains(dim=dim_max - 1)
         sd_lower = [
-            k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
+            k
+            for i in reversed(range(0, dim_max - 1))
+            for k in self.mdg.subdomains(dim=i)
         ]
         intf = self.mdg.interfaces()
 
-        return get_equations_group_ids(
-            model=self,
-            equations_group_order=[
-                [("mass_balance_equation", sd_ambient)],  # 0
-                [("momentum_balance_equation", sd_ambient)],  # 1
-                [("mass_balance_equation", sd_lower)],  # 2
-                [("interface_darcy_flux_equation", intf)],  # 3
-                [  # 4
-                    ("normal_fracture_deformation_equation", sd_lower),
-                    ("tangential_fracture_deformation_equation", sd_lower),
+        return self._correct_contact_equations_groups(
+            get_equations_group_ids(
+                model=self,
+                equations_group_order=[
+                    [("mass_balance_equation", sd_ambient)],  # 0
+                    [("momentum_balance_equation", sd_ambient)],  # 1
+                    [("mass_balance_equation", sd_frac)],  # 2
+                    [("interface_darcy_flux_equation", intf)],  # 3
+                    [  # 4
+                        ("normal_fracture_deformation_equation", sd_frac),
+                        ("tangential_fracture_deformation_equation", sd_frac),
+                    ],
+                    [("interface_force_balance_equation", intf)],  # 5
+                    [("energy_balance_equation", sd_ambient)],  # 6
+                    [("energy_balance_equation", sd_frac)],  # 7
+                    [("energy_balance_equation", sd_lower)],  # 8
+                    [  # 9
+                        ("interface_fourier_flux_equation", intf),
+                        ("interface_enthalpy_flux_equation", intf),
+                        ("well_enthalpy_flux_equation", intf),  # ???
+                    ],
+                    [('mass_balance_equation', sd_lower)],  # 10
                 ],
-                [("interface_force_balance_equation", intf)],  # 5
-                [("energy_balance_equation", sd_ambient)],  # 6
-                [("energy_balance_equation", sd_lower)],  # 7
-                [  # 8
-                    ("interface_fourier_flux_equation", intf),
-                    ("interface_enthalpy_flux_equation", intf),
-                    ("well_enthalpy_flux_equation", sd_lower),
-                ],
-            ],
+            ),
+            contact_group=self.CONTACT_GROUP,
         )
 
-    def make_solver_schema(self) -> FieldSplitScheme:
+    def make_solver_scheme(self) -> FieldSplitScheme:
         solver_type = self.params["setup"]["solver"]
 
         if solver_type == 2:  # Scalable solver.
@@ -143,9 +167,9 @@ class ThermalSolver(MyPetscSolver):
                     complement=FieldSplitScheme(
                         # Eliminate interface temperature
                         # Use diag() to approximate inverse and ILU to solve linear systems
-                        groups=[8],
-                        solve=lambda bmat: PetscILU(bmat[[8]].mat),
-                        invertor=lambda bmat: extract_diag_inv(bmat[[8]].mat),
+                        groups=[9],
+                        solve=lambda bmat: PetscILU(bmat[[9]].mat),
+                        invertor=lambda bmat: extract_diag_inv(bmat[[9]].mat),
                         complement=FieldSplitScheme(
                             # Eliminate elasticity. Use AMG to solve linear systems and fixed
                             # stress to approximate inverse.
@@ -157,16 +181,18 @@ class ThermalSolver(MyPetscSolver):
                             ),
                             invertor_type="physical",
                             invertor=lambda bmat: make_fs_analytical(
-                                self, bmat, blocks=[0, 2, 6, 7]
+                                self, bmat, blocks=[0, 2, 6, 7, 8]
                             ).mat,
                             complement=MultiStageScheme(
                                 # CPR for P-T coupling
-                                groups=[0, 2, 6, 7],
+                                groups=[0, 2, 9, 6, 7, 8],
                                 stages=[
                                     lambda bmat: RestrictedOperator(
                                         bmat,
-                                        to_groups=[0, 2],
-                                        prec=lambda bmat: PetscAMGFlow(bmat.mat),
+                                        solve_scheme=FieldSplitScheme(
+                                            groups=[0, 2, 9],
+                                            solve=lambda bmat: PetscAMGFlow(bmat.mat),
+                                        ),
                                     ),
                                     lambda bmat: PetscILU(bmat.mat),
                                 ],

@@ -11,13 +11,13 @@ from porepy.examples.flow_benchmark_2d_case_3 import Permeability
 from porepy.models.poromechanics import Poromechanics
 from porepy.viz.diagnostics_mixin import DiagnosticsMixin
 
-from pp_utils import (
+from iterative_solver import (
     BCFlow,
     StatisticsSavingMixin,
     BCMechanicsOpen,
     BCMechanicsSliding,
     BCMechanicsSticking,
-    MyPetscSolver,
+    IterativeHMSolver,
     DymanicTimeStepping,
 )
 
@@ -28,7 +28,7 @@ MEGA = 1
 
 
 class PoroMech(
-    MyPetscSolver,
+    IterativeHMSolver,
     StatisticsSavingMixin,
     DymanicTimeStepping,
     # BCMechanicsOpen,

@@ -6,8 +6,8 @@ from porepy.models.momentum_balance import MomentumBalance
 from porepy.models.fluid_mass_balance import SinglePhaseFlow
 from porepy.models.constitutive_laws import CubicLawPermeability
 
-from pp_utils import (
-    MyPetscSolver,
+from iterative_solver import (
+    IterativeHMSolver,
     DymanicTimeStepping,
     NewtonBacktracking,
     StatisticsSavingMixin,
@@ -43,7 +43,7 @@ solid_material = {
 
 class Fpm3(
     NewtonBacktracking,
-    MyPetscSolver,
+    IterativeHMSolver,
     StatisticsSavingMixin,
     DymanicTimeStepping,
     CubicLawPermeability,

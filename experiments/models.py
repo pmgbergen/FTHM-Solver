@@ -11,7 +11,8 @@ from porepy.applications.md_grids.fracture_sets import (
 from porepy.models.poromechanics import Poromechanics
 
 from plot_utils import get_gmres_iterations, load_data, load_matrix_rhs_state_iterate_dt
-from pp_utils import MyPetscSolver, StatisticsSavingMixin
+from hm_solver import IterativeHMSolver
+from stats import StatisticsSavingMixin
 
 
 SETUP_REFERENCE = {
@@ -308,17 +309,17 @@ def make_model(setup: dict):
     geometry_type = setup["geometry"]
     if geometry_type == 1:
 
-        class Setup(Geometry2D1F, MyPetscSolver, StatisticsSavingMixin, Physics):
+        class Setup(Geometry2D1F, IterativeHMSolver, StatisticsSavingMixin, Physics):
             pass
 
     elif geometry_type == 2:
 
-        class Setup(Geometry2D7F, MyPetscSolver, StatisticsSavingMixin, Physics):
+        class Setup(Geometry2D7F, IterativeHMSolver, StatisticsSavingMixin, Physics):
             pass
 
     elif geometry_type == 3:
 
-        class Setup(Geometry3D1F, MyPetscSolver, StatisticsSavingMixin, Physics):
+        class Setup(Geometry3D1F, IterativeHMSolver, StatisticsSavingMixin, Physics):
             pass
 
     else:
