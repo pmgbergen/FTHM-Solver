@@ -7,6 +7,9 @@ from block_matrix import (
 )
 from fixed_stress import make_fs_analytical
 from mat_utils import (
+    BJacobiILU,
+    PetscHypreILU,
+    PetscSOR,
     RestrictedOperator,
     extract_diag_inv,
     inv_block_diag,
@@ -14,6 +17,7 @@ from mat_utils import (
     PetscAMGMechanics,
     PetscILU,
     make_scaling,
+    make_scaling_1,
 )
 from hm_solver import (
     IterativeHMSolver,
@@ -165,7 +169,8 @@ class ThermalSolver(IterativeHMSolver):
                     lambda bmat: self.Qright(
                         contact_group=self.CONTACT_GROUP, u_intf_group=4
                     ),
-                    lambda bmat: make_scaling(bmat, scale_groups=[7, 10]),
+                    lambda bmat: make_scaling(bmat),
+                    # lambda bmat: make_scaling_1(bmat, {6: [7], 9: [10]}),
                 ],
                 preconditioner=FieldSplitScheme(
                     # Exactly eliminate contact mechanics (assuming linearly-transformed system)
@@ -209,6 +214,9 @@ class ThermalSolver(IterativeHMSolver):
                                                 ),
                                             ),
                                         ),
+                                        # lambda bmat: PetscSOR(bmat.mat),
+                                        # lambda bmat: PetscHypreILU(bmat.mat),
+                                        # lambda bmat: BJacobiILU(bmat),
                                         lambda bmat: PetscILU(bmat.mat),
                                     ],
                                 ),

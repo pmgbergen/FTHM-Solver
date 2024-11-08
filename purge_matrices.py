@@ -37,7 +37,7 @@ for mat_file in os.listdir(data_dir):
     else:
         not_found += 1
         os.remove(data_dir / mat_file)
-        print("Not found:", mat_file)
+        print("Removed:", mat_file)
 
 
-print(f'{found} / {found + not_found}')
+print(f'Removed {not_found} / {found + not_found}')

@@ -198,6 +198,7 @@ class StatisticsSavingMixin(ContactIndicators, SolutionStrategy):
         self._linear_solve_stats.ut_max = abs(u_t).max()
 
     def save_matrix_state(self):
+        print('Saving matrix')
         save_path = Path("./matrices")
         save_path.mkdir(exist_ok=True)
         mat, rhs = self.linear_system

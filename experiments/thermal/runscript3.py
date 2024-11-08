@@ -1,9 +1,9 @@
-from experiments.thermal.thm_models import run_model, make_model
+from thm_models import run_model, make_model
 from plot_utils import write_dofs_info
 
 
 setup_reference = {
-    "geometry": 1,  # 1 - 2D 1 fracture, 2 - 2D 7 fractures;
+    "geometry": 1,  # 1 - 2D 1 fracture, 2 - 2D 7 fractures, 3;
     "barton_bandis_stiffness_type": 1,  # 0 - off; 1 - small; 2 - medium, 3 - large
     "friction_type": 1,  # 0 - small, 1 - medium, 2 - large
     "grid_refinement": 1,  # 1 - coarsest level
@@ -12,23 +12,12 @@ setup_reference = {
 }
 
 
-def experiment_1_grid_refinement():
+def experiment_3():
     setups = []
-
-    for grid_refinement in [
-        # 1,
-        # 2,
-        # 3,
-        # 4,
-        # 5,
-        # 6,
-        10,
-        33,
-    ]:
+    for grid_refinement in [1, 2, 3, 4]:
         setups.append(
             {
-                "physics": 1,
-                "geometry": 1,
+                "geometry": 3,
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": grid_refinement,
@@ -36,6 +25,7 @@ def experiment_1_grid_refinement():
                 "save_matrix": True,
             }
         )
+
     for setup in setups:
         model = make_model(setup)
         run_model(setup)
@@ -44,4 +34,4 @@ def experiment_1_grid_refinement():
 
 
 if __name__ == "__main__":
-    experiment_1_grid_refinement()
+    experiment_3()

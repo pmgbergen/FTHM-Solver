@@ -12,7 +12,6 @@ import scipy.linalg
 from matplotlib import pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from numpy.linalg import norm
-from pyamg.krylov import gmres
 from scipy.sparse import bmat
 from scipy.sparse.linalg import LinearOperator
 
@@ -135,7 +134,7 @@ def plot_eigs(mat, label="", logx=False):
         plt.xscale("log")
 
 
-def solve(
+def solve_pyamg(
     mat,
     prec=None,
     rhs=None,
@@ -143,6 +142,8 @@ def solve(
     plot_residuals=False,
     tol=1e-10,
 ):
+    from pyamg.krylov import gmres
+
     residuals = []
     residual_vectors = []
     if rhs is None:
@@ -831,8 +832,9 @@ def write_dofs_info(model):
     model.assemble_linear_system()
     data = dict()
     bmat = model.bmat[:]
-    for i in range(len(bmat.active_groups[0])):
+    for i in bmat.active_groups[0]:
         data[f"block {i}"] = bmat[0, i].shape[1]
+    data["total dofs"] = bmat.shape[0]
     cell_volumes = np.concatenate(
         [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]
     ).tolist()
@@ -865,7 +867,7 @@ def solve_petsc_3(
 ):
     bmat = bmat[ksp_scheme.get_groups()]
     krylov = ksp_scheme.make_solver(bmat)
-    
+
     rhs_local = bmat.project_rhs_to_local(rhs_global)
 
     if ksp_view:
@@ -878,20 +880,10 @@ def solve_petsc_3(
     info = krylov.ksp.getConvergedReason()
     eigs = krylov.ksp.computeEigenvalues()
 
-    # print(
-    #     "True residual permuted:", norm(mat_permuted.mat @ sol_Q - rhs_Q) / norm(rhs_Q)
-    # )
-
-    # if Qright is not None:
-    #     Qright = Qright[mat_permuted.active_groups]
-    #     sol = mat.project_rhs_to_local(Qright.project_rhs_to_global(Qright.mat @ sol_Q))
     print(
         "True residual:",
-        norm(bmat.mat @ sol_local - rhs_local)
-        / norm(rhs_local),
+        norm(bmat.mat @ sol_local - rhs_local) / norm(rhs_local),
     )
-    # else:
-    #     sol = sol_Q
 
     print("PETSc Converged Reason:", info)
     linestyle = "-"
@@ -902,7 +894,6 @@ def solve_petsc_3(
 
     plt.gcf().set_size_inches(14, 4)
 
-    # ax = plt.gca()
     ax = plt.subplot(1, 2, 1)
     if normalize_residual:
         residuals /= residuals[0]
@@ -925,7 +916,6 @@ def solve_petsc_3(
     ax = plt.subplot(1, 2, 2)
     if logx_eigs:
         eigs.real = abs(eigs.real)
-    # ax.scatter(eigs.real, eigs.imag, label=label, marker="$\lambda$", alpha=0.9)
     ax.scatter(eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS))
     ax.set_xlabel(r"Re($\lambda)$")
     ax.set_ylabel(r"Im($\lambda$)")
@@ -935,4 +925,3 @@ def solve_petsc_3(
     if logx_eigs:
         plt.xscale("log")
     ax.set_title("Eigenvalues estimate")
-    # return {"mat": bmat, "rhs": rhs_local, "prec": p}

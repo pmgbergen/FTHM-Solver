@@ -340,6 +340,16 @@ class PetscILU(PetscPC):
         super().__init__(mat=mat)
 
 
+class PetscHypreILU(PetscPC):
+    def __init__(self, mat=None, factor_levels: int = 0) -> None:
+        options = make_сlear_petsc_options()
+        options.setValue("pc_type", "hypre")
+        options.setValue("pc_hypre_type", "euclid")
+        options.setValue("pc_hypre_euclid_level", factor_levels)
+        # options.setValue("pc_hypre_type", "pilut")
+        super().__init__(mat=mat)
+
+
 class PetscPythonPC:
 
     def __init__(self, pc):
@@ -620,17 +630,40 @@ def inv_block_diag_3x3(mat):
     return scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)
 
 
-def make_scaling(bmat: "BlockMatrixStorage", scale_groups: list[int] = None) -> "BlockMatrixStorage":
+def make_scaling(
+    bmat: "BlockMatrixStorage", scale_groups: list[int] = None
+) -> "BlockMatrixStorage":
     if scale_groups is None:
         scale_groups = bmat.active_groups[0]
     R = bmat.empty_container()
     assert R.active_groups[0] == R.active_groups[1]
+    mats = []
     for i in R.active_groups[0]:
         tmp = bmat[i, i].mat
         vals = scipy.sparse.eye(*tmp.shape)
         if i in scale_groups:
             vals /= abs(tmp).max()
-        R[i, i] = vals
+        mats.append(vals)
+    R.mat = scipy.sparse.block_diag(mats, format="csr")
+    return R
+
+
+def make_scaling_1(
+    bmat: "BlockMatrixStorage", scale_groups: dict[int, list[int]]
+) -> "BlockMatrixStorage":
+    R = bmat.empty_container()
+    assert R.active_groups[0] == R.active_groups[1]
+    mats = []
+    for i in R.active_groups[0]:
+        tmp = bmat[i, i].mat
+        mats.append(scipy.sparse.eye(*tmp.shape))
+
+    for src, targets in scale_groups.items():
+        src_nrm = abs(bmat[src, src].mat).max()
+        for target in targets:
+            target_nrm = abs(bmat[target, target].mat).max()
+            mats[target] *= src_nrm / target_nrm
+    R.mat = scipy.sparse.block_diag(mats, format="csr")
     return R
 
 
@@ -685,3 +718,21 @@ class RearrangeAOS:
         x_transformed = self.solve.dot(rhs_transformed)
         x = self.Rcol @ x_transformed
         return x
+
+
+class BJacobiILU:
+
+    def __init__(self, bmat: "BlockMatrixStorage"):
+        self.bmat: "BlockMatrixStorage" = bmat
+        self.shape = bmat.shape
+        self.precs = [
+            PetscHypreILU(self.bmat[[group]].mat) for group in bmat.active_groups[0]
+        ]
+
+    def dot(self, x: np.ndarray) -> np.ndarray:
+        solution = np.zeros_like(x)
+        for dofs_rhs, dofs_sol, prec in zip(
+            *self.bmat.get_active_local_dofs(grouped=True), self.precs
+        ):
+            solution[dofs_sol] = prec.dot(x[dofs_rhs])
+        return solution

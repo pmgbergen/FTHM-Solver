@@ -1,4 +1,6 @@
 import numpy as np
+from numpy.random import MT19937
+from numpy.random import RandomState, SeedSequence
 import porepy as pp
 from porepy.models.constitutive_laws import CubicLawPermeability
 from porepy.applications.md_grids.fracture_sets import (
@@ -95,8 +97,16 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
     def initial_condition(self) -> None:
         super().initial_condition()
         num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
-        p = self.fluid.pressure() * np.ones(num_cells)
-        t = self.fluid.temperature() * np.ones(num_cells)
+        rs = RandomState(MT19937(SeedSequence(123456789)))
+        p = self.fluid.pressure() * np.ones(num_cells) * rs.random(num_cells)
+        t = self.fluid.temperature() * np.ones(num_cells) * rs.random(num_cells)
+
+        num_cells = sum([sd.num_cells for sd in self.mdg.subdomains(dim=self.nd)])
+        u = rs.random(num_cells * self.nd) * 1e-1
+
+        num_cells = sum([it.num_cells for it in self.mdg.interfaces()])
+        t_flux = rs.random(num_cells * self.nd) * 100
+
         for time_step_index in self.time_step_indices:
             self.equation_system.set_variable_values(
                 p,
@@ -108,6 +118,19 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
                 variables=[self.temperature_variable],
                 time_step_index=time_step_index,
             )
+            # self.equation_system.set_variable_values(
+            #     u,
+            #     variables=[self.displacement_variable],
+            #     time_step_index=time_step_index,
+            # )
+            # self.equation_system.set_variable_values(
+            #     t_flux,
+            #     variables=[
+            #         self.interface_fourier_flux_variable,
+            #         self.interface_enthalpy_flux_variable,
+            #     ],
+            #     time_step_index=time_step_index,
+            # )
 
         for iterate_index in self.iterate_indices:
             self.equation_system.set_variable_values(
@@ -120,6 +143,19 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
                 variables=[self.temperature_variable],
                 iterate_index=iterate_index,
             )
+            # self.equation_system.set_variable_values(
+            #     u,
+            #     variables=[self.displacement_variable],
+            #     iterate_index=iterate_index,
+            # )
+            # self.equation_system.set_variable_values(
+            #     t_flux,
+            #     variables=[
+            #         self.interface_fourier_flux_variable,
+            #         self.interface_enthalpy_flux_variable,
+            #     ],
+            #     iterate_index=iterate_index,
+            # )
 
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)

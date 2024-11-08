@@ -157,9 +157,9 @@ class IterativeHMSolver(IterativeLinearSolver):
         # We assume that normal equations go first.
         normal_blocks = self.equation_groups[contact_group]
         num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
-        # One tangential block matches one normal for 2D and 2 tangential blocks for 3D.
+        # One tangential block matches 1 normal for 2D and 1 tangential block for 3D.
         all_contact_blocks = [
-            nb + i * num_fracs for i in range(self.nd) for nb in normal_blocks
+            nb + i * num_fracs for i in range(2) for nb in normal_blocks
         ]
 
         eq_dofs_corrected = []

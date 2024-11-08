@@ -15,16 +15,7 @@ setup_reference = {
 def experiment_2():
     setups = []
 
-    for grid_refinement in [
-        # 1,
-        # 2,
-        3,
-        4,
-        5,
-        6,
-        10,
-        33,
-    ]:
+    for grid_refinement in [1, 2, 3, 4, 5, 6, 10, 33]:
         setups.append(
             {
                 "physics": 1,

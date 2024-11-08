@@ -107,7 +107,7 @@ class IterativeLinearSolver(pp.SolutionStrategy):
         scheme = self.make_solver_scheme()
         # Constructing the solver.
         bmat = self.bmat[scheme.get_groups()]
-        solver = scheme.make_solver(self.bmat)
+        solver = scheme.make_solver(bmat)
 
         # Permute the rhs groups to match mat_permuted.
         rhs_local = bmat.project_rhs_to_local(rhs)
