@@ -858,13 +858,15 @@ def plot_eigs_exact(mat, logx: bool = True):
 
 def solve_petsc_3(
     bmat: "BlockMatrixStorage",
-    rhs_global: np.ndarray,
+    rhs_global: np.ndarray = None,
     ksp_scheme: "KSPScheme" = None,
     label="",
     logx_eigs=False,
     normalize_residual=False,
     ksp_view: bool = False,
 ):
+    if rhs_global is None:
+        rhs_global = np.ones(bmat.shape[0])
     bmat = bmat[ksp_scheme.get_groups()]
     krylov = ksp_scheme.make_solver(bmat)
 

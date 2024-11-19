@@ -14,7 +14,12 @@ setup_reference = {
 
 def experiment_3():
     setups = []
-    for grid_refinement in [1, 2, 3, 4]:
+    for grid_refinement in [
+        # 1,
+        # 2,
+        # 3,
+        3.3,
+    ]:
         setups.append(
             {
                 "geometry": 3,
@@ -22,7 +27,7 @@ def experiment_3():
                 "friction_type": 1,
                 "grid_refinement": grid_refinement,
                 "solver": 2,
-                "save_matrix": True,
+                "save_matrix": False,
             }
         )
 

@@ -335,7 +335,8 @@ class PetscILU(PetscPC):
         options.setValue("pc_type", "ilu")
         options.setValue("pc_factor_levels", factor_levels)
         options.setValue("pc_factor_diagonal_fill", None)  # Doesn't affect
-        options.setValue("pc_factor_mat_ordering_type", "rcm")
+         # For some reason, works worse with thermal model and intersections.
+        # options.setValue("pc_factor_mat_ordering_type", "rcm")
         options.setValue("pc_factor_nonzeros_along_diagonal", None)
         super().__init__(mat=mat)
 
@@ -497,11 +498,22 @@ class PetscSOR(PetscPC):
         super().__init__(mat=mat)
 
 
-def extract_diag_inv(mat):
+def extract_diag_inv(mat, eliminate_zeros=False):
     diag = mat.diagonal()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
+    if eliminate_zeros:
+        diag[abs(diag) < 1e-30] = 1
     diag_inv = 1 / diag
     ones.data[:] = diag_inv
+    return ones
+
+
+def extract_diag(mat, lump=False):
+    ones = scipy.sparse.eye(mat.shape[0], format='csr')
+    if lump:
+        ones.data[:] = np.array(abs(mat).sum(axis=1)).ravel()
+    else:
+        ones.data[:] = mat.diagonal()
     return ones
 
 

@@ -463,6 +463,7 @@ class BlockMatrixStorage:
         self,
         groups=True,
         annot=True,
+        mean=False,
     ):
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         data = []
@@ -475,7 +476,10 @@ class BlockMatrixStorage:
                 if submat.data.size == 0:
                     row_data.append(np.nan)
                 else:
-                    row_data.append(abs(submat).max())
+                    if not mean:
+                        row_data.append(abs(submat).max())
+                    else:
+                        row_data.append(abs(submat).mean())
             data.append(row_data)
 
         if groups:
@@ -579,6 +583,11 @@ class FieldSplitScheme(PreconditionerScheme):
         assert len(set(groups_0).intersection(groups_1)) == 0
 
         submat_00 = mat_orig[groups_0, groups_0]
+        if submat_00.shape[0] == 0 or submat_00.shape[1] == 0:
+            if len(groups_1) == 0:
+                raise ValueError
+            submat_11 = mat_orig[groups_1, groups_1]
+            return self.complement.make_solver(submat_11)
 
         if self.color_spy:
             submat_00.color_spy()

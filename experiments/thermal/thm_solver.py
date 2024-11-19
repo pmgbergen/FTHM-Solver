@@ -32,6 +32,11 @@ import porepy as pp
 
 class ThermalSolver(IterativeHMSolver):
 
+    def before_nonlinear_iteration(self):
+        t = self.temperature(self.mdg.subdomains()).value(self.equation_system)
+        print(f"{min(t) }, {max(t) }")
+        super().before_nonlinear_iteration()
+
     def simulation_name(self) -> str:
         name = "stats_thermal"
         setup = self.params["setup"]
@@ -169,7 +174,7 @@ class ThermalSolver(IterativeHMSolver):
                     lambda bmat: self.Qright(
                         contact_group=self.CONTACT_GROUP, u_intf_group=4
                     ),
-                    lambda bmat: make_scaling(bmat),
+                    # lambda bmat: make_scaling(bmat),
                     # lambda bmat: make_scaling_1(bmat, {6: [7], 9: [10]}),
                 ],
                 preconditioner=FieldSplitScheme(

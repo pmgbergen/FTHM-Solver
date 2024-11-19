@@ -192,10 +192,13 @@ class StatisticsSavingMixin(ContactIndicators, SolutionStrategy):
         u_n = (nd_vec_to_normal @ u).value(self.equation_system)
         u_t = (nd_vec_to_tangential @ u).value(self.equation_system)
 
-        self._linear_solve_stats.lambdan_max = abs(t_n).max()
-        self._linear_solve_stats.lambdat_max = abs(t_t).max()
-        self._linear_solve_stats.un_max = abs(u_n).max()
-        self._linear_solve_stats.ut_max = abs(u_t).max()
+        try:
+            self._linear_solve_stats.lambdan_max = abs(t_n).max()
+            self._linear_solve_stats.lambdat_max = abs(t_t).max()
+            self._linear_solve_stats.un_max = abs(u_n).max()
+            self._linear_solve_stats.ut_max = abs(u_t).max()
+        except ValueError:
+            pass
 
     def save_matrix_state(self):
         print('Saving matrix')

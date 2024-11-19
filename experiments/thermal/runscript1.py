@@ -16,12 +16,12 @@ def experiment_1_grid_refinement():
     setups = []
 
     for grid_refinement in [
-        # 1,
-        # 2,
-        # 3,
-        # 4,
-        # 5,
-        # 6,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
         10,
         33,
     ]:

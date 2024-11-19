@@ -84,8 +84,8 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
             self.fluid_source_key, domains=subdomains
         )
         temperature_inlet = pp.ad.Scalar(
-            self.fluid.convert_units(300, "K") - self.fluid.temperature()
-        )
+            self.fluid.convert_units(300, "K")
+        ) - self.temperature(subdomains)
         cp = pp.ad.Scalar(self.fluid.specific_heat_capacity())
         rho = self.fluid_density(subdomains)
         source = temperature_inlet * cp * rho * volumetric_source_intensity
@@ -98,11 +98,19 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
         super().initial_condition()
         num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
         rs = RandomState(MT19937(SeedSequence(123456789)))
-        p = self.fluid.pressure() * np.ones(num_cells) * rs.random(num_cells)
-        t = self.fluid.temperature() * np.ones(num_cells) * rs.random(num_cells)
+        p = (
+            self.fluid.pressure()
+            * np.ones(num_cells)
+            * (1 + rs.random(num_cells) * 1e-6)
+        )
+        t = (
+            self.fluid.temperature()
+            * np.ones(num_cells)
+            * (1 + rs.random(num_cells) * 1e-6)
+        )
 
         num_cells = sum([sd.num_cells for sd in self.mdg.subdomains(dim=self.nd)])
-        u = rs.random(num_cells * self.nd) * 1e-1
+        u = rs.random(num_cells * self.nd) * 1e-6
 
         num_cells = sum([it.num_cells for it in self.mdg.interfaces()])
         t_flux = rs.random(num_cells * self.nd) * 100
@@ -322,6 +330,9 @@ class ConstraintLineSearchNonlinearSolver(
 
 def make_model(setup: dict):
     geometry_type = setup["geometry"]
+    if geometry_type == 0:
+        from experiments.thermal.runscript_nofrac import make_model
+        return make_model(setup)
     if geometry_type == 1:
 
         class Setup(Geometry2D1F, ThermalSolver, StatisticsSavingMixin, Physics):
@@ -330,18 +341,7 @@ def make_model(setup: dict):
     elif geometry_type == 2:
 
         class Setup(Geometry2D7F, ThermalSolver, StatisticsSavingMixin, Physics):
-            def before_nonlinear_iteration(self):
-                # t = self.temperature(self.mdg.subdomains()).value(self.equation_system)
-                # print(f"{min(t) }, {max(t) }")
-
-                # # 3072
-                # frac = self.mdg.subdomains(dim=self.nd-1)
-                # intersec = self.mdg.subdomains(dim=self.nd-2)
-                # # self.energy_balance_equation(intersec)
-
-                # self.mass_balance_equation(frac + intersec)
-
-                super().before_nonlinear_iteration()
+            pass
 
     elif geometry_type == 3:
 
@@ -373,9 +373,9 @@ def make_model(setup: dict):
                         "porosity": 1.3e-2,  # [-]
                         "specific_storage": 4.74e-10,  # [Pa^-1]
                         # Thermal
-                        "specific_heat_capacity": 920.0,
-                        "thermal_conductivity": 1.7295772056,  # Diffusion coefficient
-                        "thermal_expansion": 2.5e-6,
+                        "specific_heat_capacity": 720.7,
+                        "thermal_conductivity": 0.1,  # Diffusion coefficient
+                        "thermal_expansion": 9.66e-6,
                         "temperature": 350,
                     }
                     | get_barton_bandis_config(setup)
@@ -389,10 +389,10 @@ def make_model(setup: dict):
                     "density": 998.2,  # [kg m^-3]
                     "viscosity": 1.002e-3,  # [Pa s], absolute viscosity
                     # Thermal
-                    "specific_heat_capacity": 2093.4,  # Вместимость
-                    "thermal_conductivity": 0.15,  # Diffusion coefficient
+                    "specific_heat_capacity": 4182.0,  # Вместимость
+                    "thermal_conductivity": 0.5975,  # Diffusion coefficient
                     "temperature": 350,
-                    "thermal_expansion": 2.5e-4,  # Density(T)
+                    "thermal_expansion": 2.068e-4,  # Density(T)
                 }
             ),
         },
@@ -408,6 +408,8 @@ def make_model(setup: dict):
         "meshing_arguments": {
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
+        # experimental
+        "adaptive_indicator_scaling": 1,  # Scale the indicator adaptively to increase robustness
     }
     return Setup(params)
 
@@ -426,11 +428,10 @@ def run_model(setup: dict):
             "nl_convergence_tol_res": 1e-7,
             "nl_divergence_tol": 1e8,
             "max_iterations": 25,
-            # # experimental
+            # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
-            # "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
+            "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
             "Local_line_search": 1,  # Set to 0 to use turn off the tailored line search
-            "adaptive_indicator_scaling": 1,  # Scale the indicator adaptively to increase robustness
         },
     )
 

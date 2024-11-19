@@ -205,35 +205,45 @@ class IterativeHMSolver(IterativeLinearSolver):
     def Qright(self, contact_group: int, u_intf_group: int) -> BlockMatrixStorage:
         """Assemble the right linear transformation."""
         J = self.bmat
-        J55_inv = inv_block_diag(
-            J[u_intf_group, u_intf_group].mat, nd=self.nd, lump=False
-        )
         # Sorted according to groups. If not done, the matrix can be in porepy order,
         # which does not guarantee that diagonal groups are truly on diagonals.
         Qright = J.empty_container()[:]
+
+        if contact_group not in J.active_groups[0]:
+            Qright.mat = csr_ones(Qright.shape[0])
+            return Qright
+
+        J55 = J[u_intf_group, u_intf_group].mat
+        J55_inv = inv_block_diag(J55, nd=self.nd, lump=False)
+
         Qright.mat = csr_ones(Qright.shape[0])
         Qright[u_intf_group, contact_group] = (
             -J55_inv @ J[u_intf_group, contact_group].mat
         )
 
-        E = (
-            scipy.sparse.eye(J55_inv.shape[0])
-            - J[u_intf_group, u_intf_group].mat @ J55_inv
-        ) @ J[u_intf_group, contact_group].mat
-        self._linear_solve_stats.error_matrix_contribution = (
-            abs(E.data).max() / abs(J[u_intf_group, contact_group].mat.data).max()
-        )
+        # E = (
+        #     scipy.sparse.eye(J55_inv.shape[0])
+        #     - J55 @ J55_inv
+        # ) @ J[u_intf_group, contact_group].mat
+        # self._linear_solve_stats.error_matrix_contribution = (
+        #     abs(E.data).max() / abs(J[u_intf_group, contact_group].mat.data).max()
+        # )
         return Qright
 
     def Qleft(self, contact_group: int, u_intf_group: int) -> BlockMatrixStorage:
         """Assemble the left linear transformation."""
         J = self.bmat
-        J55_inv = inv_block_diag(
-            J[u_intf_group, u_intf_group].mat, nd=self.nd, lump=False
-        )
         # Sorted according to groups. If not done, the matrix can be in porepy order,
         # which does not guarantee that diagonal groups are truly on diagonals.
         Qleft = J.empty_container()[:]
+
+        if contact_group not in J.active_groups[0]:
+            Qleft.mat = csr_ones(Qleft.shape[0])
+            return Qleft
+
+        J55_inv = inv_block_diag(
+            J[u_intf_group, u_intf_group].mat, nd=self.nd, lump=False
+        )
         Qleft.mat = csr_ones(Qleft.shape[0])
         Qleft[contact_group, u_intf_group] = (
             -J[contact_group, u_intf_group].mat @ J55_inv
