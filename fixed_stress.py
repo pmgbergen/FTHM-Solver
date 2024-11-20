@@ -188,7 +188,7 @@ def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int, groups=Non
         get_fs_fractures_analytical(model),
     ]
     result = J.empty_container()[groups]
-    result[groups].mat = scipy.sparse.block_diag(diag, format="csr")
+    result[groups] = scipy.sparse.block_diag(diag, format="csr")
     return result
 
 

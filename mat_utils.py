@@ -295,7 +295,9 @@ class PetscAMGMechanics(PetscPC):
         if dim == 3:
             options["mg_levels_pc_factor_levels"] = 0
         else:
-            options["mg_levels_pc_factor_levels"] = 5
+            options["mg_levels_pc_factor_levels"] = 0
+
+        options['pc_gamg_threshold'] = 0.1
 
         # options["pc_type"] = "gamg"
         # options["pc_gamg_type"] = "agg"
@@ -310,7 +312,7 @@ class PetscAMGMechanics(PetscPC):
 
 
 class PetscAMGFlow(PetscPC):
-    def __init__(self, mat=None) -> None:
+    def __init__(self, mat=None, dim: int = 2) -> None:
         options = make_сlear_petsc_options()
 
         options["pc_type"] = "hypre"
@@ -318,6 +320,11 @@ class PetscAMGFlow(PetscPC):
         options["pc_hypre_boomeramg_max_iter"] = 1
         # options["pc_hypre_boomeramg_cycle_type"] = "W"
         options["pc_hypre_boomeramg_truncfactor"] = 0.3
+
+        if dim == 3:
+            options['pc_hypre_boomeramg_strong_threshold'] = 0.7
+        else:
+            options['pc_hypre_boomeramg_strong_threshold'] = 0.25
 
         super().__init__(mat=mat, block_size=1)
 

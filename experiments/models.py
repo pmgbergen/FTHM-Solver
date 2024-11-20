@@ -342,7 +342,7 @@ def make_model(setup: dict):
                         "normal_permeability": 1e-4,
                         "permeability": 1e-14,  # [m^2]
                         # granite
-                        "biot_coefficient": 0.47,  # [-]
+                        "biot_coefficient": 100,  # [-]
                         "density": 2683.0,  # [kg * m^-3]
                         "porosity": 1.3e-2,  # [-]
                         "specific_storage": 4.74e-10,  # [Pa^-1]
@@ -372,8 +372,20 @@ def make_model(setup: dict):
         "meshing_arguments": {
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
+        # experimental
+        "adaptive_indicator_scaling": 1,  # Scale the indicator adaptively to increase robustness
     }
     return Setup(params)
+
+
+from porepy.numerics.nonlinear import line_search
+
+class ConstraintLineSearchNonlinearSolver(
+    line_search.ConstraintLineSearch,  # The tailoring to contact constraints.
+    line_search.SplineInterpolationLineSearch,  # Technical implementation of the actual search along given update direction
+    line_search.LineSearchNewtonSolver,  # General line search.
+):
+    """Collect all the line search methods in one class."""
 
 
 def run_model(setup: dict):
@@ -390,6 +402,10 @@ def run_model(setup: dict):
             "nl_convergence_tol_res": 1e-6,
             "nl_divergence_tol": 1e8,
             "max_iterations": 25,
+            # experimental
+            "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
+            "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
+            "Local_line_search": 1,  # Set to 0 to use turn off the tailored line search
         },
     )
 

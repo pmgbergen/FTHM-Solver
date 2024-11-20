@@ -11,6 +11,8 @@ from experiments.thermal.thm_models import (
 from stats import StatisticsSavingMixin
 # from experiments.thermal.thm_solver import ThermalSolver
 
+from porepy.examples.mandel_biot import MandelSetup
+
 XMAX = 1
 YMAX = 1
 ZMAX = 1
@@ -33,7 +35,7 @@ class Geometry2D0F(pp.SolutionStrategy):
         return src
 
 
-class Setup(Geometry2D0F, Solver, StatisticsSavingMixin, Physics):
+class Setup(Geometry2D0F, Solver, StatisticsSavingMixin, MandelSetup):
     pass
 
 
@@ -50,50 +52,32 @@ def make_model(setup: dict):
             "solid": pp.SolidConstants(
                 (
                     {
-                        "shear_modulus": 1.2e10,  # [Pa]
-                        "lame_lambda": 1.2e10,  # [Pa]
-                        "dilation_angle": 5 * np.pi / 180,  # [rad]
-                        "residual_aperture": 1e-4,  # [m]
-                        "normal_permeability": 1e-4,
-                        "permeability": 1e-14,  # [m^2]
-                        # granite
-                        "biot_coefficient": 0.47,  # [-]
-                        "density": 2683.0,  # [kg * m^-3]
-                        "porosity": 1.3e-2,  # [-]
-                        "specific_storage": 4.74e-10,  # [Pa^-1]
-                        # Thermal
-                        "specific_heat_capacity": 720.7,
-                        "thermal_conductivity": 0.1,  # Diffusion coefficient
-                        "thermal_expansion": 9.66e-6,
-                        "temperature": 350,
+                        "lame_lambda": 1.65e9,  # [Pa]
+                        "shear_modulus": 2.475e9,  # [Pa]
+                        "specific_storage": 6.0606e-11,  # [Pa^-1]
+                        "permeability": 9.869e-14,  # [m^2]
+                        "biot_coefficient": 1.0,  # [-]
                     }
-                    | get_barton_bandis_config(setup)
-                    | get_friction_coef_config(setup)
+                    # | get_barton_bandis_config(setup)
+                    # | get_friction_coef_config(setup)
                 )
             ),
             "fluid": pp.FluidConstants(
                 {
-                    "pressure": 1e6,  # [Pa]
-                    "compressibility": 4.559 * 1e-10,  # [Pa^-1], fluid compressibility
-                    "density": 998.2,  # [kg m^-3]
-                    "viscosity": 1.002e-3,  # [Pa s], absolute viscosity
-                    # Thermal
-                    "specific_heat_capacity": 4182.0,  # Вместимость
-                    "thermal_conductivity": 0.5975,  # Diffusion coefficient
-                    "temperature": 350,
-                    "thermal_expansion": 2.068e-4,  # Density(T)
+                    "density": 1e3,  # [kg * m^-3]
+                    "viscosity": 1e-3,  # [Pa * s]
                 }
             ),
         },
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
-            dt_init=dt * HOUR,
+            dt_init=10,
             # dt_min_max=(0.01, 0.5),
-            schedule=[0, 3 * HOUR, 6 * HOUR],
+            schedule=[0, 1e3],
             iter_max=25,
             constant_dt=True,
         ),
-        "units": pp.Units(kg=1e10),
+        "units": pp.Units(kg=1e9),
         "meshing_arguments": {
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },

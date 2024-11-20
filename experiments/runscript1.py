@@ -15,14 +15,7 @@ setup_reference = {
 
 def experiment_1_barton_bandis_friction():
     setups = []
-    for barton_bandis in [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-    ]:
+    for barton_bandis in [0, 1, 2, 3, 4, 5]:
         for friction in [0, 1, 2]:
             for solver in [1, 2]:
                 setups.append(

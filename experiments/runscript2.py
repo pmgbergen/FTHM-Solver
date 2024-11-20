@@ -6,13 +6,13 @@ def experiment_2():
     setups = []
     for grid_refinement in [
         1,
-        # 2,
-        # 3,
-        # 4,
-        # 5,
-        # 6,
-        # 10,
-        # 33,
+        2,
+        3,
+        4,
+        5,
+        6,
+        10,
+        33,
     ]:
         setups.append(
             {
@@ -22,7 +22,7 @@ def experiment_2():
                 "friction_type": 1,
                 "grid_refinement": grid_refinement,
                 "solver": 2,
-                "save_matrix": False,
+                "save_matrix": True,
             }
         )
 
