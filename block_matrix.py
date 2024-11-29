@@ -360,10 +360,12 @@ class BlockMatrixStorage:
         )
         all_rows, all_cols = self.get_active_local_dofs(grouped=True)
 
+        groups_row, groups_col = self.active_groups
+
         nonzero_idx = get_nonzero_indices(
             A=self.mat,
-            row_indices=np.concatenate([all_rows[i] for i in group_row_idx]),
-            col_indices=np.concatenate([all_cols[i] for i in group_col_idx]),
+            row_indices=np.concatenate([all_rows[groups_row.index(i)] for i in group_row_idx]),
+            col_indices=np.concatenate([all_cols[groups_col.index(i)] for i in group_col_idx]),
         )
         self.mat.data[nonzero_idx] = 0
 

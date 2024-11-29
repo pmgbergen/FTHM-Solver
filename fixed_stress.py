@@ -178,17 +178,19 @@ def get_fs_fractures_analytical(model):
 
 
 def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int, groups=None):
+    assert groups is None
     if groups is None:
         groups = [p_mat_group, p_frac_group]
     assert p_mat_group in groups
     assert p_frac_group in groups
 
     diag = [
-        get_fixed_stress_stabilization(model),
-        get_fs_fractures_analytical(model),
+        get_fixed_stress_stabilization(model) * 1,
+        get_fs_fractures_analytical(model) * 1e0,
     ]
     result = J.empty_container()[groups]
-    result[groups] = scipy.sparse.block_diag(diag, format="csr")
+    result.mat = scipy.sparse.block_diag(diag, format="csr")
+    # result[groups] = scipy.sparse.block_diag(diag, format="csr")
     return result
 
 

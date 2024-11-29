@@ -104,6 +104,12 @@ class IterativeLinearSolver(pp.SolutionStrategy):
             result[:] = np.nan
             return result
         
+        # Check if we reached steady state and no solve needed.
+        # residual_norm = self.compute_residual_norm(rhs, None)
+        # if residual_norm < self.params["nl_convergence_tol_res"]:
+        #     result = np.zeros_like(rhs)
+        #     return result
+        
         scheme = self.make_solver_scheme()
         # Constructing the solver.
         bmat = self.bmat[scheme.get_groups()]

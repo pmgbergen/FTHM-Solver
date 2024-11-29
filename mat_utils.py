@@ -288,25 +288,32 @@ class PetscAMGMechanics(PetscPC):
     def __init__(self, dim: int, mat=None, null_space: np.ndarray = None) -> None:
         options = make_сlear_petsc_options()
 
-        options["pc_type"] = "gamg"
-        options["mg_levels_ksp_type"] = "richardson"
-        options["mg_levels_ksp_max_it"] = 1
-        options["mg_levels_pc_type"] = "ilu"
-        if dim == 3:
-            options["mg_levels_pc_factor_levels"] = 0
-        else:
-            options["mg_levels_pc_factor_levels"] = 0
-
-        options['pc_gamg_threshold'] = 0.1
-
         # options["pc_type"] = "gamg"
-        # options["pc_gamg_type"] = "agg"
-        # options["pc_gamg_threshold"] = "0.03"
-        # options["pc_gamg_square_graph"] = "1"
-        # options["pc_gamg_sym_graph"] = None
         # options["mg_levels_ksp_type"] = "richardson"
-        # options["mg_levels_pc_type"] = "sor"
-        # options['pc_gamg_agg_nsmooths'] = 2
+        # options["mg_levels_ksp_max_it"] = 1
+        # options["mg_levels_pc_type"] = "ilu"
+        # options['mg_levels_pc_jacobi_type'] = 'rowl1'
+        # options['mg_levels_pc_jacobi_rowl1_scale'] = True
+        # if dim == 3:
+        #     options["mg_levels_pc_factor_levels"] = 0
+        # else:
+        #     options["mg_levels_pc_factor_levels"] = 5
+
+        # options['pc_gamg_threshold'] = 0.1
+
+        options["pc_type"] = "gamg"
+        # options["pc_gamg_threshold"] = 0.11  # GOOD ONE FOR PROBLEM 1
+        # options['pc_gamg_agg_nsmooths'] = 3
+
+        # options["pc_gamg_threshold"] = 0.145  # GOOD ONE FOR PROBLEM 2
+        # options["mg_levels_ksp_max_it"] = 3
+        # options['pc_gamg_agg_nsmooths'] = 5
+
+        options["pc_gamg_threshold"] = 0.2  # GOOD ONE FOR PROBLEM 2
+        options["mg_levels_ksp_max_it"] = 3
+        options['pc_gamg_agg_nsmooths'] = 5
+
+        options['pc_gamg_sym_graph'] = True
 
         super().__init__(mat=mat, block_size=dim, null_space=null_space)
 
@@ -321,10 +328,10 @@ class PetscAMGFlow(PetscPC):
         # options["pc_hypre_boomeramg_cycle_type"] = "W"
         options["pc_hypre_boomeramg_truncfactor"] = 0.3
 
-        if dim == 3:
-            options['pc_hypre_boomeramg_strong_threshold'] = 0.7
-        else:
-            options['pc_hypre_boomeramg_strong_threshold'] = 0.25
+        # if dim == 3:
+        #     options['pc_hypre_boomeramg_strong_threshold'] = 0.7
+        # else:
+        #     options['pc_hypre_boomeramg_strong_threshold'] = 0.25
 
         super().__init__(mat=mat, block_size=1)
 
@@ -336,13 +343,20 @@ class PetscSOR(PetscPC):
         super().__init__(mat=mat)
 
 
+class PetscLU(PetscPC):
+    def __init__(self, mat=None) -> None:
+        options = make_сlear_petsc_options()
+        options.setValue("pc_type", "lu")
+        super().__init__(mat=mat)
+
+
 class PetscILU(PetscPC):
     def __init__(self, mat=None, factor_levels: int = 0) -> None:
         options = make_сlear_petsc_options()
         options.setValue("pc_type", "ilu")
         options.setValue("pc_factor_levels", factor_levels)
         options.setValue("pc_factor_diagonal_fill", None)  # Doesn't affect
-         # For some reason, works worse with thermal model and intersections.
+        # For some reason, works worse with thermal model and intersections.
         # options.setValue("pc_factor_mat_ordering_type", "rcm")
         options.setValue("pc_factor_nonzeros_along_diagonal", None)
         super().__init__(mat=mat)
@@ -437,7 +451,7 @@ class PetscGMRES(PetscKrylovSolver):
         pc_side: Literal["left", "right"] = "right",
     ) -> None:
         self.mat = mat
-        restart = 20
+        restart = 30
 
         options = make_сlear_petsc_options()
         options.setValue("ksp_type", "gmres")
@@ -449,6 +463,11 @@ class PetscGMRES(PetscKrylovSolver):
 
         options.setValue("ksp_max_it", 3 * restart)
         options.setValue("ksp_gmres_restart", restart)
+
+        # options.setValue('ksp_gmres_modifiedgramschmidt', True)
+
+        options.setValue('ksp_gmres_classicalgramschmidt', True)
+        options.setValue('ksp_gmres_cgs_refinement_type', 'refine_ifneeded')
 
         if pc_side == "left":
             options.setValue("ksp_pc_side", "left")

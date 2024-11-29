@@ -828,8 +828,8 @@ def solve_petsc_new(
 
 def write_dofs_info(model):
     filename = f"dofs_info_{model.simulation_name()}.json"
-    model.prepare_simulation()
-    model.assemble_linear_system()
+    # model.prepare_simulation()
+    # model.assemble_linear_system()
     data = dict()
     bmat = model.bmat[:]
     for i in bmat.active_groups[0]:

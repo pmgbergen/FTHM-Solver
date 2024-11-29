@@ -48,6 +48,7 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
         if t < tdiv2:
             return t / tdiv2 * peak_intensity
         elif t < t_max:
+            # return peak_intensity
             return peak_intensity - peak_intensity * (t - tdiv2) / tdiv2
         else:
             return 0
@@ -99,6 +100,16 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
         sides = self.domain_boundary_sides(sd)
         bc = pp.BoundaryCondition(sd, sides.all_bf, "dir")
         return bc
+    
+    def bc_values_pressure(self, boundary_grid):
+        vals = super().bc_values_pressure(boundary_grid)
+        sides = self.domain_boundary_sides(boundary_grid)
+        if self.nd == 2:
+            vals[sides.north] *= 10
+        else:
+            # pass
+            vals[sides.north] *= 3
+        return vals
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
         sides = self.domain_boundary_sides(sd)
@@ -110,7 +121,7 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
         sides = self.domain_boundary_sides(boundary_grid)
         bc_values = np.zeros((self.nd, boundary_grid.num_cells))
         # 10 Mpa
-        x = 0.5  # 1
+        x = 0.5
         val = self.solid.convert_units(1e7, units="Pa")
         bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
         bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
@@ -172,10 +183,12 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
         raise ValueError(physics_type)
 
 
-XMAX = 1
-YMAX = 1
-ZMAX = 1
-
+XMAX = 1000
+YMAX = 1000
+ZMAX = 1000
+# XMAX = 1
+# YMAX = 1
+# ZMAX = 1
 
 class Geometry2D1F(pp.SolutionStrategy):
 
@@ -199,11 +212,31 @@ class Geometry2D1F(pp.SolutionStrategy):
 class Geometry2D7F(pp.SolutionStrategy):
 
     def set_domain(self) -> None:
-        self._domain = pp.Domain({"xmin": 0, "xmax": 2, "ymin": 0, "ymax": 1})
+        self._domain = pp.Domain({"xmin": 0, "xmax": 2 * XMAX, "ymin": 0, "ymax": 1 * YMAX})
 
     def set_fractures(self) -> None:
-        self._fractures = seven_fractures_one_L_intersection()
-
+        points = np.array(
+            [
+                [0.2, 0.7],
+                [0.5, 0.7],
+                [0.8, 0.65],
+                [1, 0.3],
+                [1.8, 0.4],
+                [0.2, 0.3],
+                [0.6, 0.25],
+                [1.0, 0.4],
+                [1.7, 0.85],
+                [1.5, 0.65],
+                [2.0, 0.55],
+                [1.5, 0.05],
+                [1.4, 0.25],
+            ]
+        ).T
+        points[0] *= XMAX
+        points[1] *= YMAX
+        # The fracture endpoints are given as indices in the points array
+        fracs = np.array([[0, 1], [1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]]).T
+        self._fractures = pp.frac_utils.pts_edges_to_linefractures(points, fracs)
 
 class Geometry3D1F(pp.SolutionStrategy):
 
@@ -325,9 +358,11 @@ def make_model(setup: dict):
     else:
         raise ValueError(geometry_type)
 
-    dt = 0.5
+    dt = 0.5 / 3
 
     cell_size_multiplier = setup["grid_refinement"]
+
+    DAY = 24 * 60 * 60
 
     params = {
         "setup": setup,
@@ -342,7 +377,7 @@ def make_model(setup: dict):
                         "normal_permeability": 1e-4,
                         "permeability": 1e-14,  # [m^2]
                         # granite
-                        "biot_coefficient": 100,  # [-]
+                        "biot_coefficient": 0.47,  # [-]
                         "density": 2683.0,  # [kg * m^-3]
                         "porosity": 1.3e-2,  # [-]
                         "specific_storage": 4.74e-10,  # [Pa^-1]
@@ -362,9 +397,9 @@ def make_model(setup: dict):
         },
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
-            dt_init=dt,
+            dt_init=dt * DAY,
             # dt_min_max=(0.01, 0.5),
-            schedule=[0, 3, 6],
+            schedule=np.array([0, 1, 2]) * DAY,
             iter_max=25,
             constant_dt=True,
         ),
@@ -374,6 +409,7 @@ def make_model(setup: dict):
         },
         # experimental
         "adaptive_indicator_scaling": 1,  # Scale the indicator adaptively to increase robustness
+        # "nl_convergence_tol_res": 1e-6,
     }
     return Setup(params)
 
@@ -398,7 +434,8 @@ def run_model(setup: dict):
         {
             "prepare_simulation": False,
             "progressbars": False,
-            "nl_convergence_tol": float("inf"),
+            # "nl_convergence_tol": 1e-10,
+            'nl_convergence_tol': float('inf'),
             "nl_convergence_tol_res": 1e-6,
             "nl_divergence_tol": 1e8,
             "max_iterations": 25,

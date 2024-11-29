@@ -290,6 +290,7 @@ class IterativeHMSolver(IterativeLinearSolver):
         # Apply the `contact_permutation`.
         mat = mat[self.contact_permutation]
         rhs = rhs[self.contact_permutation]
+
         self.bmat.mat = mat
         self.linear_system = mat, rhs
 

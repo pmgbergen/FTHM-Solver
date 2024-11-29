@@ -85,7 +85,8 @@ class StatisticsSavingMixin(ContactIndicators, SolutionStrategy):
         self._time_step_stats = TimeStepStats()
         self.statistics.append(self._time_step_stats)
         print()
-        print(f"Sim time: {self.time_manager.time}, Dt: {self.time_manager.dt}")
+        DAY = 24 * 60 * 60
+        print(f"Sim time: {self.time_manager.time / DAY}, Dt: {self.time_manager.dt / DAY :.2f} (days)")
         super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(self) -> None:

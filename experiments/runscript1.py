@@ -26,7 +26,7 @@ def experiment_1_barton_bandis_friction():
                         "friction_type": friction,
                         "grid_refinement": 1,
                         "solver": solver,
-                        "save_matrix": True,
+                        "save_matrix": False,
                     }
                 )
     for setup in setups:
@@ -51,7 +51,16 @@ def experiment_1_grid_refinement():
     #                 "save_matrix": True,
     #             }
     #         )
-    for grid_refinement in [1, 2, 3, 4, 5, 6, 10, 33]:
+    for grid_refinement in [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        10,
+        33,
+    ]:
         setups.append(
             {
                 "physics": 1,

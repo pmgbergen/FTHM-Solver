@@ -4,7 +4,8 @@ import scipy.sparse
 import numpy as np
 
 
-args = '-pc_type hypre -pc_hypre_type pilut -help'
+args = '-pc_type gamg -help'
+# args = '-pc_type hypre -pc_hypre_type pilut -help'
 # args = '-pc_type bjacobi -sub_pc_type ilu -sub_pc_factor_levels 0 -sub_ksp_type preonly'
 
 petsc4py.init(args)

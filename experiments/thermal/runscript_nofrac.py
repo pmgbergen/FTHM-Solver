@@ -12,13 +12,17 @@ from stats import StatisticsSavingMixin
 # from experiments.thermal.thm_solver import ThermalSolver
 
 from porepy.examples.mandel_biot import MandelSetup
+from porepy.viz.data_saving_model_mixin import DataSavingMixin
 
-XMAX = 1
-YMAX = 1
-ZMAX = 1
+XMAX = 1000
+YMAX = 1000
+ZMAX = 1000
 
 
 class Geometry2D0F(pp.SolutionStrategy):
+
+    def save_data_time_step(self) -> None:
+        DataSavingMixin.save_data_time_step(self)
 
     def set_domain(self) -> None:
         self._domain = pp.Domain({"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX})
@@ -71,9 +75,9 @@ def make_model(setup: dict):
         },
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
-            dt_init=10,
+            dt_init=1e5,
             # dt_min_max=(0.01, 0.5),
-            schedule=[0, 1e3],
+            schedule=[0, 1e6],
             iter_max=25,
             constant_dt=True,
         ),
@@ -118,7 +122,7 @@ if __name__ == "__main__":
             "geometry": 0,
             "barton_bandis_stiffness_type": 2,
             "friction_type": 1,
-            "grid_refinement": 1,
+            "grid_refinement": 3,
             "solver": 2,
             "save_matrix": True,
         }

@@ -22,7 +22,7 @@ def experiment_2():
                 "friction_type": 1,
                 "grid_refinement": grid_refinement,
                 "solver": 2,
-                "save_matrix": True,
+                # "save_matrix": True,
             }
         )
 
