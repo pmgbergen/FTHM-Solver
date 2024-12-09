@@ -868,7 +868,10 @@ def solve_petsc_3(
     if rhs_global is None:
         rhs_global = np.ones(bmat.shape[0])
     bmat = bmat[ksp_scheme.get_groups()]
+
+    t0 = time.time()
     krylov = ksp_scheme.make_solver(bmat)
+    print("Construction took:", round(time.time() - t0, 2))
 
     rhs_local = bmat.project_rhs_to_local(rhs_global)
 

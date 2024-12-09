@@ -24,7 +24,7 @@ class Geometry(pp.SolutionStrategy):
     def initial_condition(self) -> None:
         super().initial_condition()
         num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
-        val = self.fluid.pressure() * np.ones(num_cells)
+        val = self.reference_variable_values.pressure * np.ones(num_cells)
         for time_step_index in self.time_step_indices:
             self.equation_system.set_variable_values(
                 val,
@@ -61,9 +61,15 @@ class Geometry(pp.SolutionStrategy):
         bc_values = np.zeros((self.nd, boundary_grid.num_cells))
         # 10 Mpa
         x = 0.5
-        val = self.solid.convert_units(5e6, units="Pa")
+        val = self.units.convert_units(5e6, units="Pa")
+        # bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
+        # bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
+        
         bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
-        bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
+        bc_values[0, sides.north] = val * boundary_grid.cell_volumes[sides.north] * 0.1
+        bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west]
+        bc_values[0, sides.east] = -val * boundary_grid.cell_volumes[sides.east]
+        
         return bc_values.ravel("F")
 
     def set_domain(self) -> None:
@@ -98,35 +104,35 @@ def make_model(setup: dict):
         "setup": setup,
         "material_constants": {
             "solid": pp.SolidConstants(
-                (
-                    {
-                        "shear_modulus": 1.2e10,  # [Pa]
-                        "lame_lambda": 1.2e10,  # [Pa]
-                        "dilation_angle": 5 * np.pi / 180,  # [rad]
-                        "residual_aperture": 1e-4,  # [m]
-                        "normal_permeability": 1e-4,
-                        "permeability": 1e-14,  # [m^2]
-                        # granite
-                        "biot_coefficient": 0.47,  # [-]
-                        # "biot_coefficient": 1,  # for mandel
-                        "density": 2683.0,  # [kg * m^-3]
-                        "porosity": 1.3e-2,  # [-]
-                        "specific_storage": 4.74e-10,  # [Pa^-1]
-                    }
-                    | get_barton_bandis_config(setup)
-                    | get_friction_coef_config(setup)
-                )
+                shear_modulus=1.2e10,  # [Pa]
+                lame_lambda=1.2e10,  # [Pa]
+                dilation_angle=5 * np.pi / 180,  # [rad]
+                residual_aperture=1e-4,  # [m]
+                normal_permeability=1e-4,
+                permeability=1e-14,  # [m^2]
+                # granite
+                biot_coefficient=0.47,  # [-]
+                # "biot_coefficient": 1,  # for mandel
+                density=2683.0,  # [kg * m^-3]
+                porosity=1.3e-2,  # [-]
+                specific_storage=4.74e-10,  # [Pa^-1]
+                **get_barton_bandis_config(setup),
+                **get_friction_coef_config(setup),
             ),
-            "fluid": pp.FluidConstants(
-                {
-                    "pressure": 1e6,  # [Pa]
-                    "compressibility": 4.559 * 1e-10,  # [Pa^-1], fluid compressibility
-                    # "compressibility": 0,  # for mandel
-                    "density": 998.2,  # [kg m^-3]
-                    "viscosity": 1.002e-3,  # [Pa s], absolute viscosity
-                }
+            "fluid": pp.FluidComponent(
+                compressibility=4.559 * 1e-10,  # [Pa^-1], fluid compressibility
+                # "compressibility": 0,  # for mandel
+                density=998.2,  # [kg m^-3]
+                viscosity=1.002e-3,  # [Pa s], absolute viscosity
+            ),
+            "numerical": pp.NumericalConstants(
+                # experimnetal
+                characteristic_displacement=1e-2,  # [m]
             ),
         },
+        "reference_variable_values": pp.ReferenceVariableValues(
+            pressure=1e6,  # [Pa]
+        ),
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
             dt_init=0.5 * DAY,
@@ -170,25 +176,46 @@ def run_model(setup: dict):
     print(model.simulation_name())
 
 
+def experiment_1_barton_bandis_friction():
+    setups = []
+    for barton_bandis in [2]:
+        for friction in [1]:
+            for solver in [1, ]:
+                setups.append(
+                    {
+                        "physics": 0,
+                        "geometry": 1,
+                        "barton_bandis_stiffness_type": barton_bandis,
+                        "friction_type": friction,
+                        "grid_refinement": 1,
+                        "solver": solver,
+                        "save_matrix": False,
+                    }
+                )
+    for setup in setups:
+        run_model(setup)
+
+
 if __name__ == "__main__":
-    for g in [
-        # 1,
-        # 2,
-        # 3,
-        # 4,
-        # 5,
-        # 6,
-        10,
-        33,
-    ]:
-        run_model(
-            {
-                "physics": 1,
-                "geometry": 0,
-                "barton_bandis_stiffness_type": 2,
-                "friction_type": 1,
-                "grid_refinement": g,
-                "solver": 2,
-                "save_matrix": False,
-            }
-        )
+    experiment_1_barton_bandis_friction()
+    # for g in [
+    #     1,
+    #     2,
+    #     3,
+    #     4,
+    #     5,
+    #     6,
+    #     10,
+    #     33,
+    # ]:
+    #     run_model(
+    #         {
+    #             "physics": 1,
+    #             "geometry": 0,
+    #             "barton_bandis_stiffness_type": 2,
+    #             "friction_type": 1,
+    #             "grid_refinement": g,
+    #             "solver": 2,
+    #             "save_matrix": True,
+    #         }
+    #     )

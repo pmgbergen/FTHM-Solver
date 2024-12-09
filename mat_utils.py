@@ -23,7 +23,7 @@ def assert_finite(vals, groups):
 
 
 def make_сlear_petsc_options() -> PETSc.Options:
-    """ "Options is a singletone. This ensures that no unwanted options from some previous
+    """Options is a singletone. This ensures that no unwanted options from some previous
     setup reach the current setup."""
     options = PETSc.Options()
 
@@ -305,15 +305,27 @@ class PetscAMGMechanics(PetscPC):
         # options["pc_gamg_threshold"] = 0.11  # GOOD ONE FOR PROBLEM 1
         # options['pc_gamg_agg_nsmooths'] = 3
 
-        # options["pc_gamg_threshold"] = 0.145  # GOOD ONE FOR PROBLEM 2
+        # options["pc_gamg_threshold"] = 0.18  # GOOD ONE FOR PROBLEM 2
         # options["mg_levels_ksp_max_it"] = 3
-        # options['pc_gamg_agg_nsmooths'] = 5
+        # options['pc_gamg_agg_nsmooths'] = 3
 
-        options["pc_gamg_threshold"] = 0.2  # GOOD ONE FOR PROBLEM 2
-        options["mg_levels_ksp_max_it"] = 3
-        options['pc_gamg_agg_nsmooths'] = 5
+        # options['pc_gamg_low_memory_threshold_filter'] = True
+        # options['pc_gamg_aggressive_mis_k'] = 4
 
-        options['pc_gamg_sym_graph'] = True
+        if dim == 2:
+            options["pc_gamg_threshold"] = 0.01  # GOOD ONE FOR 2D
+            options['pc_gamg_aggressive_coarsening'] = 0
+            options["mg_levels_ksp_max_it"] = 3  # This does not work
+            options['pc_gamg_agg_nsmooths'] = 3
+
+        elif dim == 3:
+            options["pc_gamg_threshold"] = 0.0005  # GOOD ONE FOR 3D
+            options['pc_gamg_aggressive_coarsening'] = 0
+            options["mg_levels_ksp_max_it"] = 3
+            options['pc_gamg_agg_nsmooths'] = 1
+
+        else:
+            raise ValueError(dim)
 
         super().__init__(mat=mat, block_size=dim, null_space=null_space)
 

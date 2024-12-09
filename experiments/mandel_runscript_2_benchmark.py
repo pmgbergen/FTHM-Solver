@@ -25,21 +25,12 @@ class Geometry(pp.SolutionStrategy):
         super().initial_condition()
         num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
         val = self.reference_variable_values.pressure * np.ones(num_cells)
-
-        # num_fracs = sum([sd.num_cells for sd in self.mdg.subdomains(dim=self.nd - 1)])
-        # lambdas = np.ones(num_fracs * self.nd) * 1e-6
-
         for time_step_index in self.time_step_indices:
             self.equation_system.set_variable_values(
                 val,
                 variables=[self.pressure_variable],
                 time_step_index=time_step_index,
             )
-            # self.equation_system.set_variable_values(
-            #     lambdas,
-            #     variables=[self.contact_traction_variable],
-            #     time_step_index=time_step_index,
-            # )
 
         for iterate_index in self.iterate_indices:
             self.equation_system.set_variable_values(
@@ -47,11 +38,6 @@ class Geometry(pp.SolutionStrategy):
                 variables=[self.pressure_variable],
                 iterate_index=iterate_index,
             )
-            # self.equation_system.set_variable_values(
-            #     lambdas,
-            #     variables=[self.contact_traction_variable],
-            #     iterate_index=iterate_index,
-            # )
 
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
@@ -62,7 +48,6 @@ class Geometry(pp.SolutionStrategy):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
         vals[sides.east] *= 10
-        # if self.time_manager.time > self.time_manager.dt:
         return vals
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
@@ -74,13 +59,13 @@ class Geometry(pp.SolutionStrategy):
     def bc_values_stress(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         sides = self.domain_boundary_sides(boundary_grid)
         bc_values = np.zeros((self.nd, boundary_grid.num_cells))
-        val = self.units.convert_units(3e6, units="Pa")
+        val = self.units.convert_units(5e6, units="Pa")
         # x = 0.5
         # bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
         # bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
 
         bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
-        # bc_values[0, sides.north] = val * boundary_grid.cell_volumes[sides.north] * 0.1
+        bc_values[0, sides.north] = val * boundary_grid.cell_volumes[sides.north] * 0.3
         bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west]
         bc_values[0, sides.east] = -val * boundary_grid.cell_volumes[sides.east]
 
@@ -155,7 +140,6 @@ def make_model(setup: dict):
     cell_size_multiplier = setup["grid_refinement"]
 
     DAY = 24 * 60 * 60
-    DAY /= 24
 
     params = {
         "setup": setup,
@@ -184,7 +168,7 @@ def make_model(setup: dict):
             ),
             "numerical": pp.NumericalConstants(
                 # experimnetal
-                characteristic_displacement=1e-1,  # [m]
+                characteristic_displacement=1e-2,  # [m]
             ),
         },
         "reference_variable_values": pp.ReferenceVariableValues(
@@ -192,9 +176,9 @@ def make_model(setup: dict):
         ),
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
-            dt_init=0.25 * DAY,
+            dt_init=0.5 * DAY,
             # dt_min_max=(0.01, 0.5),
-            schedule=[0, 1.5 * DAY],
+            schedule=[0, DAY],
             iter_max=25,
             constant_dt=True,
         ),
@@ -220,9 +204,9 @@ def run_model(setup: dict):
             "prepare_simulation": False,
             "progressbars": False,
             "nl_convergence_tol": float("inf"),
-            "nl_convergence_tol_res": 1e-7,
+            "nl_convergence_tol_res": 1e-2,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 100,
+            "max_iterations": 25,
             # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
             "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
@@ -230,23 +214,12 @@ def run_model(setup: dict):
         },
     )
 
-    write_dofs_info(model)
+    # write_dofs_info(model)
     print(model.simulation_name())
 
 
 if __name__ == "__main__":
-    for g in (
-        [
-            1,
-            10,
-            33,
-            2,
-            3,
-            4,
-            5,
-            6,
-        ]
-    ):
+    for g in [3]:
         run_model(
             {
                 "physics": 1,

@@ -78,9 +78,9 @@ from block_matrix import BlockMatrixStorage
 
 
 def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
-    mu_lame = model.solid.shear_modulus()
-    lambda_lame = model.solid.lame_lambda()
-    alpha_biot = model.solid.biot_coefficient()
+    mu_lame = model.solid.shear_modulus
+    lambda_lame = model.solid.lame_lambda
+    alpha_biot = model.solid.biot_coefficient
     dim = model.nd
 
     l_phys = alpha_biot**2 / (2 * mu_lame / dim + lambda_lame)
@@ -93,7 +93,7 @@ def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
     cell_volumes = subdomains[0].cell_volumes
     diagonal_approx *= cell_volumes
 
-    density = model.fluid_density(subdomains).value(model.equation_system)
+    density = model.fluid.density(subdomains).value(model.equation_system)
     diagonal_approx *= density
 
     dt = model.time_manager.dt
@@ -125,12 +125,12 @@ def get_fixed_stress_stabilization_nd(model, l_factor: float = 0.6):
 
 
 def get_fs_fractures_analytical(model):
-    alpha_biot = model.solid.biot_coefficient()  # [-]
-    lame_lambda = model.solid.lame_lambda()  # [Pa]
-    M = 1 / model.solid.specific_storage()  # [Pa]
-    compressibility = model.fluid.compressibility()  # [1 / Pa]
-    porosity = model.solid.porosity()
-    resid_aperture = model.solid.residual_aperture()  # [m]
+    alpha_biot = model.solid.biot_coefficient  # [-]
+    lame_lambda = model.solid.lame_lambda  # [Pa]
+    M = 1 / model.solid.specific_storage  # [Pa]
+    compressibility = model.fluid.components[0].compressibility  # [1 / Pa]
+    porosity = model.solid.porosity
+    resid_aperture = model.solid.residual_aperture  # [m]
 
     # alpha^2 / (lambda * (1 / (C_f * M) + phi_0))
     # val = alpha_biot**2 / (lame_lambda * (1 / (compressibility * M) + porosity))
@@ -162,10 +162,9 @@ def get_fs_fractures_analytical(model):
 
     # specific volume ?
     # specific_volume = model.specific_volume(fractures).value(model.equation_system)
-    # specific_volume[-1] = 1
     # val *= specific_volume
 
-    density = model.fluid_density(fractures).value(model.equation_system)
+    density = model.fluid.density(fractures).value(model.equation_system)
     val *= density
 
     dt = model.time_manager.dt
@@ -191,6 +190,21 @@ def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int, groups=Non
     result = J.empty_container()[groups]
     result.mat = scipy.sparse.block_diag(diag, format="csr")
     # result[groups] = scipy.sparse.block_diag(diag, format="csr")
+    return result
+
+
+def make_fs_analytical_slow(model, J, p_mat_group: int, p_frac_group: int, groups=None):
+    if groups is None:
+        groups = [p_mat_group, p_frac_group]
+    assert p_mat_group in groups
+    assert p_frac_group in groups
+
+    diag = [
+        get_fixed_stress_stabilization(model) * 1,
+        get_fs_fractures_analytical(model) * 1e0,
+    ]
+    result = J.empty_container()[groups]
+    result[[p_mat_group, p_frac_group]] = scipy.sparse.block_diag(diag, format="csr")
     return result
 
 

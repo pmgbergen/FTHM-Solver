@@ -25,21 +25,12 @@ class Geometry(pp.SolutionStrategy):
         super().initial_condition()
         num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
         val = self.reference_variable_values.pressure * np.ones(num_cells)
-
-        # num_fracs = sum([sd.num_cells for sd in self.mdg.subdomains(dim=self.nd - 1)])
-        # lambdas = np.ones(num_fracs * self.nd) * 1e-6
-
         for time_step_index in self.time_step_indices:
             self.equation_system.set_variable_values(
                 val,
                 variables=[self.pressure_variable],
                 time_step_index=time_step_index,
             )
-            # self.equation_system.set_variable_values(
-            #     lambdas,
-            #     variables=[self.contact_traction_variable],
-            #     time_step_index=time_step_index,
-            # )
 
         for iterate_index in self.iterate_indices:
             self.equation_system.set_variable_values(
@@ -47,11 +38,6 @@ class Geometry(pp.SolutionStrategy):
                 variables=[self.pressure_variable],
                 iterate_index=iterate_index,
             )
-            # self.equation_system.set_variable_values(
-            #     lambdas,
-            #     variables=[self.contact_traction_variable],
-            #     iterate_index=iterate_index,
-            # )
 
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
@@ -62,7 +48,6 @@ class Geometry(pp.SolutionStrategy):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
         vals[sides.east] *= 10
-        # if self.time_manager.time > self.time_manager.dt:
         return vals
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
@@ -79,71 +64,32 @@ class Geometry(pp.SolutionStrategy):
         # bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
         # bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
 
+        bc_values[2, sides.bottom] = val * boundary_grid.cell_volumes[sides.bottom]
+        bc_values[2, sides.top] = -val * boundary_grid.cell_volumes[sides.top]
         bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
-        # bc_values[0, sides.north] = val * boundary_grid.cell_volumes[sides.north] * 0.1
+        bc_values[0, sides.north] = val * boundary_grid.cell_volumes[sides.north] * 0.1
         bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west]
         bc_values[0, sides.east] = -val * boundary_grid.cell_volumes[sides.east]
 
         return bc_values.ravel("F")
 
     def set_domain(self) -> None:
-        self._domain = pp.Domain({"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX})
+        self._domain = pp.Domain({"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX, 'zmin': 0, 'zmax': ZMAX})
 
     def set_fractures(self) -> None:
-        # self._fractures = []
-
-        # pts_list = np.array(
-        #     [
-        #         [[0.1, 0.8], [0.2, 0.3]],
-        #         [[0.1, 0.5], [0.1, 0.6]],
-        #         [[0.55, 0.9], [0.4, 0.5]],
-        #         [[0.4, 0.6], [0.7, 0.3]],
-        #         [[0.1, 0.3], [0.4, 0.9]],
-        #         [[0.1, 0.6], [0.7, 0.8]],
-        #     ]
-        # )
-        # pts_list = np.array([
-        #     [[0.1, 0.95], [0.3, 0.3]],
-        #     [[0.1, 0.95], [0.5, 0.5]],
-        #     [[0.2, 0.95], [0.7, 0.6]],
-        #     [[0.3, 0.4], [0.15, 0.85]],
-        #     [[0.5, 0.6], [0.35, 0.55]]
-        #     # [[0.5, 0.6], [0.15, 0.85]]
-        # ])
         pts_list = np.array(
             [
-                [[0.1, 0.9], [0.5, 0.5]],
-                [[0.15, 0.4], [0.7, 0.2]],
-                [[0.45, 0.6], [0.3, 0.8]],
-                [[0.6, 0.8], [0.2, 0.8]],
+                [[0.1, 0.1, 0.9, 0.9], [0.5, 0.5, 0.5, 0.5], [0.2, 0.8, 0.8, 0.2]],
+                [[0.15, 0.15, 0.4, 0.4], [0.7, 0.7, 0.2, 0.2], [0.2, 0.8, 0.8, 0.2]],
+                [[0.45, 0.45, 0.6, 0.6], [0.3, 0.3, 0.8, 0.8], [0.2, 0.8, 0.8, 0.2]],
+                [[0.6, 0.6, 0.8, 0.8], [0.2, 0.2, 0.8, 0.8], [0.2, 0.8, 0.8, 0.2]],
             ]
         )
-        pts_list[:, :, 0] *= XMAX
-        pts_list[:, :, 1] *= YMAX
+        pts_list[:, 0] *= XMAX
+        pts_list[:, 1] *= YMAX
+        pts_list[:, 2] *= ZMAX
 
-        self._fractures = [pp.LineFracture(pts) for pts in pts_list]
-        # points = np.array(
-        #     [
-        #         [0.2, 0.7],
-        #         [0.5, 0.7],
-        #         [0.8, 0.65],
-        #         [1, 0.3],
-        #         [1.8, 0.4],
-        #         [0.2, 0.3],
-        #         [0.6, 0.25],
-        #         [1.0, 0.4],
-        #         [1.7, 0.85],
-        #         [1.5, 0.65],
-        #         [2.0, 0.55],
-        #         [1.5, 0.05],
-        #         [1.4, 0.25],
-        #     ]
-        # ).T
-        # points[0] *= XMAX / 2
-        # points[1] *= YMAX
-        # # The fracture endpoints are given as indices in the points array
-        # fracs = np.array([[0, 1], [1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]]).T
-        # self._fractures = pp.frac_utils.pts_edges_to_linefractures(points, fracs)
+        self._fractures = [pp.PlaneFracture(pts) for pts in pts_list]
 
 
 class Setup(Geometry, Solver, StatisticsSavingMixin, Poromechanics):
@@ -155,7 +101,8 @@ def make_model(setup: dict):
     cell_size_multiplier = setup["grid_refinement"]
 
     DAY = 24 * 60 * 60
-    DAY /= 24
+    # DAY /= 24
+    DAY *= 7
 
     params = {
         "setup": setup,
@@ -222,7 +169,7 @@ def run_model(setup: dict):
             "nl_convergence_tol": float("inf"),
             "nl_convergence_tol_res": 1e-7,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 100,
+            "max_iterations": 25,
             # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
             "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
@@ -237,24 +184,22 @@ def run_model(setup: dict):
 if __name__ == "__main__":
     for g in (
         [
+            # 0.5,
             1,
-            10,
-            33,
-            2,
-            3,
-            4,
-            5,
-            6,
+            # 2,
+            # 3,
+            # 4,
+            # 5,
         ]
     ):
         run_model(
             {
                 "physics": 1,
-                "geometry": 0.2,
+                "geometry": 0.3,
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": g,
                 "solver": 2,
-                # "save_matrix": True,
+                "save_matrix": True,
             }
         )

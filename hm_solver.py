@@ -2,7 +2,7 @@ from functools import cached_property
 import sys
 from typing import Sequence
 from block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
-from fixed_stress import make_fs_analytical
+from fixed_stress import make_fs_analytical, make_fs_analytical_slow
 from iterative_solver import (
     IterativeLinearSolver,
     get_equations_group_ids,
@@ -315,7 +315,7 @@ class IterativeHMSolver(IterativeLinearSolver):
             prec = FieldSplitScheme(
                 # Exactly solve elasticity and contact mechanics, build fixed stress.
                 groups=[0, 2, 3],
-                invertor=lambda bmat: make_fs_analytical(
+                invertor=lambda bmat: make_fs_analytical_slow(
                     self, bmat, p_mat_group=4, p_frac_group=5, groups=[1, 4, 5]
                 ).mat,
                 invertor_type="physical",
