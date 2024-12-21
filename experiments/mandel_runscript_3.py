@@ -184,8 +184,8 @@ def run_model(setup: dict):
 if __name__ == "__main__":
     for g in (
         [
-            # 0.5,
-            1,
+            0.5,
+            # 1,
             # 2,
             # 3,
             # 4,
@@ -200,6 +200,6 @@ if __name__ == "__main__":
                 "friction_type": 1,
                 "grid_refinement": g,
                 "solver": 2,
-                "save_matrix": True,
+                "save_matrix": False,
             }
         )

@@ -157,22 +157,28 @@ def make_model(setup: dict):
     DAY = 24 * 60 * 60
     DAY /= 24
 
+    shear = 1.2e10
+    lame = 1.2e10
+    biot = 0.47
+    porosity = 1.3e-2
+    specific_storage = 1/(lame + 2/3 * shear) * (biot - porosity) * (1 - biot)
+
     params = {
         "setup": setup,
         "material_constants": {
             "solid": pp.SolidConstants(
-                shear_modulus=1.2e10,  # [Pa]
-                lame_lambda=1.2e10,  # [Pa]
+                shear_modulus=shear,  # [Pa]
+                lame_lambda=lame,  # [Pa]
                 dilation_angle=5 * np.pi / 180,  # [rad]
                 residual_aperture=1e-4,  # [m]
                 normal_permeability=1e-4,
                 permeability=1e-14,  # [m^2]
                 # granite
-                biot_coefficient=0.47,  # [-]
+                biot_coefficient=biot,  # [-]
                 # "biot_coefficient": 1,  # for mandel
                 density=2683.0,  # [kg * m^-3]
-                porosity=1.3e-2,  # [-]
-                specific_storage=4.74e-10,  # [Pa^-1]
+                porosity=porosity,  # [-]
+                specific_storage=specific_storage,  # [Pa^-1]
                 **get_barton_bandis_config(setup),
                 **get_friction_coef_config(setup),
             ),
@@ -237,14 +243,17 @@ def run_model(setup: dict):
 if __name__ == "__main__":
     for g in (
         [
-            1,
-            10,
-            33,
-            2,
-            3,
-            4,
-            5,
-            6,
+            # 1,
+            # 2,
+            # 3,
+            # 4,
+            # 5,
+            # 6,
+            # 10,
+            25,
+            30,
+            # 33,
+            35,
         ]
     ):
         run_model(

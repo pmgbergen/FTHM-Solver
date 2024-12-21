@@ -319,7 +319,8 @@ class PetscAMGMechanics(PetscPC):
             options['pc_gamg_agg_nsmooths'] = 3
 
         elif dim == 3:
-            options["pc_gamg_threshold"] = 0.0005  # GOOD ONE FOR 3D
+            # options["pc_gamg_threshold"] = 0.0005  # GOOD ONE FOR 3D
+            options["pc_gamg_threshold"] = 0.001
             options['pc_gamg_aggressive_coarsening'] = 0
             options["mg_levels_ksp_max_it"] = 3
             options['pc_gamg_agg_nsmooths'] = 1
