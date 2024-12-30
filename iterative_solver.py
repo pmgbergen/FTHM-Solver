@@ -103,22 +103,35 @@ class IterativeLinearSolver(pp.SolutionStrategy):
             result = np.zeros_like(rhs)
             result[:] = np.nan
             return result
-        
+
         # Check if we reached steady state and no solve needed.
         # residual_norm = self.compute_residual_norm(rhs, None)
         # if residual_norm < self.params["nl_convergence_tol_res"]:
         #     result = np.zeros_like(rhs)
         #     return result
-        
+
+        if self.params["setup"].get("save_matrix", False):
+            self.save_matrix_state()
+
         scheme = self.make_solver_scheme()
         # Constructing the solver.
         bmat = self.bmat[scheme.get_groups()]
-        solver = scheme.make_solver(bmat)
+
+        try:
+            solver = scheme.make_solver(bmat)
+        except:
+            self.save_matrix_state()
+            raise
 
         # Permute the rhs groups to match mat_permuted.
         rhs_local = bmat.project_rhs_to_local(rhs)
 
-        sol_local = solver.solve(rhs_local)
+        try:
+            sol_local = solver.solve(rhs_local)
+        except:
+            self.save_matrix_state()
+            raise
+
         info = solver.ksp.getConvergedReason()
 
         # Permute the solution groups to match the original porepy arrangement.

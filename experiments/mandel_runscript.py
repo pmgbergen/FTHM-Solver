@@ -204,35 +204,37 @@ def experiment_1_barton_bandis_friction():
 
 if __name__ == "__main__":
     # experiment_1_barton_bandis_friction()
-    # for g in [
-    #     1,
-    #     2,
-    #     3,
-    #     4,
-    #     5,
-    #     6,
-    #     10,
-    #     33,
-    # ]:
-    #     run_model(
-    #         {
-    #             "physics": 1,
-    #             "geometry": 0,
-    #             "barton_bandis_stiffness_type": 2,
-    #             "friction_type": 1,
-    #             "grid_refinement": g,
-    #             "solver": 2,
-    #             "save_matrix": False,
-    #         }
-    #     )
-    run_model(
-        {
-            "physics": 0,
-            "geometry": 0,
-            "barton_bandis_stiffness_type": 2,
-            "friction_type": 1,
-            "grid_refinement": 1,
-            "solver": 1,
-            "save_matrix": True,
-        }
-    )
+    for g in [
+        # 1,
+        # 2,
+        # 3,
+        # 4,
+        # 5,
+        # 6,
+        # 10,
+        # 33,
+        # 40
+        1, 2, 5, 25, 33, 40
+    ]:
+        run_model(
+            {
+                "physics": 1,
+                "geometry": 0,
+                "barton_bandis_stiffness_type": 2,
+                "friction_type": 1,
+                "grid_refinement": g,
+                "solver": 2,
+                "save_matrix": False,
+            }
+        )
+    # run_model(
+    #     {
+    #         "physics": 0,
+    #         "geometry": 0,
+    #         "barton_bandis_stiffness_type": 2,
+    #         "friction_type": 1,
+    #         "grid_refinement": 1,
+    #         "solver": 1,
+    #         "save_matrix": True,
+    #     }
+    # )

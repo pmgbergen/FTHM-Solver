@@ -864,6 +864,7 @@ def solve_petsc_3(
     logx_eigs=False,
     normalize_residual=False,
     ksp_view: bool = False,
+    return_data: bool = False
 ):
     if rhs_global is None:
         rhs_global = np.ones(bmat.shape[0])
@@ -930,3 +931,6 @@ def solve_petsc_3(
     if logx_eigs:
         plt.xscale("log")
     ax.set_title("Eigenvalues estimate")
+
+    if return_data:
+        return krylov

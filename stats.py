@@ -114,9 +114,11 @@ class StatisticsSavingMixin(ContactIndicators, SolutionStrategy):
         )
         self._linear_solve_stats.simulation_dt = self.time_manager.dt
         self._time_step_stats.linear_solves.append(self._linear_solve_stats)
-        if self.params["setup"].get("save_matrix", False):
-            self.save_matrix_state()
+        # if self.params["setup"].get("save_matrix", False):
+        #     self.save_matrix_state()
         dump_json(self.simulation_name() + ".json", self.statistics)
+        from plot_utils import write_dofs_info
+        write_dofs_info(self)
         super().after_nonlinear_iteration(solution_vector)
 
     def sticking_sliding_open(self):
@@ -202,11 +204,11 @@ class StatisticsSavingMixin(ContactIndicators, SolutionStrategy):
             pass
 
     def save_matrix_state(self):
-        print('Saving matrix')
         save_path = Path("./matrices")
         save_path.mkdir(exist_ok=True)
         mat, rhs = self.linear_system
         name = f"{self.simulation_name()}_{int(time.time() * 1000)}"
+        print('Saving matrix', name)
         mat_id = f"{name}.npz"
         rhs_id = f"{name}_rhs.npy"
         state_id = f"{name}_state.npy"

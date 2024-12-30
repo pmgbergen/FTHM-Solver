@@ -315,15 +315,17 @@ class PetscAMGMechanics(PetscPC):
         if dim == 2:
             options["pc_gamg_threshold"] = 0.01  # GOOD ONE FOR 2D
             options['pc_gamg_aggressive_coarsening'] = 0
-            options["mg_levels_ksp_max_it"] = 3  # This does not work
-            options['pc_gamg_agg_nsmooths'] = 3
+            options["mg_levels_ksp_max_it"] = 8
+            # options['pc_gamg_agg_nsmooths'] = 3  # GOOD ONE FOR 2D
+            options['pc_gamg_agg_nsmooths'] = 1
+            options['mg_levels_pc_jacobi_type'] = 'rowmax'
 
         elif dim == 3:
-            # options["pc_gamg_threshold"] = 0.0005  # GOOD ONE FOR 3D
-            options["pc_gamg_threshold"] = 0.001
+            options["pc_gamg_threshold"] = 0.00005  #
             options['pc_gamg_aggressive_coarsening'] = 0
-            options["mg_levels_ksp_max_it"] = 3
+            options["mg_levels_ksp_max_it"] = 8
             options['pc_gamg_agg_nsmooths'] = 1
+            options['mg_levels_pc_jacobi_type'] = 'rowmax'
 
         else:
             raise ValueError(dim)

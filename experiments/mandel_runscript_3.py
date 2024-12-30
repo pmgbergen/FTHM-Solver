@@ -47,7 +47,7 @@ class Geometry(pp.SolutionStrategy):
     def bc_values_pressure(self, boundary_grid):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
-        vals[sides.east] *= 10
+        vals[sides.east] *= 20
         return vals
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
@@ -169,27 +169,26 @@ def run_model(setup: dict):
             "nl_convergence_tol": float("inf"),
             "nl_convergence_tol_res": 1e-7,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 25,
+            "max_iterations": 100,
             # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
             "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
             "Local_line_search": 1,  # Set to 0 to use turn off the tailored line search
         },
     )
-
     write_dofs_info(model)
+
     print(model.simulation_name())
 
 
 if __name__ == "__main__":
-    for g in (
+    for g in reversed(
         [
             0.5,
-            # 1,
-            # 2,
-            # 3,
-            # 4,
-            # 5,
+            1,
+            2,
+            3,
+            4,
         ]
     ):
         run_model(
@@ -200,6 +199,6 @@ if __name__ == "__main__":
                 "friction_type": 1,
                 "grid_refinement": g,
                 "solver": 2,
-                "save_matrix": False,
+                # "save_matrix": True,
             }
         )
