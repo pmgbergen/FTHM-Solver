@@ -1,6 +1,7 @@
 import sys
 from functools import cached_property
 from typing import Sequence
+import time
 
 import numpy as np
 import porepy as pp
@@ -117,20 +118,24 @@ class IterativeLinearSolver(pp.SolutionStrategy):
         # Constructing the solver.
         bmat = self.bmat[scheme.get_groups()]
 
+        t0 = time.time()
         try:
             solver = scheme.make_solver(bmat)
         except:
             self.save_matrix_state()
             raise
+        print("Construction took:", round(time.time() - t0, 2))
 
         # Permute the rhs groups to match mat_permuted.
         rhs_local = bmat.project_rhs_to_local(rhs)
 
+        t0 = time.time()
         try:
             sol_local = solver.solve(rhs_local)
         except:
             self.save_matrix_state()
             raise
+        print("Solve took:", round(time.time() - t0, 2))
 
         info = solver.ksp.getConvergedReason()
 

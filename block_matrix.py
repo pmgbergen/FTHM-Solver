@@ -766,6 +766,8 @@ class KSPScheme:
     ] = None
     pc_side: Literal["left", "right", "auto"] = "auto"
 
+    petsc_options: dict[str, str] = None
+
     def make_solver(self, mat_orig: BlockMatrixStorage):
         groups = self.get_groups()
         # assert prec_groups == self.groups
@@ -798,9 +800,11 @@ class KSPScheme:
 
         if self.ksp == "gmres":
             pc_side = "right" if self.pc_side == "auto" else self.pc_side
-            if self.atol is not None or self.dtol is not None:
-                print("Ignoring atol and rtol!")
-            solver = PetscGMRES(bmat_Q.mat, pc=prec, tol=self.rtol, pc_side=pc_side)
+            if self.dtol is not None:
+                print("Ignoring dtol")
+            if self.atol is None:
+                self.atol = 1e-15
+            solver = PetscGMRES(bmat_Q.mat, pc=prec, tol=self.rtol, atol=self.atol, pc_side=pc_side, petsc_options=self.petsc_options)
         elif self.ksp == "richardson":
             pc_side = "left" if self.pc_side == "auto" else self.pc_side
             if self.dtol is not None:

@@ -343,6 +343,7 @@ class IterativeHMSolver(IterativeLinearSolver):
                             mat=bmat[[2, 3]].mat,
                             dim=self.nd,
                             null_space=build_mechanics_near_null_space(self),
+                            petsc_options={},
                         ),
                         invertor_type="physical",
                         invertor=lambda bmat: make_fs_analytical(
@@ -366,8 +367,8 @@ class IterativeHMSolver(IterativeLinearSolver):
                     # Eliminate interface flow,
                     # Use diag() to approximate inverse and ILU to solve linear systems
                     groups=[1],
-                    solve=lambda bmat: PetscILU(bmat[[1]].mat),
-                    invertor=lambda bmat: extract_diag_inv(bmat[[1]].mat),
+                    # solve=lambda bmat: PetscILU(bmat[[1]].mat),
+                    # invertor=lambda bmat: extract_diag_inv(bmat[[1]].mat),
                     complement=FieldSplitScheme(
                         # TODO
                         groups=[2, 3],
@@ -411,6 +412,9 @@ class IterativeHMSolver(IterativeLinearSolver):
                         contact_group=self.CONTACT_GROUP, u_intf_group=3
                     )
                 ],
+                petsc_options={
+                    # "ksp_type": "fgmres",
+                },
             )
 
 

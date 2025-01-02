@@ -285,7 +285,7 @@ class PetscAMGVector(PetscPC):
 
 
 class PetscAMGMechanics(PetscPC):
-    def __init__(self, dim: int, mat=None, null_space: np.ndarray = None) -> None:
+    def __init__(self, dim: int, mat=None, null_space: np.ndarray = None, petsc_options: dict[str, str] = None) -> None:
         options = make_сlear_petsc_options()
 
         # options["pc_type"] = "gamg"
@@ -314,23 +314,32 @@ class PetscAMGMechanics(PetscPC):
 
         if dim == 2:
             options["pc_gamg_threshold"] = 0.01  # GOOD ONE FOR 2D
-            options['pc_gamg_aggressive_coarsening'] = 0
-            options["mg_levels_ksp_max_it"] = 8
-            # options['pc_gamg_agg_nsmooths'] = 3  # GOOD ONE FOR 2D
             options['pc_gamg_agg_nsmooths'] = 1
+            options['pc_gamg_aggressive_coarsening'] = 0
+            # options['mg_levels_ksp_type'] = 'bcgs'
+            options['mg_levels_ksp_max_it'] = 10
             options['mg_levels_pc_jacobi_type'] = 'rowmax'
 
         elif dim == 3:
-            options["pc_gamg_threshold"] = 0.00005  #
-            options['pc_gamg_aggressive_coarsening'] = 0
-            options["mg_levels_ksp_max_it"] = 8
-            options['pc_gamg_agg_nsmooths'] = 1
+            # options["pc_gamg_threshold"] = 0.00005  #
+            options["pc_gamg_threshold"] = 0.05  #
+            options['pc_gamg_agg_nsmooths'] = 0
+            options['pc_gamg_aggressive_coarsening'] = 3
+            # options['mg_levels_ksp_type'] = 'bcgs'
+            options['mg_levels_ksp_max_it'] = 10
             options['mg_levels_pc_jacobi_type'] = 'rowmax'
 
         else:
             raise ValueError(dim)
+        
+        if petsc_options is None:
+            petsc_options = {}
+        for k, v in petsc_options.items():
+            options[k] = v
 
         super().__init__(mat=mat, block_size=dim, null_space=null_space)
+
+        print('AMG mech levels:', self.pc.getMGLevels())
 
 
 class PetscAMGFlow(PetscPC):
@@ -463,7 +472,9 @@ class PetscGMRES(PetscKrylovSolver):
         mat,
         pc: PETSc.PC | None = None,
         tol=1e-10,
+        atol=1e-15,
         pc_side: Literal["left", "right"] = "right",
+        petsc_options: dict[str, str] = None
     ) -> None:
         self.mat = mat
         restart = 30
@@ -492,8 +503,13 @@ class PetscGMRES(PetscKrylovSolver):
             options.setValue("ksp_norm_type", "unpreconditioned")
         else:
             raise ValueError(pc_side)
+        
+        if petsc_options is None:
+            petsc_options = {}
+        for k, v in petsc_options.items():
+            options.setValue(k, v) 
 
-        super().__init__(mat, pc, tol, atol=1e-15)
+        super().__init__(mat, pc, tol, atol=atol)
 
 
 class PetscRichardson(PetscKrylovSolver):
