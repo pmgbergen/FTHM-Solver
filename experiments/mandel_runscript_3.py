@@ -2,6 +2,7 @@ import porepy as pp
 import numpy as np
 from experiments.models import Physics
 from hm_solver import IterativeHMSolver as Solver
+from porepy.models.constitutive_laws import CubicLawPermeability
 from experiments.thermal.thm_models import (
     ConstraintLineSearchNonlinearSolver,
     # Physics,
@@ -47,7 +48,13 @@ class Geometry(pp.SolutionStrategy):
     def bc_values_pressure(self, boundary_grid):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
-        vals[sides.east] *= 20
+        val = 20  # 4
+        vals[sides.east] *= val
+        # vals[sides.north] *= val * boundary_grid.cell_centers[0][sides.north] / XMAX
+        # vals[sides.south] *= val * boundary_grid.cell_centers[0][sides.south] / XMAX
+        # vals[sides.top] *= val * boundary_grid.cell_centers[0][sides.top] / XMAX
+        # vals[sides.bottom] *= val * boundary_grid.cell_centers[0][sides.bottom] / XMAX
+
         return vals
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
@@ -182,13 +189,14 @@ def run_model(setup: dict):
 
 
 if __name__ == "__main__":
-    for g in reversed(
+    for g in (
         [
-            0.5,
-            1,
-            2,
-            3,
-            4,
+            # 0.25,
+            # 0.5,
+            # 1,
+            # 2,
+            # 3,
+            3.6,
         ]
     ):
         run_model(

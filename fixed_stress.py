@@ -158,7 +158,7 @@ def get_fs_fractures_analytical(model):
 
     val = (
         alpha_biot**2
-        * u_n / resid_aperture
+        * u_n# / resid_aperture# ** 3
         / (lame_lambda / (compressibility * M) + porosity * lame_lambda)
     )
 
@@ -195,7 +195,7 @@ def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int, groups=Non
 
     diag = [
         get_fixed_stress_stabilization(model) * 1,
-        get_fs_fractures_analytical(model) * 1e0,
+        get_fs_fractures_analytical(model) * 1,
     ]
     result = J.empty_container()[groups]
     result.mat = scipy.sparse.block_diag(diag, format="csr")

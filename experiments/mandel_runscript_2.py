@@ -2,6 +2,7 @@ import porepy as pp
 import numpy as np
 from experiments.models import Physics
 from hm_solver import IterativeHMSolver as Solver
+from porepy.models.constitutive_laws import CubicLawPermeability
 from experiments.thermal.thm_models import (
     ConstraintLineSearchNonlinearSolver,
     # Physics,
@@ -146,8 +147,19 @@ class Geometry(pp.SolutionStrategy):
         # self._fractures = pp.frac_utils.pts_edges_to_linefractures(points, fracs)
 
 
-class Setup(Geometry, Solver, StatisticsSavingMixin, Poromechanics):
+class Setup(CubicLawPermeability, Geometry, Solver, StatisticsSavingMixin, Poromechanics):
     pass
+    # def normal_fracture_deformation_equation(self, subdomains):
+    #     nd_vec_to_normal = self.normal_component(subdomains)
+    #     t_n = nd_vec_to_normal @ self.contact_traction(subdomains)
+    #     t_n.set_name("normal_fracture_deformation_equation")
+    #     return t_n
+
+    # def tangential_fracture_deformation_equation(self, subdomains):
+    #     nd_vec_to_tangential = self.tangential_component(subdomains)
+    #     t_t = nd_vec_to_tangential @ self.contact_traction(subdomains)
+    #     t_t.set_name("t_t")
+    #     return t_t
 
 
 def make_model(setup: dict):
@@ -161,7 +173,7 @@ def make_model(setup: dict):
     lame = 1.2e10
     biot = 0.47
     porosity = 1.3e-2
-    specific_storage = 1/(lame + 2/3 * shear) * (biot - porosity) * (1 - biot)
+    specific_storage = 1 / (lame + 2 / 3 * shear) * (biot - porosity) * (1 - biot)
 
     params = {
         "setup": setup,
@@ -241,25 +253,29 @@ def run_model(setup: dict):
 
 
 if __name__ == "__main__":
-    for g in (
-        reversed([
-            # 1,
-            # 2,
-            # 3,
-            # 4,
-            # 5,
-            # 6,
-            # 10,
-            # 25,
-            # 30,
-            # 33,
-            # 35,
-            # 40,
-            # 45,
-            # 50,
-            1, 2, 5, 25, 33, 40
-        ])
-    ):
+    for g in [
+        # 1,
+        # 2,
+        # 3,
+        # 4,
+        # 5,
+        # 6,
+        # 10,
+        # 25,
+        # 30,
+        # 33,
+        # 35,
+        # 40,
+        # 45,
+        # 50,
+        # ---
+        1,
+        2,
+        5,
+        25,
+        33,
+        40,
+    ]:
         run_model(
             {
                 "physics": 1,
@@ -268,6 +284,7 @@ if __name__ == "__main__":
                 "friction_type": 1,
                 "grid_refinement": g,
                 "solver": 2,
+                # "solver": 11,
                 # "save_matrix": True,
             }
         )
