@@ -10,6 +10,7 @@ from experiments.thermal.thm_models import (
 )
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
+from porepy.models.constitutive_laws import CubicLawPermeability
 
 # from experiments.thermal.thm_solver import ThermalSolver
 
@@ -90,7 +91,7 @@ class Geometry(pp.SolutionStrategy):
         self._fractures = [pp.LineFracture(pts) for pts in pts_list]
 
 
-class Setup(Geometry, Solver, StatisticsSavingMixin, Poromechanics):
+class Setup(Geometry, Solver, StatisticsSavingMixin, CubicLawPermeability, Poromechanics):
     pass
 
 
@@ -133,7 +134,7 @@ def make_model(setup: dict):
             ),
             "numerical": pp.NumericalConstants(
                 # experimnetal
-                characteristic_displacement=1e-2,  # [m]
+                characteristic_displacement=1e-1,  # [m]
             ),
         },
         "reference_variable_values": pp.ReferenceVariableValues(
@@ -170,7 +171,7 @@ def run_model(setup: dict):
             "nl_convergence_tol": float("inf"),
             "nl_convergence_tol_res": 1e-7,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 25,
+            "max_iterations": 100,
             # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
             "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
