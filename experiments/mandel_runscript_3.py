@@ -42,7 +42,7 @@ class Geometry(pp.SolutionStrategy):
     def bc_values_pressure(self, boundary_grid):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
-        val = 20  # 4
+        val = 20
         vals[sides.east] *= val
         return vals
 
@@ -174,8 +174,31 @@ def run_model(setup: dict):
 
 
 if __name__ == "__main__":
-    solver = 21
-    for g in [0.25, 0.5, 1]:
+    # solver = 21
+    # for g in [0.25, 0.5]:
+    #     run_model(
+    #         {
+    #             "physics": 1,
+    #             "geometry": 0.3,
+    #             "barton_bandis_stiffness_type": 2,
+    #             "friction_type": 1,
+    #             "grid_refinement": g,
+    #             "solver": solver,
+    #             'permeability': 0,
+    #         }
+    #     )
+
+    solver = 2
+    for g in (
+        [
+            0.25,
+            0.5,
+            # 1,
+            # 2,
+            # 3,
+            # 3.6,
+        ]
+    ):
         run_model(
             {
                 "physics": 1,
@@ -185,28 +208,6 @@ if __name__ == "__main__":
                 "grid_refinement": g,
                 "solver": solver,
                 'permeability': 0,
+                # "save_matrix": True,
             }
         )
-
-    # for g in (
-    #     [
-    #         0.25,
-    #         # 0.5,
-    #         # 1,
-    #         # 2,
-    #         # 3,
-    #         # 3.6,
-    #     ]
-    # ):
-    #     run_model(
-    #         {
-    #             "physics": 1,
-    #             "geometry": 0.3,
-    #             "barton_bandis_stiffness_type": 2,
-    #             "friction_type": 1,
-    #             "grid_refinement": g,
-    #             "solver": 2,
-    #             'permeability': 0,
-    #             # "save_matrix": True,
-    #         }
-    #     )
