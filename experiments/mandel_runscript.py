@@ -155,7 +155,7 @@ def run_model(setup: dict):
             "nl_convergence_tol": float("inf"),
             "nl_convergence_tol_res": 1e-7,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 100,
+            "max_iterations": 50,
             # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
             "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
@@ -169,13 +169,13 @@ def run_model(setup: dict):
 
 def experiment_1_barton_bandis_friction():
     setups = []
-    for barton_bandis in [2]:
-        for friction in [1]:
+    for barton_bandis in reversed([0, 1, 2, 3, 4, 5]):
+        for friction in reversed([0, 1, 2]):
             for solver in [1]:
                 setups.append(
                     {
                         "physics": 0,
-                        "geometry": 1,
+                        "geometry": 0.1,
                         "barton_bandis_stiffness_type": barton_bandis,
                         "friction_type": friction,
                         "grid_refinement": 1,
@@ -188,16 +188,16 @@ def experiment_1_barton_bandis_friction():
 
 
 if __name__ == "__main__":
-    # experiment_1_barton_bandis_friction()
-    for g in [1, 2, 5, 25, 33, 40]:
-        run_model(
-            {
-                "physics": 1,
-                "geometry": 0,
-                "barton_bandis_stiffness_type": 2,
-                "friction_type": 1,
-                "grid_refinement": g,
-                "solver": 2,
-                "save_matrix": False,
-            }
-        )
+    experiment_1_barton_bandis_friction()
+    # for g in [1, 2, 5, 25, 33, 40]:
+    #     run_model(
+    #         {
+    #             "physics": 0,
+    #             "geometry": 0,
+    #             "barton_bandis_stiffness_type": 2,
+    #             "friction_type": 1,
+    #             "grid_refinement": g,
+    #             "solver": 2,
+    #             "save_matrix": False,
+    #         }
+    #     )

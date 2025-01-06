@@ -486,7 +486,6 @@ class PetscRichardson(PetscKrylovSolver):
 
         options = make_сlear_petsc_options()
         options.setValue("ksp_type", "richardson")
-        # options.setValue('ksp_type', 'gmres')
         options.setValue("ksp_max_it", 150)
 
         if pc_side == "left":

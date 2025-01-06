@@ -186,16 +186,11 @@ def get_fs_fractures_analytical(model):
     return scipy.sparse.diags(val)
 
 
-def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int, groups=None):
-    assert groups is None
-    if groups is None:
-        groups = [p_mat_group, p_frac_group]
-    assert p_mat_group in groups
-    assert p_frac_group in groups
-
+def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int):
+    groups = [p_mat_group, p_frac_group]
     diag = [
-        get_fixed_stress_stabilization(model) * 1,
-        get_fs_fractures_analytical(model) * 1,
+        get_fixed_stress_stabilization(model),
+        get_fs_fractures_analytical(model),
     ]
     result = J.empty_container()[groups]
     result.mat = scipy.sparse.block_diag(diag, format="csr")
@@ -203,18 +198,12 @@ def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int, groups=Non
     return result
 
 
-def make_fs_analytical_slow(model, J, p_mat_group: int, p_frac_group: int, groups=None):
-    if groups is None:
-        groups = [p_mat_group, p_frac_group]
-    assert p_mat_group in groups
-    assert p_frac_group in groups
+def make_fs_analytical_slow(model, J, p_mat_group: int, p_frac_group: int, groups):
 
-    diag = [
-        get_fixed_stress_stabilization(model) * 1,
-        get_fs_fractures_analytical(model) * 1e0,
-    ]
+
     result = J.empty_container()[groups]
-    result[[p_mat_group, p_frac_group]] = scipy.sparse.block_diag(diag, format="csr")
+    result[[p_mat_group]] = scipy.sparse.block_diag([get_fixed_stress_stabilization(model)], format="csr")
+    result[[p_frac_group]] = scipy.sparse.block_diag([get_fs_fractures_analytical(model)], format="csr")
     return result
 
 

@@ -49,7 +49,7 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
         )
 
         cell_volumes = self.wrap_grid_attribute(subdomains, "cell_volumes", dim=1)
-        rho_ref = pp.ad.Scalar(self.fluid.density(), "reference_fluid_density")
+        rho_ref = pp.ad.Scalar(self.fluid.reference_component.density, "reference_fluid_density")
         result *= cell_volumes * rho_ref
 
         result.set_name("simplified mass")
@@ -65,7 +65,7 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
 
     def permeability(self, subdomains):
         physics_type = self.params["setup"]["physics"]
-        permeability = self.params['setup']['permeability']
+        permeability = self.params['setup'].get('permeability', 1)
 
         if permeability == 0:
             return ConstantPermeability.permeability(self, subdomains)
@@ -74,7 +74,6 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
                 return CubicLawPermeability.permeability(self, subdomains)
             elif physics_type == 0:
                 return ConstantPermeability.permeability(self, subdomains)
-                # return const_perm / 12
 
 
 def get_barton_bandis_config(setup: dict):

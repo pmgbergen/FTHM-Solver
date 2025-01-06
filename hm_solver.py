@@ -1,6 +1,4 @@
 from functools import cached_property
-import sys
-from typing import Sequence
 from block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 from fixed_stress import make_fs_analytical, make_fs_analytical_slow
 from iterative_solver import (
@@ -11,18 +9,12 @@ from iterative_solver import (
 
 import numpy as np
 import scipy.sparse
-import porepy as pp
-from porepy.models.solution_strategy import SolutionStrategy
 from mat_utils import (
     PetscAMGFlow,
     PetscAMGMechanics,
-    PetscGMRES,
     PetscILU,
-    PetscRichardson,
     csr_ones,
-    extract_diag,
     extract_diag_inv,
-    inv,
     inv_block_diag,
 )
 
@@ -217,13 +209,7 @@ class IterativeHMSolver(IterativeLinearSolver):
 
         J55 = J[u_intf_group, u_intf_group].mat
 
-        # tmp = J[[2,3]].empty_container()
-        # tmp.mat = inv(J[[2,3]].mat)
-        # J55_inv = tmp[[3]].mat
-
-        # J55_inv = inv(J55)
         J55_inv = inv_block_diag(J55, nd=self.nd, lump=False)
-        # J55_inv = extract_diag(J55)
 
         Qright.mat = csr_ones(Qright.shape[0])
 
@@ -233,33 +219,9 @@ class IterativeHMSolver(IterativeLinearSolver):
         op = np.repeat(op, self.nd)
 
         J54 = J[u_intf_group, contact_group].mat
-        # J54[:, op] = 0
-        # J54[:, sl] = 0
-        # J54[:, st] = 0
 
         tmp = -J55_inv @ J54
-        # tmp_nnz = [np.array(tmp.sum(axis=1)).ravel() != 0]
-        # Qright[u_intf_group, u_]
-        # tmp.data[:] = 1
-
-        # YES
-        # tmp[::2] = 0
-        # tmp[:, 1::2] = 0
-
-        # YES
-        # tmp[1::2] = 0
-        # tmp[:, 1::2] = 0
         Qright[u_intf_group, contact_group] = tmp
-
-        # Qright[:, contact_group] = Qright[:, contact_group].mat * 1e3
-
-        # E = (
-        #     scipy.sparse.eye(J55_inv.shape[0])
-        #     - J55 @ J55_inv
-        # ) @ J[u_intf_group, contact_group].mat
-        # self._linear_solve_stats.error_matrix_contribution = (
-        #     abs(E.data).max() / abs(J[u_intf_group, contact_group].mat.data).max()
-        # )
         return Qright
 
     def Qleft(self, contact_group: int, u_intf_group: int) -> BlockMatrixStorage:
@@ -311,99 +273,9 @@ class IterativeHMSolver(IterativeLinearSolver):
     def make_solver_scheme(self) -> FieldSplitScheme:
         solver_type = self.params["setup"]["solver"]
 
-        if solver_type in [1, 11]:  # Theoretical solver.
-            prec = FieldSplitScheme(
-                # Exactly solve elasticity and contact mechanics, build fixed stress.
-                groups=[0, 2, 3],
-                invertor=lambda bmat: make_fs_analytical_slow(
-                    self, bmat, p_mat_group=4, p_frac_group=5, groups=[1, 4, 5]
-                ).mat,
-                invertor_type="physical",
-                complement=FieldSplitScheme(
-                    groups=[1, 4, 5],
-                ),
-            )
-
-        elif solver_type == 2:  # Scalable solver.
-            prec = FieldSplitScheme(
-                # Exactly eliminate contact mechanics (assuming linearly-transformed system)
-                groups=[0],
-                solve=lambda bmat: inv_block_diag(mat=bmat[[0]].mat, nd=self.nd),
-                complement=FieldSplitScheme(
-                    # Eliminate interface flow,
-                    # Use diag() to approximate inverse and ILU to solve linear systems
-                    groups=[1],
-                    solve=lambda bmat: PetscILU(bmat[[1]].mat),
-                    invertor=lambda bmat: extract_diag_inv(bmat[[1]].mat),
-                    complement=FieldSplitScheme(
-                        # Eliminate elasticity. Use AMG to solve linear systems and fixed
-                        # stress to approximate inverse.
-                        groups=[2, 3],
-                        solve=lambda bmat: PetscAMGMechanics(
-                            mat=bmat[[2, 3]].mat,
-                            dim=self.nd,
-                            null_space=build_mechanics_near_null_space(self),
-                        ),
-                        invertor_type="physical",
-                        invertor=lambda bmat: make_fs_analytical(
-                            self, bmat, p_mat_group=4, p_frac_group=5
-                        ).mat,
-                        complement=FieldSplitScheme(
-                            # Use AMG to solve mass balance.
-                            groups=[4, 5],
-                            solve=lambda bmat: PetscAMGFlow(mat=bmat[[4, 5]].mat),
-                        ),
-                    ),
-                ),
-            )
-
-        elif solver_type == 12:
-            prec = FieldSplitScheme(
-                # Exactly eliminate contact mechanics (assuming linearly-transformed system)
-                groups=[0],
-                solve=lambda bmat: inv_block_diag(mat=bmat[[0]].mat, nd=self.nd),
-                complement=FieldSplitScheme(
-                    # Eliminate interface flow,
-                    # Use diag() to approximate inverse and ILU to solve linear systems
-                    groups=[1],
-                    # solve=lambda bmat: PetscILU(bmat[[1]].mat),
-                    # invertor=lambda bmat: extract_diag_inv(bmat[[1]].mat),
-                    complement=FieldSplitScheme(
-                        # TODO
-                        groups=[2, 3],
-                        solve="direct",
-                        invertor_type="physical",
-                        invertor=lambda bmat: make_fs_analytical(
-                            self, bmat, p_mat_group=4, p_frac_group=5
-                        ).mat,
-                        complement=FieldSplitScheme(
-                            # TODO
-                            groups=[4, 5],
-                            solve="direct",
-                        ),
-                    ),
-                ),
-            )
-        else:
-            raise ValueError(f"{solver_type}")
-
-        if solver_type == 1:
-            return KSPScheme(
-                ksp="richardson",
-                preconditioner=prec,
-                atol=1e-8,
-                rtol=1e-8,
-                pc_side="left",
-                right_transformations=[
-                    lambda bmat: self.Qright(
-                        contact_group=self.CONTACT_GROUP, u_intf_group=3
-                    )
-                ],
-            )
-        else:
+        if solver_type == 2:  # Scalable solver.
             return KSPScheme(
                 ksp="gmres",
-                preconditioner=prec,
                 rtol=1e-10,
                 pc_side="right",
                 right_transformations=[
@@ -411,10 +283,73 @@ class IterativeHMSolver(IterativeLinearSolver):
                         contact_group=self.CONTACT_GROUP, u_intf_group=3
                     )
                 ],
-                petsc_options={
-                    # "ksp_type": "fgmres",
-                },
+                preconditioner=FieldSplitScheme(
+                    # Exactly eliminate contact mechanics (assuming linearly-transformed system)
+                    groups=[0],
+                    solve=lambda bmat: inv_block_diag(mat=bmat[[0]].mat, nd=self.nd),
+                    complement=FieldSplitScheme(
+                        # Eliminate interface flow,
+                        # Use diag() to approximate inverse and ILU to solve linear systems
+                        groups=[1],
+                        solve=lambda bmat: PetscILU(bmat[[1]].mat),
+                        invertor=lambda bmat: extract_diag_inv(bmat[[1]].mat),
+                        complement=FieldSplitScheme(
+                            # Eliminate elasticity. Use AMG to solve linear systems and fixed
+                            # stress to approximate inverse.
+                            groups=[2, 3],
+                            solve=lambda bmat: PetscAMGMechanics(
+                                mat=bmat[[2, 3]].mat,
+                                dim=self.nd,
+                                null_space=build_mechanics_near_null_space(self),
+                            ),
+                            invertor_type="physical",
+                            invertor=lambda bmat: make_fs_analytical(
+                                self, bmat, p_mat_group=4, p_frac_group=5
+                            ).mat,
+                            complement=FieldSplitScheme(
+                                # Use AMG to solve mass balance.
+                                groups=[4, 5],
+                                solve=lambda bmat: PetscAMGFlow(mat=bmat[[4, 5]].mat),
+                            ),
+                        ),
+                    ),
+                ),
             )
+
+        elif solver_type == 1:
+            return KSPScheme(
+                # ksp="gmres",
+                # rtol=1e-10,
+                # pc_side="right",
+                ksp="richardson",
+                atol=1e-10,
+                rtol=1e-10,
+                pc_side="left",
+                right_transformations=[
+                    lambda bmat: self.Qright(
+                        contact_group=self.CONTACT_GROUP, u_intf_group=3
+                    )
+                ],
+                preconditioner=FieldSplitScheme(
+                    groups=[0],
+                    complement=FieldSplitScheme(
+                        groups=[1],
+                        complement=FieldSplitScheme(
+                            groups=[2, 3],
+                            invertor_type="physical",
+                            invertor=lambda bmat: make_fs_analytical(
+                                self, bmat, p_mat_group=4, p_frac_group=5
+                            ).mat,
+                            complement=FieldSplitScheme(
+                                groups=[4, 5],
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+        else:
+            raise ValueError
 
 
 def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.ndarray:
