@@ -211,7 +211,7 @@ class PetscPC:
         block_size=1,
         null_space: np.ndarray = None,
         petsc_options: dict = None,
-        name=''
+        name="",
     ) -> None:
         self.name = name
         self.pc = PETSc.PC().create()
@@ -307,53 +307,12 @@ class PetscAMGMechanics(PetscPC):
         petsc_options: dict[str, str] = None,
     ) -> None:
         options = make_сlear_petsc_options()
-
-        # options["pc_type"] = "gamg"
-        # options["mg_levels_ksp_type"] = "richardson"
-        # options["mg_levels_ksp_max_it"] = 1
-        # options["mg_levels_pc_type"] = "ilu"
-        # options['mg_levels_pc_jacobi_type'] = 'rowl1'
-        # options['mg_levels_pc_jacobi_rowl1_scale'] = True
-        # if dim == 3:
-        #     options["mg_levels_pc_factor_levels"] = 0
-        # else:
-        #     options["mg_levels_pc_factor_levels"] = 5
-
-        # options['pc_gamg_threshold'] = 0.1
-
-        options["pc_type"] = "gamg"
-        # options["pc_gamg_threshold"] = 0.11  # GOOD ONE FOR PROBLEM 1
-        # options['pc_gamg_agg_nsmooths'] = 3
-
-        # options["pc_gamg_threshold"] = 0.18  # GOOD ONE FOR PROBLEM 2
-        # options["mg_levels_ksp_max_it"] = 3
-        # options['pc_gamg_agg_nsmooths'] = 3
-
-        # options['pc_gamg_low_memory_threshold_filter'] = True
-        # options['pc_gamg_aggressive_mis_k'] = 4
-
-        if dim == 2:
-            pass
-            options["pc_gamg_threshold"] = 0.01  # GOOD ONE FOR 2D
-            options["pc_gamg_agg_nsmooths"] = 1
-            options["pc_gamg_aggressive_coarsening"] = 0
-            options["mg_levels_ksp_max_it"] = 10
-            options["mg_levels_pc_jacobi_type"] = "rowmax"
-
-        elif dim == 3:
-            # options["pc_gamg_threshold"] = 0.00005  #
-            options["pc_gamg_threshold"] = 0.05  #
-            options["pc_gamg_agg_nsmooths"] = 0
-            options["pc_gamg_aggressive_coarsening"] = 3
-            # options['mg_levels_ksp_type'] = 'bcgs'
-            options["mg_levels_ksp_max_it"] = 10
-            options["mg_levels_pc_jacobi_type"] = "rowmax"
-
-        else:
-            raise ValueError(dim)
-
-        super().__init__(mat=mat, block_size=dim, null_space=null_space, petsc_options=petsc_options)
-
+        options["pc_type"] = "hypre"
+        options["pc_hypre_type"] = "boomeramg"
+        options["pc_hypre_boomeramg_stong_threshold"] = 0.7
+        super().__init__(
+            mat=mat, block_size=dim, null_space=null_space, petsc_options=petsc_options
+        )
 
 
 class PetscAMGFlow(PetscPC):
@@ -363,14 +322,7 @@ class PetscAMGFlow(PetscPC):
         options["pc_type"] = "hypre"
         options["pc_hypre_type"] = "boomeramg"
         options["pc_hypre_boomeramg_max_iter"] = 1
-        # options["pc_hypre_boomeramg_cycle_type"] = "W"
         options["pc_hypre_boomeramg_truncfactor"] = 0.3
-
-        # if dim == 3:
-        #     options['pc_hypre_boomeramg_strong_threshold'] = 0.7
-        # else:
-        #     options['pc_hypre_boomeramg_strong_threshold'] = 0.25
-
         super().__init__(mat=mat, block_size=1)
 
 
@@ -491,24 +443,15 @@ class PetscGMRES(PetscKrylovSolver):
         max_it=90,
         pc_side: Literal["left", "right"] = "right",
         petsc_options: dict[str, str] = None,
-        name=''
+        name="",
     ) -> None:
         self.name = name
         self.mat = mat
-        
+
         options = make_сlear_petsc_options()
         options.setValue("ksp_type", "gmres")
-        # options.setValue("ksp_type", "bcgs")
-        # options.setValue("ksp_type", "richardson")
-
-        # options.setValue('ksp_gmres_modifiedgramschmidt', None)
-        # options.setValue('ksp_gmres_cgs_refinement_type', 'refine_always')
-
         options.setValue("ksp_max_it", max_it)
         options.setValue("ksp_gmres_restart", restart)
-
-        # options.setValue('ksp_gmres_modifiedgramschmidt', True)
-
         options.setValue("ksp_gmres_classicalgramschmidt", True)
         options.setValue("ksp_gmres_cgs_refinement_type", "refine_ifneeded")
 

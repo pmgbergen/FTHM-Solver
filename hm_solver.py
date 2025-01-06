@@ -343,11 +343,6 @@ class IterativeHMSolver(IterativeLinearSolver):
                             mat=bmat[[2, 3]].mat,
                             dim=self.nd,
                             null_space=build_mechanics_near_null_space(self),
-                            petsc_options={
-                                "pc_type": "hypre",
-                                "pc_hypre_type": "boomeramg",
-                                "pc_hypre_boomeramg_stong_threshold": 0.7,
-                            },
                         ),
                         invertor_type="physical",
                         invertor=lambda bmat: make_fs_analytical(

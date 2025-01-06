@@ -1,20 +1,14 @@
 import porepy as pp
 import numpy as np
-from experiments.models import Physics
-from hm_solver import IterativeHMSolver as Solver
-from experiments.thermal.thm_models import (
+from experiments.models import (
+    Physics,
     ConstraintLineSearchNonlinearSolver,
-    # Physics,
     get_barton_bandis_config,
     get_friction_coef_config,
 )
+from hm_solver import IterativeHMSolver as Solver
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
-from porepy.models.constitutive_laws import CubicLawPermeability
-
-# from experiments.thermal.thm_solver import ThermalSolver
-
-from porepy.models.poromechanics import Poromechanics
 
 XMAX = 1000
 YMAX = 1000
@@ -60,17 +54,12 @@ class Geometry(pp.SolutionStrategy):
     def bc_values_stress(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         sides = self.domain_boundary_sides(boundary_grid)
         bc_values = np.zeros((self.nd, boundary_grid.num_cells))
-        # 10 Mpa
-        x = 0.5
         val = self.units.convert_units(5e6, units="Pa")
-        # bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
-        # bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
-        
         bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
         bc_values[0, sides.north] = val * boundary_grid.cell_volumes[sides.north] * 0.1
         bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west]
         bc_values[0, sides.east] = -val * boundary_grid.cell_volumes[sides.east]
-        
+
         return bc_values.ravel("F")
 
     def set_domain(self) -> None:
@@ -87,11 +76,10 @@ class Geometry(pp.SolutionStrategy):
                 ]
             )
         ]
-        # self._fractures = []
         self._fractures = [pp.LineFracture(pts) for pts in pts_list]
 
 
-class Setup(Geometry, Solver, StatisticsSavingMixin, CubicLawPermeability, Poromechanics):
+class Setup(Geometry, Solver, StatisticsSavingMixin, Physics):
     pass
 
 
@@ -105,7 +93,7 @@ def make_model(setup: dict):
     lame = 1.2e10
     biot = 0.47
     porosity = 1.3e-2
-    specific_storage = 1/(lame + 2/3 * shear) * (biot - porosity) * (1 - biot)
+    specific_storage = 1 / (lame + 2 / 3 * shear) * (biot - porosity) * (1 - biot)
 
     params = {
         "setup": setup,
@@ -119,7 +107,6 @@ def make_model(setup: dict):
                 permeability=1e-14,  # [m^2]
                 # granite
                 biot_coefficient=biot,  # [-]
-                # "biot_coefficient": 1,  # for mandel
                 density=2683.0,  # [kg * m^-3]
                 porosity=porosity,  # [-]
                 specific_storage=specific_storage,  # [Pa^-1]
@@ -128,12 +115,10 @@ def make_model(setup: dict):
             ),
             "fluid": pp.FluidComponent(
                 compressibility=4.559 * 1e-10,  # [Pa^-1], fluid compressibility
-                # "compressibility": 0,  # for mandel
                 density=998.2,  # [kg m^-3]
                 viscosity=1.002e-3,  # [Pa s], absolute viscosity
             ),
             "numerical": pp.NumericalConstants(
-                # experimnetal
                 characteristic_displacement=1e-1,  # [m]
             ),
         },
@@ -143,7 +128,6 @@ def make_model(setup: dict):
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
             dt_init=0.5 * DAY,
-            # dt_min_max=(0.01, 0.5),
             schedule=[0, 3 * DAY],
             iter_max=25,
             constant_dt=True,
@@ -187,7 +171,7 @@ def experiment_1_barton_bandis_friction():
     setups = []
     for barton_bandis in [2]:
         for friction in [1]:
-            for solver in [1, ]:
+            for solver in [1]:
                 setups.append(
                     {
                         "physics": 0,
@@ -205,18 +189,7 @@ def experiment_1_barton_bandis_friction():
 
 if __name__ == "__main__":
     # experiment_1_barton_bandis_friction()
-    for g in [
-        # 1,
-        # 2,
-        # 3,
-        # 4,
-        # 5,
-        # 6,
-        # 10,
-        # 33,
-        # 40
-        1, 2, 5, 25, 33, 40
-    ]:
+    for g in [1, 2, 5, 25, 33, 40]:
         run_model(
             {
                 "physics": 1,
@@ -228,14 +201,3 @@ if __name__ == "__main__":
                 "save_matrix": False,
             }
         )
-    # run_model(
-    #     {
-    #         "physics": 0,
-    #         "geometry": 0,
-    #         "barton_bandis_stiffness_type": 2,
-    #         "friction_type": 1,
-    #         "grid_refinement": 1,
-    #         "solver": 1,
-    #         "save_matrix": True,
-    #     }
-    # )

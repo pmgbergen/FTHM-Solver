@@ -1,20 +1,14 @@
 import porepy as pp
 import numpy as np
-from experiments.models import Physics
-from hm_solver import IterativeHMSolver as Solver
-from porepy.models.constitutive_laws import CubicLawPermeability
-from experiments.thermal.thm_models import (
+from experiments.models import (
     ConstraintLineSearchNonlinearSolver,
-    # Physics,
+    Physics,
     get_barton_bandis_config,
     get_friction_coef_config,
 )
+from hm_solver import IterativeHMSolver as Solver
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
-
-# from experiments.thermal.thm_solver import ThermalSolver
-
-from porepy.models.poromechanics import Poromechanics
 
 XMAX = 1000
 YMAX = 1000
@@ -50,11 +44,6 @@ class Geometry(pp.SolutionStrategy):
         sides = self.domain_boundary_sides(boundary_grid)
         val = 20  # 4
         vals[sides.east] *= val
-        # vals[sides.north] *= val * boundary_grid.cell_centers[0][sides.north] / XMAX
-        # vals[sides.south] *= val * boundary_grid.cell_centers[0][sides.south] / XMAX
-        # vals[sides.top] *= val * boundary_grid.cell_centers[0][sides.top] / XMAX
-        # vals[sides.bottom] *= val * boundary_grid.cell_centers[0][sides.bottom] / XMAX
-
         return vals
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
@@ -67,10 +56,6 @@ class Geometry(pp.SolutionStrategy):
         sides = self.domain_boundary_sides(boundary_grid)
         bc_values = np.zeros((self.nd, boundary_grid.num_cells))
         val = self.units.convert_units(3e6, units="Pa")
-        # x = 0.5
-        # bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
-        # bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
-
         bc_values[2, sides.bottom] = val * boundary_grid.cell_volumes[sides.bottom]
         bc_values[2, sides.top] = -val * boundary_grid.cell_volumes[sides.top]
         bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
@@ -99,7 +84,7 @@ class Geometry(pp.SolutionStrategy):
         self._fractures = [pp.PlaneFracture(pts) for pts in pts_list]
 
 
-class Setup(Geometry, Solver, StatisticsSavingMixin, Poromechanics):
+class Setup(Geometry, Solver, StatisticsSavingMixin, Physics):
     pass
 
 
@@ -107,37 +92,38 @@ def make_model(setup: dict):
 
     cell_size_multiplier = setup["grid_refinement"]
 
-    DAY = 24 * 60 * 60
-    # DAY /= 24
-    DAY *= 7
+    WEEK = 24 * 60 * 60 * 7
+
+    shear = 1.2e10
+    lame = 1.2e10
+    biot = 0.47
+    porosity = 1.3e-2
+    specific_storage = 1 / (lame + 2 / 3 * shear) * (biot - porosity) * (1 - biot)
 
     params = {
         "setup": setup,
         "material_constants": {
             "solid": pp.SolidConstants(
-                shear_modulus=1.2e10,  # [Pa]
-                lame_lambda=1.2e10,  # [Pa]
+                shear_modulus=shear,  # [Pa]
+                lame_lambda=lame,  # [Pa]
                 dilation_angle=5 * np.pi / 180,  # [rad]
                 residual_aperture=1e-4,  # [m]
                 normal_permeability=1e-4,
                 permeability=1e-14,  # [m^2]
                 # granite
-                biot_coefficient=0.47,  # [-]
-                # "biot_coefficient": 1,  # for mandel
+                biot_coefficient=biot,  # [-]
                 density=2683.0,  # [kg * m^-3]
-                porosity=1.3e-2,  # [-]
-                specific_storage=4.74e-10,  # [Pa^-1]
+                porosity=porosity,  # [-]
+                specific_storage=specific_storage,  # [Pa^-1]
                 **get_barton_bandis_config(setup),
                 **get_friction_coef_config(setup),
             ),
             "fluid": pp.FluidComponent(
                 compressibility=4.559 * 1e-10,  # [Pa^-1], fluid compressibility
-                # "compressibility": 0,  # for mandel
                 density=998.2,  # [kg m^-3]
                 viscosity=1.002e-3,  # [Pa s], absolute viscosity
             ),
             "numerical": pp.NumericalConstants(
-                # experimnetal
                 characteristic_displacement=1e-1,  # [m]
             ),
         },
@@ -146,9 +132,8 @@ def make_model(setup: dict):
         ),
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
-            dt_init=0.25 * DAY,
-            # dt_min_max=(0.01, 0.5),
-            schedule=[0, 1.5 * DAY],
+            dt_init=0.25 * WEEK,
+            schedule=[0, 1.5 * WEEK],
             iter_max=25,
             constant_dt=True,
         ),
@@ -191,12 +176,12 @@ def run_model(setup: dict):
 if __name__ == "__main__":
     for g in (
         [
-            # 0.25,
+            0.25,
             # 0.5,
             # 1,
             # 2,
             # 3,
-            3.6,
+            # 3.6,
         ]
     ):
         run_model(
@@ -207,6 +192,7 @@ if __name__ == "__main__":
                 "friction_type": 1,
                 "grid_refinement": g,
                 "solver": 2,
+                'permeability': 0,
                 # "save_matrix": True,
             }
         )

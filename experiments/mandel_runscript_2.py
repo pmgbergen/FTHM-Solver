@@ -1,20 +1,14 @@
 import porepy as pp
 import numpy as np
-from experiments.models import Physics
-from hm_solver import IterativeHMSolver as Solver
-from porepy.models.constitutive_laws import CubicLawPermeability
-from experiments.thermal.thm_models import (
+from experiments.models import (
     ConstraintLineSearchNonlinearSolver,
-    # Physics,
+    Physics,
     get_barton_bandis_config,
     get_friction_coef_config,
 )
+from hm_solver import IterativeHMSolver as Solver
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
-
-# from experiments.thermal.thm_solver import ThermalSolver
-
-from porepy.models.poromechanics import Poromechanics
 
 XMAX = 1000
 YMAX = 1000
@@ -27,20 +21,12 @@ class Geometry(pp.SolutionStrategy):
         num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
         val = self.reference_variable_values.pressure * np.ones(num_cells)
 
-        # num_fracs = sum([sd.num_cells for sd in self.mdg.subdomains(dim=self.nd - 1)])
-        # lambdas = np.ones(num_fracs * self.nd) * 1e-6
-
         for time_step_index in self.time_step_indices:
             self.equation_system.set_variable_values(
                 val,
                 variables=[self.pressure_variable],
                 time_step_index=time_step_index,
             )
-            # self.equation_system.set_variable_values(
-            #     lambdas,
-            #     variables=[self.contact_traction_variable],
-            #     time_step_index=time_step_index,
-            # )
 
         for iterate_index in self.iterate_indices:
             self.equation_system.set_variable_values(
@@ -48,11 +34,6 @@ class Geometry(pp.SolutionStrategy):
                 variables=[self.pressure_variable],
                 iterate_index=iterate_index,
             )
-            # self.equation_system.set_variable_values(
-            #     lambdas,
-            #     variables=[self.contact_traction_variable],
-            #     iterate_index=iterate_index,
-            # )
 
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
@@ -63,7 +44,6 @@ class Geometry(pp.SolutionStrategy):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
         vals[sides.east] *= 10
-        # if self.time_manager.time > self.time_manager.dt:
         return vals
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
@@ -76,41 +56,15 @@ class Geometry(pp.SolutionStrategy):
         sides = self.domain_boundary_sides(boundary_grid)
         bc_values = np.zeros((self.nd, boundary_grid.num_cells))
         val = self.units.convert_units(3e6, units="Pa")
-        # x = 0.5
-        # bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
-        # bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west] * x
-
         bc_values[1, sides.north] = -val * boundary_grid.cell_volumes[sides.north]
-        # bc_values[0, sides.north] = val * boundary_grid.cell_volumes[sides.north] * 0.1
         bc_values[0, sides.west] = val * boundary_grid.cell_volumes[sides.west]
         bc_values[0, sides.east] = -val * boundary_grid.cell_volumes[sides.east]
-
         return bc_values.ravel("F")
 
     def set_domain(self) -> None:
         self._domain = pp.Domain({"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX})
 
     def set_fractures(self) -> None:
-        # self._fractures = []
-
-        # pts_list = np.array(
-        #     [
-        #         [[0.1, 0.8], [0.2, 0.3]],
-        #         [[0.1, 0.5], [0.1, 0.6]],
-        #         [[0.55, 0.9], [0.4, 0.5]],
-        #         [[0.4, 0.6], [0.7, 0.3]],
-        #         [[0.1, 0.3], [0.4, 0.9]],
-        #         [[0.1, 0.6], [0.7, 0.8]],
-        #     ]
-        # )
-        # pts_list = np.array([
-        #     [[0.1, 0.95], [0.3, 0.3]],
-        #     [[0.1, 0.95], [0.5, 0.5]],
-        #     [[0.2, 0.95], [0.7, 0.6]],
-        #     [[0.3, 0.4], [0.15, 0.85]],
-        #     [[0.5, 0.6], [0.35, 0.55]]
-        #     # [[0.5, 0.6], [0.15, 0.85]]
-        # ])
         pts_list = np.array(
             [
                 [[0.1, 0.9], [0.5, 0.5]],
@@ -123,51 +77,17 @@ class Geometry(pp.SolutionStrategy):
         pts_list[:, :, 1] *= YMAX
 
         self._fractures = [pp.LineFracture(pts) for pts in pts_list]
-        # points = np.array(
-        #     [
-        #         [0.2, 0.7],
-        #         [0.5, 0.7],
-        #         [0.8, 0.65],
-        #         [1, 0.3],
-        #         [1.8, 0.4],
-        #         [0.2, 0.3],
-        #         [0.6, 0.25],
-        #         [1.0, 0.4],
-        #         [1.7, 0.85],
-        #         [1.5, 0.65],
-        #         [2.0, 0.55],
-        #         [1.5, 0.05],
-        #         [1.4, 0.25],
-        #     ]
-        # ).T
-        # points[0] *= XMAX / 2
-        # points[1] *= YMAX
-        # # The fracture endpoints are given as indices in the points array
-        # fracs = np.array([[0, 1], [1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]]).T
-        # self._fractures = pp.frac_utils.pts_edges_to_linefractures(points, fracs)
 
 
-class Setup(CubicLawPermeability, Geometry, Solver, StatisticsSavingMixin, Poromechanics):
+class Setup(Geometry, Solver, StatisticsSavingMixin, Physics):
     pass
-    # def normal_fracture_deformation_equation(self, subdomains):
-    #     nd_vec_to_normal = self.normal_component(subdomains)
-    #     t_n = nd_vec_to_normal @ self.contact_traction(subdomains)
-    #     t_n.set_name("normal_fracture_deformation_equation")
-    #     return t_n
-
-    # def tangential_fracture_deformation_equation(self, subdomains):
-    #     nd_vec_to_tangential = self.tangential_component(subdomains)
-    #     t_t = nd_vec_to_tangential @ self.contact_traction(subdomains)
-    #     t_t.set_name("t_t")
-    #     return t_t
 
 
 def make_model(setup: dict):
 
     cell_size_multiplier = setup["grid_refinement"]
 
-    DAY = 24 * 60 * 60
-    DAY /= 24
+    HOUR = 60 * 60
 
     shear = 1.2e10
     lame = 1.2e10
@@ -187,7 +107,6 @@ def make_model(setup: dict):
                 permeability=1e-14,  # [m^2]
                 # granite
                 biot_coefficient=biot,  # [-]
-                # "biot_coefficient": 1,  # for mandel
                 density=2683.0,  # [kg * m^-3]
                 porosity=porosity,  # [-]
                 specific_storage=specific_storage,  # [Pa^-1]
@@ -196,12 +115,10 @@ def make_model(setup: dict):
             ),
             "fluid": pp.FluidComponent(
                 compressibility=4.559 * 1e-10,  # [Pa^-1], fluid compressibility
-                # "compressibility": 0,  # for mandel
                 density=998.2,  # [kg m^-3]
                 viscosity=1.002e-3,  # [Pa s], absolute viscosity
             ),
             "numerical": pp.NumericalConstants(
-                # experimnetal
                 characteristic_displacement=1e-1,  # [m]
             ),
         },
@@ -210,9 +127,8 @@ def make_model(setup: dict):
         ),
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
-            dt_init=0.25 * DAY,
-            # dt_min_max=(0.01, 0.5),
-            schedule=[0, 1.5 * DAY],
+            dt_init=0.25 * HOUR,
+            schedule=[0, 1.5 * HOUR],
             iter_max=25,
             constant_dt=True,
         ),
@@ -230,7 +146,6 @@ def run_model(setup: dict):
     model = make_model(setup)
     model.prepare_simulation()
     print(model.simulation_name())
-    # pp.plot_grid(model.mdg, plot_2d=True, fracturewidth_1d=5)
 
     pp.run_time_dependent_model(
         model,
@@ -253,29 +168,7 @@ def run_model(setup: dict):
 
 
 if __name__ == "__main__":
-    for g in [
-        # 1,
-        # 2,
-        # 3,
-        # 4,
-        # 5,
-        # 6,
-        # 10,
-        # 25,
-        # 30,
-        # 33,
-        # 35,
-        # 40,
-        # 45,
-        # 50,
-        # ---
-        1,
-        2,
-        5,
-        25,
-        33,
-        40,
-    ]:
+    for g in [1, 2, 5, 25, 33, 40]:
         run_model(
             {
                 "physics": 1,
@@ -284,7 +177,5 @@ if __name__ == "__main__":
                 "friction_type": 1,
                 "grid_refinement": g,
                 "solver": 2,
-                # "solver": 11,
-                # "save_matrix": True,
             }
         )
