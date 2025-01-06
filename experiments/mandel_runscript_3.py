@@ -174,16 +174,8 @@ def run_model(setup: dict):
 
 
 if __name__ == "__main__":
-    for g in (
-        [
-            0.25,
-            # 0.5,
-            # 1,
-            # 2,
-            # 3,
-            # 3.6,
-        ]
-    ):
+    solver = 21
+    for g in [0.25, 0.5, 1]:
         run_model(
             {
                 "physics": 1,
@@ -191,8 +183,30 @@ if __name__ == "__main__":
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": g,
-                "solver": 2,
+                "solver": solver,
                 'permeability': 0,
-                # "save_matrix": True,
             }
         )
+
+    # for g in (
+    #     [
+    #         0.25,
+    #         # 0.5,
+    #         # 1,
+    #         # 2,
+    #         # 3,
+    #         # 3.6,
+    #     ]
+    # ):
+    #     run_model(
+    #         {
+    #             "physics": 1,
+    #             "geometry": 0.3,
+    #             "barton_bandis_stiffness_type": 2,
+    #             "friction_type": 1,
+    #             "grid_refinement": g,
+    #             "solver": 2,
+    #             'permeability': 0,
+    #             # "save_matrix": True,
+    #         }
+    #     )

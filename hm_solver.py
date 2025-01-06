@@ -273,7 +273,7 @@ class IterativeHMSolver(IterativeLinearSolver):
     def make_solver_scheme(self) -> FieldSplitScheme:
         solver_type = self.params["setup"]["solver"]
 
-        if solver_type == 2:  # Scalable solver.
+        if solver_type == 2:  # GMRES + AMG
             return KSPScheme(
                 ksp="gmres",
                 rtol=1e-10,
@@ -316,7 +316,7 @@ class IterativeHMSolver(IterativeLinearSolver):
                 ),
             )
 
-        elif solver_type == 1:
+        elif solver_type == 1:  # Richardson + Direct subsolvers.
             return KSPScheme(
                 # ksp="gmres",
                 # rtol=1e-10,
@@ -325,6 +325,34 @@ class IterativeHMSolver(IterativeLinearSolver):
                 atol=1e-10,
                 rtol=1e-10,
                 pc_side="left",
+                right_transformations=[
+                    lambda bmat: self.Qright(
+                        contact_group=self.CONTACT_GROUP, u_intf_group=3
+                    )
+                ],
+                preconditioner=FieldSplitScheme(
+                    groups=[0],
+                    complement=FieldSplitScheme(
+                        groups=[1],
+                        complement=FieldSplitScheme(
+                            groups=[2, 3],
+                            invertor_type="physical",
+                            invertor=lambda bmat: make_fs_analytical(
+                                self, bmat, p_mat_group=4, p_frac_group=5
+                            ).mat,
+                            complement=FieldSplitScheme(
+                                groups=[4, 5],
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+        elif solver_type == 21:  # GMRES + Direct subsolvers
+            return KSPScheme(
+                ksp="gmres",
+                rtol=1e-10,
+                pc_side="right",
                 right_transformations=[
                     lambda bmat: self.Qright(
                         contact_group=self.CONTACT_GROUP, u_intf_group=3

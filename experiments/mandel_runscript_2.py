@@ -168,7 +168,8 @@ def run_model(setup: dict):
 
 
 if __name__ == "__main__":
-    for g in [1, 2, 5, 25, 33, 40]:
+    solver = 21
+    for g in [1, 2, 5]:
         run_model(
             {
                 "physics": 1,
@@ -176,6 +177,18 @@ if __name__ == "__main__":
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": g,
-                "solver": 2,
+                "solver": solver,
             }
         )
+
+    # for g in [1, 2, 5, 25, 33, 40]:
+    #     run_model(
+    #         {
+    #             "physics": 1,
+    #             "geometry": 0.2,
+    #             "barton_bandis_stiffness_type": 2,
+    #             "friction_type": 1,
+    #             "grid_refinement": g,
+    #             "solver": 21,
+    #         }
+    #     )

@@ -73,7 +73,8 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
             if physics_type == 1:
                 return CubicLawPermeability.permeability(self, subdomains)
             elif physics_type == 0:
-                return ConstantPermeability.permeability(self, subdomains)
+                const_perm = ConstantPermeability.permeability(self, subdomains)
+                return const_perm
 
 
 def get_barton_bandis_config(setup: dict):
