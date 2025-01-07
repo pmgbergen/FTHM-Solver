@@ -15,6 +15,7 @@ if __name__ == "__main__":
                         "grid_refinement": 1,
                         "solver": solver,
                         "save_matrix": False,
+                        'high_boundary_pressure_ratio': 10,
                     }
                 )
     for setup in setups:

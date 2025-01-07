@@ -41,7 +41,8 @@ class Geometry(pp.SolutionStrategy):
     def bc_values_pressure(self, boundary_grid):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
-        vals[sides.east] *= 10
+        x = self.params["setup"]["high_boundary_pressure_ratio"]
+        vals[sides.east] *= x
         return vals
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
@@ -167,19 +168,6 @@ def run_model(setup: dict):
 
 
 if __name__ == "__main__":
-    solver = 21
-    for g in [1, 2, 5]:
-        run_model(
-            {
-                "physics": 1,
-                "geometry": 0,
-                "barton_bandis_stiffness_type": 2,
-                "friction_type": 1,
-                "grid_refinement": g,
-                "solver": solver,
-                "save_matrix": False,
-            }
-        )
 
     solver = 2
     for g in [1, 2, 5, 25, 33, 40]:
@@ -192,5 +180,21 @@ if __name__ == "__main__":
                 "grid_refinement": g,
                 "solver": solver,
                 "save_matrix": False,
+                "high_boundary_pressure_ratio": 13,
+            }
+        )
+
+    solver = 21
+    for g in [1, 2, 5]:
+        run_model(
+            {
+                "physics": 1,
+                "geometry": 0,
+                "barton_bandis_stiffness_type": 2,
+                "friction_type": 1,
+                "grid_refinement": g,
+                "solver": solver,
+                "save_matrix": False,
+                "high_boundary_pressure_ratio": 13,
             }
         )
