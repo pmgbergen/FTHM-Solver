@@ -181,14 +181,14 @@ if __name__ == "__main__":
             }
         )
 
-    # for g in [1, 2, 5, 25, 33, 40]:
-    #     run_model(
-    #         {
-    #             "physics": 1,
-    #             "geometry": 0.2,
-    #             "barton_bandis_stiffness_type": 2,
-    #             "friction_type": 1,
-    #             "grid_refinement": g,
-    #             "solver": 21,
-    #         }
-    #     )
+    for g in [1, 2, 5, 25, 33, 40]:
+        run_model(
+            {
+                "physics": 1,
+                "geometry": 0.2,
+                "barton_bandis_stiffness_type": 2,
+                "friction_type": 1,
+                "grid_refinement": g,
+                "solver": 21,
+            }
+        )

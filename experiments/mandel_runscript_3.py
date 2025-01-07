@@ -66,7 +66,9 @@ class Geometry(pp.SolutionStrategy):
         return bc_values.ravel("F")
 
     def set_domain(self) -> None:
-        self._domain = pp.Domain({"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX, 'zmin': 0, 'zmax': ZMAX})
+        self._domain = pp.Domain(
+            {"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX, "zmin": 0, "zmax": ZMAX}
+        )
 
     def set_fractures(self) -> None:
         pts_list = np.array(
@@ -174,31 +176,8 @@ def run_model(setup: dict):
 
 
 if __name__ == "__main__":
-    # solver = 21
-    # for g in [0.25, 0.5]:
-    #     run_model(
-    #         {
-    #             "physics": 1,
-    #             "geometry": 0.3,
-    #             "barton_bandis_stiffness_type": 2,
-    #             "friction_type": 1,
-    #             "grid_refinement": g,
-    #             "solver": solver,
-    #             'permeability': 0,
-    #         }
-    #     )
-
-    solver = 2
-    for g in (
-        [
-            0.25,
-            0.5,
-            # 1,
-            # 2,
-            # 3,
-            # 3.6,
-        ]
-    ):
+    solver = 21
+    for g in [0.25, 0.5]:
         run_model(
             {
                 "physics": 1,
@@ -207,7 +186,21 @@ if __name__ == "__main__":
                 "friction_type": 1,
                 "grid_refinement": g,
                 "solver": solver,
-                'permeability': 0,
+                "permeability": 0,
+            }
+        )
+
+    solver = 2
+    for g in [0.25, 0.5, 1, 2, 3, 3.6]:
+        run_model(
+            {
+                "physics": 1,
+                "geometry": 0.3,
+                "barton_bandis_stiffness_type": 2,
+                "friction_type": 1,
+                "grid_refinement": g,
+                "solver": solver,
+                "permeability": 0,
                 # "save_matrix": True,
             }
         )
