@@ -10,6 +10,7 @@ docker load -i fhm_solver.tar.gz
 docker run -it --name fhm_solver fhm_solver:latest
 docker exec -it fhm_solver /bin/bash
 ```
+Please don't forget to pull the recent changes with `git pull`.
 
 In the container, run the [experiments](experiments/) with `python`. Their results can be visualized in jupyter notebooks in the same folder, I use VSCode for it.
 
