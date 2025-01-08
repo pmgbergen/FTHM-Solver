@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable, Optional
 import numpy as np
-import scipy.sparse
 from block_matrix import BlockMatrixStorage
 from mat_utils import csr_to_petsc, make_сlear_petsc_options
 from petsc4py import PETSc
@@ -38,7 +37,8 @@ class PetscFieldSplitScheme:
     fieldsplit_options: dict = None
     block_size: int = 1
     # experimental
-    pcmat: Callable[[PETSc.Mat], scipy.sparse.csr_matrix] = None
+    # pcmat: Callable[[PETSc.Mat], PETSc.Mat] = None
+    # invert: Callable[[PETSc.Mat], PETSc.Mat] = None
 
     def get_groups(self) -> list[int]:
         groups = [g for g in self.groups]
@@ -74,10 +74,10 @@ def recursive(
     petsc_is_keep = construct_is(empty_bmat, keep)
     petsc_is_elim = construct_is(empty_bmat, elim)
     petsc_is_elim.setBlockSize(scheme.block_size)
-    petsc_is_keep.setBlockSize(scheme.complement.block_size)
+    # petsc_is_keep.setBlockSize(scheme.complement.block_size)
 
-    if scheme.pcmat is not None:
-        subsolver_options["pc_type"] = "mat"
+    # if scheme.invert is not None:
+    #     fieldsplit_options["pc_fieldsplit_schur_precondition"] = "user"
 
     options = (
         {
@@ -103,10 +103,26 @@ def recursive(
     petsc_pc_elim = petsc_pc.getFieldSplitSubKSP()[0].getPC()
     petsc_pc_keep = petsc_pc.getFieldSplitSubKSP()[1].getPC()
 
-    if scheme.pcmat is not None:
-        petsc_elim_amat = petsc_pc_elim.getOperators()[0]
-        petsc_elim_pmat = scheme.pcmat(petsc_elim_amat)
-        petsc_pc_elim.setOperators(petsc_elim_amat, petsc_elim_pmat)
+    # if scheme.pcmat is not None:
+    #     petsc_elim_amat = petsc_pc_elim.getOperators()[0]
+    #     petsc_elim_pmat = scheme.pcmat(petsc_elim_amat)
+    #     petsc_pc_elim.setOperators(petsc_elim_amat, petsc_elim_pmat)
+
+    # if scheme.invert is not None:
+        #     petsc_keep_S, petsc_keep_Pmat = petsc_pc_keep.getOperators()
+        # A00, Ap00, A01, A10, A11 = petsc_pc_keep.getSchurComplementSubMatrices()
+        # Ap00_new = scheme.invert(A00)
+        # petsc_keep_S_new = PETSc.Mat().createSchurComplement(A00, Ap00_new, A01, A10, A11)
+        # petsc_pc_keep.setOperators(petsc_keep_S_new)
+        # Ap00.delete()
+        # petsc_keep_S.delete()
+        # petsc_keep_Pmat.delete()
+
+        # A00, Ap00, A01, A10, A11 = petsc_pc_keep.getSchurComplementSubMatrices()
+        # petsc_stab = scheme.invert(None)
+        # A11.axpy(1, petsc_stab)
+        # S = A11
+        # petsc_pc_keep.setFieldSplitSchurPreType(PETSc.PC.USER, S)
 
     options |= recursive(
         scheme.complement,
