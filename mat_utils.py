@@ -282,8 +282,7 @@ class PetscPC:
         return res
 
     def get_matrix(self):
-        indptr, indices, data = self.petsc_mat.getValuesCSR()
-        return scipy.sparse.csr_matrix((data, indices, indptr))
+        return petsc_to_csr(self.petsc_mat)
 
 
 class PetscAMGVector(PetscPC):
@@ -764,3 +763,15 @@ class BJacobiILU:
         ):
             solution[dofs_sol] = prec.dot(x[dofs_rhs])
         return solution
+
+
+def csr_to_petsc(mat: scipy.sparse.csr_matrix, bsize: int = 1) -> PETSc.Mat:
+    return PETSc.Mat().createAIJ(
+        size=mat.shape,
+        csr=(mat.indptr, mat.indices, mat.data),
+        bsize=bsize,
+    )
+
+def petsc_to_csr(petsc_mat: PETSc.Mat) -> scipy.sparse.csr_matrix:
+    indptr, indices, data = petsc_mat.getValuesCSR()
+    return scipy.sparse.csr_matrix((data, indices, indptr))
