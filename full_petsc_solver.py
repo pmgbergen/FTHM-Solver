@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 import numpy as np
 from block_matrix import BlockMatrixStorage
-from mat_utils import csr_to_petsc, make_сlear_petsc_options
+from mat_utils import csr_to_petsc, make_сlear_petsc_options, petsc_to_csr
 from petsc4py import PETSc
 
 
@@ -38,7 +38,7 @@ class PetscFieldSplitScheme:
     block_size: int = 1
     # experimental
     # pcmat: Callable[[PETSc.Mat], PETSc.Mat] = None
-    # invert: Callable[[PETSc.Mat], PETSc.Mat] = None
+    invert: Callable[[PETSc.Mat], PETSc.Mat] = None
 
     def get_groups(self) -> list[int]:
         groups = [g for g in self.groups]
@@ -58,12 +58,19 @@ def recursive(
 
     elim = scheme.groups
     if scheme.complement is None:
-        options = {
-            f"{prefix}ksp_type": "preonly",
-            f"{prefix}pc_type": "lu",
-        } | {f"{prefix}{k}": v for k, v in subsolver_options.items()}
+        options = (
+            {
+                f"{prefix}ksp_type": "preonly",
+                f"{prefix}pc_type": "lu",
+            }
+            | {f"{prefix}{k}": v for k, v in subsolver_options.items()}
+            | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
+        )
         insert_petsc_options(options)
         petsc_pc.setFromOptions()
+        A, Ap = petsc_pc.getOperators()
+        A.setFromOptions()
+        Ap.setFromOptions()
         petsc_pc.setUp()
         return options
 
@@ -76,8 +83,8 @@ def recursive(
     petsc_is_elim.setBlockSize(scheme.block_size)
     # petsc_is_keep.setBlockSize(scheme.complement.block_size)
 
-    # if scheme.invert is not None:
-    #     fieldsplit_options["pc_fieldsplit_schur_precondition"] = "user"
+    if scheme.invert is not None:
+        fieldsplit_options["pc_fieldsplit_schur_precondition"] = "user"
 
     options = (
         {
@@ -108,21 +115,17 @@ def recursive(
     #     petsc_elim_pmat = scheme.pcmat(petsc_elim_amat)
     #     petsc_pc_elim.setOperators(petsc_elim_amat, petsc_elim_pmat)
 
-    # if scheme.invert is not None:
-        #     petsc_keep_S, petsc_keep_Pmat = petsc_pc_keep.getOperators()
-        # A00, Ap00, A01, A10, A11 = petsc_pc_keep.getSchurComplementSubMatrices()
-        # Ap00_new = scheme.invert(A00)
-        # petsc_keep_S_new = PETSc.Mat().createSchurComplement(A00, Ap00_new, A01, A10, A11)
-        # petsc_pc_keep.setOperators(petsc_keep_S_new)
-        # Ap00.delete()
-        # petsc_keep_S.delete()
-        # petsc_keep_Pmat.delete()
-
-        # A00, Ap00, A01, A10, A11 = petsc_pc_keep.getSchurComplementSubMatrices()
+    if scheme.invert is not None:
+        # petsc_keep_S, petsc_keep_Pmat = petsc_pc_keep.getOperators()
+        # A00, Ap00, A01, A10, A11 = petsc_keep_S.getSchurComplementSubMatrices()
         # petsc_stab = scheme.invert(None)
-        # A11.axpy(1, petsc_stab)
-        # S = A11
-        # petsc_pc_keep.setFieldSplitSchurPreType(PETSc.PC.USER, S)
+        # S = A11.duplicate(copy=True)
+        # S.axpy(1, petsc_stab)
+
+        # petsc_pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
+        S = scheme.invert(None)
+        petsc_pc_keep.setOperators(A=S, P=S)
+    # should we delete the old matrices ???
 
     options |= recursive(
         scheme.complement,

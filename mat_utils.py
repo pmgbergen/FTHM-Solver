@@ -308,7 +308,7 @@ class PetscAMGMechanics(PetscPC):
         options = make_сlear_petsc_options()
         options["pc_type"] = "hypre"
         options["pc_hypre_type"] = "boomeramg"
-        options["pc_hypre_boomeramg_stong_threshold"] = 0.7
+        options["pc_hypre_boomeramg_strong_threshold"] = 0.7
         super().__init__(
             mat=mat, block_size=dim, null_space=null_space, petsc_options=petsc_options
         )
@@ -774,4 +774,4 @@ def csr_to_petsc(mat: scipy.sparse.csr_matrix, bsize: int = 1) -> PETSc.Mat:
 
 def petsc_to_csr(petsc_mat: PETSc.Mat) -> scipy.sparse.csr_matrix:
     indptr, indices, data = petsc_mat.getValuesCSR()
-    return scipy.sparse.csr_matrix((data, indices, indptr))
+    return scipy.sparse.csr_matrix((data, indices, indptr), shape=petsc_mat.getSize())
