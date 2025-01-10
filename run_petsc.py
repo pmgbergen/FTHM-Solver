@@ -24,7 +24,7 @@ J = model.bmat
 
 from full_petsc_solver import PetscFieldSplitScheme, build_petsc_solver
 from fixed_stress import make_fs_analytical
-from mat_utils import csr_to_petsc, inv,inv_block_diag
+from mat_utils import csr_to_petsc, inv, inv_block_diag
 
 
 J = model.bmat[[0, 1, 2, 3, 4, 5]]
@@ -32,7 +32,7 @@ Qr = model.Qright(contact_group=0, u_intf_group=3)[[0, 1, 2, 3, 4, 5]]
 tmp = J.empty_container()
 tmp.mat = J.mat @ Qr.mat
 
-tmp = tmp[[0,3]]
+tmp = tmp[[0, 3]]
 
 petsc_ksp, options = build_petsc_solver(
     bmat=tmp,
@@ -40,16 +40,23 @@ petsc_ksp, options = build_petsc_solver(
         groups=[0],
         block_size=2,
         fieldsplit_options={
+            # "pc_fieldsplit_schur_precondition": "a11",
+            # 'pc_fieldsplit_schur_precondition': 'self',
+            # "pc_fieldsplit_schur_precondition": "user",
             "pc_fieldsplit_schur_precondition": "selfp",
+            # "pc_fieldsplit_schur_precondition": "full",
         },
-        subsolver_options={
-            "pc_type": "lu",
-        },
-        invert=lambda _: csr_to_petsc(tmp[[3]].mat - tmp[3,0].mat @ inv_block_diag(tmp[0,0].mat, nd=model.nd) @ tmp[0,3].mat),
+        subsolver_options={},
+        # invert=lambda _: csr_to_petsc(tmp[[3]].mat - tmp[3,0].mat @ inv_block_diag(tmp[0,0].mat, nd=model.nd) @ tmp[0,3].mat),
+        # pcmat=lambda _: csr_to_petsc(inv_block_diag(tmp[0, 0].mat, nd=model.nd)),
+        # tmp=csr_to_petsc(tmp[[3]].mat - tmp[3,0].mat @ inv_block_diag(tmp[0,0].mat, nd=model.nd) @ tmp[0,3].mat),
         complement=PetscFieldSplitScheme(
             groups=[3],
             fieldsplit_options={
+                # 'mat_schur_complement_ainv_type': 'full',
+                # 'mat_schur_complement_ainv_type': 'lump',
                 # 'mat_schur_complement_ainv_type': 'blockdiag',
+                # 'mat_schur_complement_ainv_type': 'diag',
                 # 'mat_block_size': 1,
             },
             subsolver_options={
