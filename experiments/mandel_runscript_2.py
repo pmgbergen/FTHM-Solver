@@ -189,6 +189,6 @@ if __name__ == "__main__":
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": g,
-                "solver": 21,
+                "solver": 2,
             }
         )
