@@ -35,6 +35,7 @@ class PetscFieldSplitScheme:
     complement: Optional["PetscFieldSplitScheme"] = None
     subsolver_options: dict = None
     fieldsplit_options: dict = None
+    tmp_options: dict = None
     block_size: int = 1
     # experimental
     pcmat: Callable[[PETSc.Mat], PETSc.Mat] = None
@@ -56,6 +57,7 @@ def recursive(
 ):
     subsolver_options = scheme.subsolver_options or {}
     fieldsplit_options = scheme.fieldsplit_options or {}
+    tmp_options = scheme.tmp_options or {}
 
     elim = scheme.groups
     if scheme.complement is None:
@@ -69,15 +71,6 @@ def recursive(
         )
         insert_petsc_options(options)
         petsc_pc.setFromOptions()
-        A, Ap = petsc_pc.getOperators()
-        A.setFromOptions()
-        # Ap.setFromOptions()
-        A.setUp()
-        # A.assemble()
-        # Ap.setUp()
-        # Ap.assemble()
-        a, ap, b, c, d = A.getSchurComplementSubMatrices()
-        print((petsc_to_csr(Ap) - petsc_to_csr(d))[:3, :3].toarray())
         petsc_pc.setUp()
         return options
 
@@ -88,11 +81,10 @@ def recursive(
     petsc_is_keep = construct_is(empty_bmat, keep)
     petsc_is_elim = construct_is(empty_bmat, elim)
     petsc_is_elim.setBlockSize(scheme.block_size)
-    # petsc_is_keep.setBlockSize(scheme.complement.block_size)
+
     if scheme.pcmat is not None:
         subsolver_options["pc_type"] = "mat"
-        # scheme.complement.subsolver_options['pc_fieldsplit_schur_precondition'] = 'user'
-
+        
     if scheme.invert is not None:
         fieldsplit_options["pc_fieldsplit_schur_precondition"] = "user"
 
@@ -100,7 +92,7 @@ def recursive(
         {
             f"{prefix}pc_type": "fieldsplit",
             f"{prefix}pc_fieldsplit_type": "schur",
-            # f"{prefix}pc_fieldsplit_schur_precondition": "selfp",
+            f"{prefix}pc_fieldsplit_schur_precondition": "selfp",
             f"{prefix}fieldsplit_{elim_tag}_ksp_type": "preonly",
             f"{prefix}fieldsplit_{elim_tag}_pc_type": "lu",
             f"{prefix}fieldsplit_{keep_tag}_ksp_type": "preonly",
@@ -109,10 +101,14 @@ def recursive(
             f"{prefix}fieldsplit_{elim_tag}_{k}": v
             for k, v in subsolver_options.items()
         }
+        | {
+            f"{prefix}fieldsplit_{keep_tag}_{k}": v
+            for k, v in tmp_options.items()
+        }
         | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
     )
 
-    options['fieldsplit_3_mat_schur_complement_ainv_type'] = 'lump'
+    # options['fieldsplit_3_mat_schur_complement_ainv_type'] = 'blockdiag'
 
     insert_petsc_options(options)
     petsc_pc.setFromOptions()
@@ -129,17 +125,17 @@ def recursive(
         petsc_pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
 
     if scheme.invert is not None:
-        # petsc_keep_S, petsc_keep_Pmat = petsc_pc_keep.getOperators()
-        # A00, Ap00, A01, A10, A11 = petsc_keep_S.getSchurComplementSubMatrices()
-        # petsc_stab = scheme.invert(None)
-        # S = A11.duplicate(copy=True)
-        # S.axpy(1, petsc_stab)
+        petsc_keep_S, petsc_keep_Pmat = petsc_pc_keep.getOperators()
+        petsc_stab = scheme.invert(None)
+        S = petsc_keep_Pmat.duplicate(copy=True)
+        S.axpy(1, petsc_stab)
 
         # petsc_pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
-        S = scheme.invert(None)
+        # S = scheme.invert(None)
         petsc_pc_keep.setOperators(A=S, P=S)
     # should we delete the old matrices ???
 
+    petsc_pc_keep.setUp()
     petsc_pc_elim.setUp()
 
     options |= recursive(
