@@ -49,7 +49,40 @@ class PetscFieldSplitScheme:
         return groups
 
 
-def recursive(
+@dataclass
+class PetscKSPScheme:
+    preconditioner: PetscFieldSplitScheme
+    petsc_options: dict = None
+
+    def get_groups(self) -> list[int]:
+        return self.preconditioner.get_groups()
+
+    def make_solver(self, mat_orig: BlockMatrixStorage):
+        petsc_mat = csr_to_petsc(mat_orig.mat)
+
+        make_сlear_petsc_options()
+        options = {
+            # "ksp_monitor": None,
+            "ksp_type": "gmres",
+            "ksp_pc_side": "right",
+            "ksp_rtol": 1e-10,
+            "ksp_max_it": 120,
+        } | (self.petsc_options or {})
+        insert_petsc_options(options)
+        petsc_ksp = PETSc.KSP().create()
+        petsc_ksp.setOperators(petsc_mat)
+        petsc_pc = petsc_ksp.getPC()
+        options |= build_petsc_fieldsplit(
+            scheme=self.preconditioner,
+            bmat=mat_orig,
+            petsc_pc=petsc_pc,
+        )
+        petsc_ksp.setFromOptions()
+        petsc_ksp.setUp()
+        return PetscKrylovSolver(petsc_ksp)
+
+
+def build_petsc_fieldsplit(
     scheme: PetscFieldSplitScheme,
     bmat: BlockMatrixStorage,
     petsc_pc: PETSc.PC,
@@ -84,7 +117,7 @@ def recursive(
 
     if scheme.pcmat is not None:
         subsolver_options["pc_type"] = "mat"
-        
+
     if scheme.invert is not None:
         fieldsplit_options["pc_fieldsplit_schur_precondition"] = "user"
 
@@ -101,10 +134,7 @@ def recursive(
             f"{prefix}fieldsplit_{elim_tag}_{k}": v
             for k, v in subsolver_options.items()
         }
-        | {
-            f"{prefix}fieldsplit_{keep_tag}_{k}": v
-            for k, v in tmp_options.items()
-        }
+        | {f"{prefix}fieldsplit_{keep_tag}_{k}": v for k, v in tmp_options.items()}
         | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
     )
 
@@ -126,7 +156,7 @@ def recursive(
 
     if scheme.invert is not None:
         petsc_keep_S, petsc_keep_Pmat = petsc_pc_keep.getOperators()
-        petsc_stab = scheme.invert(None)
+        petsc_stab = scheme.invert(bmat)
         S = petsc_keep_Pmat.duplicate(copy=True)
         S.axpy(1, petsc_stab)
 
@@ -138,7 +168,7 @@ def recursive(
     petsc_pc_keep.setUp()
     petsc_pc_elim.setUp()
 
-    options |= recursive(
+    options |= build_petsc_fieldsplit(
         scheme.complement,
         bmat,
         prefix=f"{prefix}fieldsplit_{keep_tag}_",
@@ -147,28 +177,109 @@ def recursive(
     return options
 
 
-def build_petsc_solver(
-    bmat: BlockMatrixStorage, scheme: PetscFieldSplitScheme
-) -> PETSc.KSP:
-    petsc_mat = csr_to_petsc(bmat.mat)
+@dataclass
+class LinearTransformedScheme:
 
-    make_сlear_petsc_options()
-    options = {
-        "ksp_monitor": None,
-        "ksp_type": "gmres",
-        "ksp_pc_side": "right",
-        "ksp_rtol": 1e-10,
-        "ksp_max_it": 120,
-    }
-    insert_petsc_options(options)
-    petsc_ksp = PETSc.KSP().create()
-    petsc_ksp.setOperators(petsc_mat)
-    petsc_pc = petsc_ksp.getPC()
-    options |= recursive(
-        scheme=scheme,
-        bmat=bmat,
-        petsc_pc=petsc_pc,
-    )
-    petsc_ksp.setFromOptions()
-    petsc_ksp.setUp()
-    return petsc_ksp, options
+    left_transformations: Optional[
+        list[Callable[[BlockMatrixStorage], BlockMatrixStorage]]
+    ] = None
+    right_transformations: Optional[
+        list[Callable[[BlockMatrixStorage], BlockMatrixStorage]]
+    ] = None
+    inner: Optional = None
+
+    def get_groups(self) -> list[int]:
+        return self.inner.get_groups()
+
+    def make_solver(self, mat_orig: BlockMatrixStorage):
+        groups = self.get_groups()
+        bmat = mat_orig[groups]
+
+        if self.left_transformations is None or len(self.left_transformations) == 0:
+            Qleft = None
+        else:
+            Qleft = self.left_transformations[0](bmat)[groups]
+            for tmp in self.left_transformations[1:]:
+                tmp = tmp(bmat)[groups]
+                Qleft.mat @= tmp.mat
+
+        if self.right_transformations is None or len(self.right_transformations) == 0:
+            Qright = None
+        else:
+            Qright = self.right_transformations[0](bmat)[groups]
+            for tmp in self.right_transformations[1:]:
+                tmp = tmp(bmat)[groups]
+                Qright.mat @= tmp.mat
+
+        bmat_Q = bmat
+        if Qleft is not None:
+            bmat_Q.mat = Qleft.mat @ bmat_Q.mat
+        if Qright is not None:
+            bmat_Q.mat = bmat_Q.mat @ Qright.mat
+
+        solver = self.inner.make_solver(bmat_Q)
+
+        if Qleft is not None or Qright is not None:
+            solver = LinearSolverWithTransformations(
+                inner=solver, Qright=Qright, Qleft=Qleft
+            )
+
+        return solver
+
+
+class LinearSolverWithTransformations:
+
+    def __init__(
+        self,
+        inner,
+        Qleft: Optional[BlockMatrixStorage] = None,
+        Qright: Optional[BlockMatrixStorage] = None,
+    ):
+        self.Qleft: BlockMatrixStorage | None = Qleft
+        self.Qright: BlockMatrixStorage | None = Qright
+        self.inner = inner
+        self.ksp = inner.ksp
+
+    def solve(self, rhs):
+        rhs_Q = rhs
+        if self.Qleft is not None:
+            rhs_Q = self.Qleft.mat @ rhs_Q
+
+        sol_Q = self.inner.solve(rhs_Q)
+
+        if self.Qright is not None:
+            sol = self.Qright.mat @ sol_Q
+        else:
+            sol = sol_Q
+
+        return sol
+
+    def get_residuals(self):
+        return self.inner.get_residuals()
+
+
+class PetscKrylovSolver:
+
+    def __init__(
+        self,
+        ksp,
+    ) -> None:
+        self.ksp = ksp
+        petsc_mat = ksp.getOperators()[0]
+        self.petsc_x = petsc_mat.createVecLeft()
+        self.petsc_b = petsc_mat.createVecLeft()
+
+    def __del__(self):
+        self.ksp.destroy()
+        self.petsc_x.destroy()
+        self.petsc_b.destroy()
+
+    def solve(self, b):
+        self.petsc_b.setArray(b)
+        self.petsc_x.set(0.0)
+        self.ksp.solve(self.petsc_b, self.petsc_x)
+        res = self.petsc_x.getArray()
+        return res
+
+    def get_residuals(self):
+        return self.ksp.getConvergenceHistory()
