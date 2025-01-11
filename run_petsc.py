@@ -32,129 +32,71 @@ from fixed_stress import make_fs_analytical
 from mat_utils import csr_to_petsc, inv, inv_block_diag
 
 
-# J = model.bmat[[0, 1, 2, 3, 4, 5]]
-# Qr = model.Qright(contact_group=0, u_intf_group=3)[[0, 1, 2, 3, 4, 5]]
-# tmp = J.empty_container()
-# tmp.mat = J.mat @ Qr.mat
-
-# tmp = tmp[:]
-
-# petsc_ksp = PetscKSPScheme(
-#     preconditioner=PetscFieldSplitScheme(
-#         groups=[0],
-#         block_size=model.nd,
-#         fieldsplit_options={
-#             "pc_fieldsplit_schur_precondition": "selfp",
-#         },
-#         subsolver_options={
-#             "pc_type": "ilu",
-#         },
-#         tmp_options={
-#             "mat_schur_complement_ainv_type": "blockdiag",
-#         },
-#         complement=PetscFieldSplitScheme(
-#             groups=[1],
-#             fieldsplit_options={
-#                 "pc_fieldsplit_schur_precondition": "selfp",
-#             },
-#             subsolver_options={
-#                 "pc_type": "ilu",
-#             },
-#             complement=PetscFieldSplitScheme(
-#                 groups=[2, 3],
-#                 block_size=model.nd,
-#                 invert=lambda _: csr_to_petsc(
-#                     make_fs_analytical(model, tmp, p_mat_group=4, p_frac_group=5).mat,
-#                     bsize=1,
-#                 ),
-#                 # fieldsplit_options={
-#                 #     "pc_fieldsplit_schur_precondition": "selfp",
-#                 # },
-#                 subsolver_options={
-#                     "pc_type": "hypre",
-#                     "pc_hypre_type": "boomeramg",
-#                     "pc_hypre_boomeramg_strong_threshold": 0.7,
-#                 },
-#                 complement=PetscFieldSplitScheme(
-#                     groups=[4, 5],
-#                     subsolver_options={
-#                         "pc_type": "hypre",
-#                         "pc_hypre_type": "boomeramg",
-#                         "pc_hypre_boomeramg_strong_threshold": 0.7,
-#                     },
-#                 ),
-#             ),
-#         ),
-#     )
-# ).make_solver(tmp)
-
-
-# petsc_ksp.view()
-
-# rhs_local = tmp.project_rhs_to_local(rhs)
-
-# petsc_mat = petsc_ksp.getOperators()[0]
-# petsc_rhs = petsc_mat.createVecLeft()
-# petsc_x0 = petsc_mat.createVecLeft()
-# petsc_rhs.setArray(rhs_local)
-# petsc_x0.set(0.0)
-
-# petsc_ksp.solve(petsc_rhs, petsc_x0)
-
-# print(petsc_ksp.getConvergedReason())
-
-J = model.bmat[[2, 3, 4, 5]]
+J = model.bmat[:]
 scheme = LinearTransformedScheme(
-    # right_transformations=[lambda bmat: model.Qright(contact_group=0, u_intf_group=3)],
-    inner=PetscKSPScheme(
-        preconditioner=PetscFieldSplitScheme(
-            # groups=[0],
-            # block_size=model.nd,
-            # fieldsplit_options={
-            #     "pc_fieldsplit_schur_precondition": "full",
-            # },
-            # subsolver_options={"pc_type": "ilu"},
-            # fieldsplit_options={
-            #     "pc_fieldsplit_schur_precondition": "selfp",
-            # },
-            # subsolver_options={
-            #     "pc_type": "ilu",
-            # },
-            # tmp_options={
-            #     "mat_schur_complement_ainv_type": "blockdiag",
-            # },
-            # complement=PetscFieldSplitScheme(
-            #     groups=[1],
-            #     fieldsplit_options={
-            #         "pc_fieldsplit_schur_precondition": "selfp",
-            #     },
-            #     subsolver_options={
-            #         "pc_type": "ilu",
-            #     },
-            #     complement=PetscFieldSplitScheme(
-            groups=[2, 3],
-            block_size=model.nd,
-            # invert=lambda _: csr_to_petsc(
-            #     make_fs_analytical(model, J, p_mat_group=4, p_frac_group=5).mat,
-            #     bsize=1,
-            # ),
-            # fieldsplit_options={"pc_fieldsplit_schur_precondition": "a11"},
-            subsolver_options={
-                "pc_type": "hypre",
-                "pc_hypre_type": "boomeramg",
-                "pc_hypre_boomeramg_strong_threshold": 0.3,
+    right_transformations=[lambda bmat: model.Qright(contact_group=0, u_intf_group=3)],
+    inner=LinearTransformedScheme(
+        right_transformations=[
+            lambda bmat: model.Qright(contact_group=0, u_intf_group=3)
+        ],
+        inner=PetscKSPScheme(
+            petsc_options={
+                'ksp_monitor': None,
+                "ksp_rtol": 1e-10,
+                "ksp_atol": 1e-15,
+                "ksp_max_it": 90,
+                "ksp_gmres_restart": 30,
             },
-            complement=PetscFieldSplitScheme(
-                groups=[4, 5],
-                subsolver_options={
-                    "pc_type": "hypre",
-                    "pc_hypre_type": "boomeramg",
-                    "pc_hypre_boomeramg_strong_threshold": 0.3,
+            preconditioner=PetscFieldSplitScheme(
+                groups=[0],
+                block_size=model.nd,
+                fieldsplit_options={
+                    "pc_fieldsplit_schur_precondition": "selfp",
                 },
+                subsolver_options={
+                    "pc_type": "pbjacobi",
+                },
+                tmp_options={
+                    "mat_schur_complement_ainv_type": "blockdiag",
+                },
+                complement=PetscFieldSplitScheme(
+                    groups=[1],
+                    fieldsplit_options={
+                        "pc_fieldsplit_schur_precondition": "selfp",
+                    },
+                    subsolver_options={
+                        "pc_type": "ilu",
+                    },
+                    complement=PetscFieldSplitScheme(
+                        groups=[2, 3],
+                        block_size=model.nd,
+                        invert=lambda bmat: csr_to_petsc(
+                            make_fs_analytical(
+                                model, bmat, p_mat_group=4, p_frac_group=5
+                            ).mat,
+                            bsize=1,
+                        ),
+                        # fieldsplit_options={
+                        #     "pc_fieldsplit_schur_precondition": "selfp",
+                        # },
+                        subsolver_options={
+                            "pc_type": "hypre",
+                            "pc_hypre_type": "boomeramg",
+                            "pc_hypre_boomeramg_strong_threshold": 0.7,
+                        },
+                        complement=PetscFieldSplitScheme(
+                            groups=[4, 5],
+                            subsolver_options={
+                                # 'pc_type': 'lu'
+                                "pc_type": "hypre",
+                                "pc_hypre_type": "boomeramg",
+                                # "pc_hypre_boomeramg_strong_threshold": 0.7,
+                            },
+                        ),
+                    ),
+                ),
             ),
-            #     ),
-            # ),
-        )
+        ),
     ),
 )
 

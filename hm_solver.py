@@ -372,6 +372,12 @@ class IterativeHMSolver(IterativeLinearSolver):
             return LinearTransformedScheme(
                 right_transformations=[lambda bmat: self.Qright(contact_group=0, u_intf_group=3)],
                 inner=PetscKSPScheme(
+                    petsc_options={
+                        'ksp_rtol': 1e-10,
+                        'ksp_atol': 1e-15,
+                        'ksp_max_it': 90,
+                        'ksp_gmres_restart': 30,
+                    },
                     preconditioner=PetscFieldSplitScheme(
                         groups=[0],
                         block_size=self.nd,
@@ -414,7 +420,8 @@ class IterativeHMSolver(IterativeLinearSolver):
                                     subsolver_options={
                                         "pc_type": "hypre",
                                         "pc_hypre_type": "boomeramg",
-                                        "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                        'pc_hypre_boomeramg_truncfactor': 0.3,
+                                        # "pc_hypre_boomeramg_strong_threshold": 0.7,
                                     },
                                 ),
                             ),

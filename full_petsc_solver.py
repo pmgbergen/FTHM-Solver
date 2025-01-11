@@ -67,6 +67,8 @@ class PetscKSPScheme:
             "ksp_pc_side": "right",
             "ksp_rtol": 1e-10,
             "ksp_max_it": 120,
+            'ksp_gmres_cgs_refinement_type': 'refine_ifneeded',
+            'ksp_gmres_classicalgramschmidt': True
         } | (self.petsc_options or {})
         insert_petsc_options(options)
         petsc_ksp = PETSc.KSP().create()
@@ -115,8 +117,8 @@ def build_petsc_fieldsplit(
     petsc_is_elim = construct_is(empty_bmat, elim)
     petsc_is_elim.setBlockSize(scheme.block_size)
 
-    if scheme.pcmat is not None:
-        subsolver_options["pc_type"] = "mat"
+    # if scheme.pcmat is not None:
+    #     subsolver_options["pc_type"] = "mat"
 
     if scheme.invert is not None:
         fieldsplit_options["pc_fieldsplit_schur_precondition"] = "user"
@@ -126,6 +128,7 @@ def build_petsc_fieldsplit(
             f"{prefix}pc_type": "fieldsplit",
             f"{prefix}pc_fieldsplit_type": "schur",
             f"{prefix}pc_fieldsplit_schur_precondition": "selfp",
+            f"{prefix}pc_fieldsplit_schur_fact_type": "upper",
             f"{prefix}fieldsplit_{elim_tag}_ksp_type": "preonly",
             f"{prefix}fieldsplit_{elim_tag}_pc_type": "lu",
             f"{prefix}fieldsplit_{keep_tag}_ksp_type": "preonly",
@@ -143,30 +146,29 @@ def build_petsc_fieldsplit(
     insert_petsc_options(options)
     petsc_pc.setFromOptions()
     petsc_pc.setFieldSplitIS((elim_tag, petsc_is_elim), (keep_tag, petsc_is_keep))
-    petsc_pc.setUp()
-
-    petsc_pc_elim = petsc_pc.getFieldSplitSubKSP()[0].getPC()
-    petsc_pc_keep = petsc_pc.getFieldSplitSubKSP()[1].getPC()
-
-    if scheme.pcmat is not None:
-        Ainv = scheme.pcmat(None)
-        petsc_pc_elim.setOperators(Ainv, Ainv)
-        S = scheme.tmp
-        petsc_pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
 
     if scheme.invert is not None:
-        petsc_keep_S, petsc_keep_Pmat = petsc_pc_keep.getOperators()
+        S = petsc_pc.getOperators()[1].createSubMatrix(petsc_is_keep, petsc_is_keep)
         petsc_stab = scheme.invert(bmat)
-        S = petsc_keep_Pmat.duplicate(copy=True)
         S.axpy(1, petsc_stab)
 
-        # petsc_pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
-        # S = scheme.invert(None)
-        petsc_pc_keep.setOperators(A=S, P=S)
+        petsc_pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
+
+    petsc_pc.setUp()
+
+    petsc_pc_keep = petsc_pc.getFieldSplitSubKSP()[1].getPC()
+
+    # if scheme.pcmat is not None:
+    #     Ainv = scheme.pcmat(None)
+    #     petsc_pc_elim.setOperators(Ainv, Ainv)
+    #     S = scheme.tmp
+    #     petsc_pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
+
+    
     # should we delete the old matrices ???
 
-    petsc_pc_keep.setUp()
-    petsc_pc_elim.setUp()
+    # petsc_pc_keep.setUp()
+    # petsc_pc_elim.setUp()
 
     options |= build_petsc_fieldsplit(
         scheme.complement,
@@ -268,6 +270,8 @@ class PetscKrylovSolver:
         petsc_mat = ksp.getOperators()[0]
         self.petsc_x = petsc_mat.createVecLeft()
         self.petsc_b = petsc_mat.createVecLeft()
+        # self.ksp.setComputeEigenvalues(True)
+        self.ksp.setConvergenceHistory()
 
     def __del__(self):
         self.ksp.destroy()
