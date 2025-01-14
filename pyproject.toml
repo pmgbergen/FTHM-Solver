@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "FTHM-Solver"
+version = "0.1.0"
+description = "Iterative solvers for PorePy using PETSc"
+authors = [
+  { name = "Yuri Zabegaev", email = "Yuri.Zabegaev@uib.no" },
+  { name = "Eirik Keilegavlen", email = "Eirik.Keilegavlen@uib.no"}
+]
+dependencies = [
+  "pandas"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/pmgbergen/FTHM-Solver"
