@@ -244,6 +244,17 @@ class IterativeHMSolver(IterativeLinearSolver):
             -J[contact_group, u_intf_group].mat @ J55_inv
         )
         return Qleft
+    
+    def sticking_sliding_open(self):
+        fractures = self.mdg.subdomains(dim=self.nd - 1)
+        opening = self.opening_indicator(fractures).value(self.equation_system) < 0
+        closed = np.logical_not(opening)
+        sliding = np.logical_and(
+            closed, self.sliding_indicator(fractures).value(self.equation_system) > 0
+        )
+        sticking = np.logical_not(opening | sliding)
+
+        return sticking, sliding, opening    
 
     def assemble_linear_system(self) -> None:
         super().assemble_linear_system()
