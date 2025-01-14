@@ -18,15 +18,15 @@ from scipy.sparse.linalg import LinearOperator
 from stats import LinearSolveStats, dump_json
 
 if TYPE_CHECKING:
-    from block_matrix import (
+    from .block_matrix import (
         FieldSplitScheme,
         MultiStageScheme,
         BlockMatrixStorage,
         KSPScheme,
     )
 
-from mat_utils import PetscGMRES, PetscRichardson, condest, eigs
-from stats import TimeStepStats
+from .mat_utils import PetscGMRES, PetscRichardson, condest, eigs
+from .stats import TimeStepStats
 
 
 def trim_label(label: str) -> str:

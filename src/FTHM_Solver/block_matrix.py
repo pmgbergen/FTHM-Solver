@@ -10,7 +10,7 @@ import scipy.sparse
 from scipy.sparse import spmatrix, csr_matrix
 from matplotlib import pyplot as plt
 
-from mat_utils import (
+from .mat_utils import (
     FieldSplit,
     TwoStagePreconditioner,
     inv,
@@ -18,7 +18,7 @@ from mat_utils import (
     PetscGMRES,
     PetscRichardson,
 )
-from plot_utils import plot_mat, spy
+from .plot_utils import plot_mat, spy
 
 
 def color_spy(

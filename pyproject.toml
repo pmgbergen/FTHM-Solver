@@ -12,7 +12,8 @@ authors = [
 ]
 # The list of dependencies is far from exhaustive, see the README for more details.
 dependencies = [
-  "pandas"
+  "pandas",
+  "seaborn"
 ]
 license = { text = "GPL-3" }
 

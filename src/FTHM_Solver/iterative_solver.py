@@ -7,9 +7,9 @@ import numpy as np
 import porepy as pp
 from porepy.models.solution_strategy import SolutionStrategy
 
-from block_matrix import BlockMatrixStorage, FieldSplitScheme
+from .block_matrix import BlockMatrixStorage, FieldSplitScheme
 
-from mat_utils import (
+from .mat_utils import (
     PetscAMGFlow,
     PetscAMGMechanics,
     PetscGMRES,
@@ -19,7 +19,7 @@ from mat_utils import (
     extract_diag_inv,
     inv_block_diag,
 )
-from stats import LinearSolveStats
+from .stats import LinearSolveStats
 
 
 class IterativeLinearSolver(pp.SolutionStrategy):

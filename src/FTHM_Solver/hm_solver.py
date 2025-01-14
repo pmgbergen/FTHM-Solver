@@ -1,7 +1,7 @@
 from functools import cached_property
-from block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
-from fixed_stress import make_fs_analytical, make_fs_analytical_slow
-from iterative_solver import (
+from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
+from .fixed_stress import make_fs_analytical, make_fs_analytical_slow
+from .iterative_solver import (
     IterativeLinearSolver,
     get_equations_group_ids,
     get_variables_group_ids,
@@ -9,7 +9,7 @@ from iterative_solver import (
 
 import numpy as np
 import scipy.sparse
-from mat_utils import (
+from .mat_utils import (
     PetscAMGFlow,
     PetscAMGMechanics,
     PetscILU,

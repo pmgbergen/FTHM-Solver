@@ -1,8 +1,8 @@
 import numpy as np
 import scipy.sparse
 import scipy.sparse.linalg
-from mat_utils import csr_zeros
-from block_matrix import BlockMatrixStorage
+from .mat_utils import csr_zeros
+from .block_matrix import BlockMatrixStorage
 
 
 # def assemble_localization_matrices_mechanics(

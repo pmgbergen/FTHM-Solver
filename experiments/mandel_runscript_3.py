@@ -6,9 +6,9 @@ from experiments.models import (
     get_barton_bandis_config,
     get_friction_coef_config,
 )
-from hm_solver import IterativeHMSolver as Solver
+from FTHM_Solver.hm_solver import IterativeHMSolver as Solver
 from plot_utils import write_dofs_info
-from stats import StatisticsSavingMixin
+from FTHM_Solver.stats import StatisticsSavingMixin
 
 XMAX = 1000
 YMAX = 1000
