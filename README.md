@@ -1,18 +1,20 @@
-# An Effificent Preconditioner For Mixed-Dimensional Contact Poromechanics Based On The Fixed Stress Splitting Scheme
+# Iterative block solvers for PorePy using PETSc
+This repository implements linear solvers for the open-source software
+[PorePy](https://github.com/pmgbergen/porepy), using [PETSc](https://petsc.org/) as the
+linear algebra backend.
 
-This repository contains the source code of the algorithm from the publication (to be done). This implements an iterative linear solver to address the contact poromechanics problem. The implementation is based on [PorePy](https://github.com/pmgbergen/porepy) and [PETSc](https://petsc.org/).
+The repository is a fork of https://github.com/pmgbergen/FTHM-Solver. 
+Whereas the upstream repository is used for prototyping of solvers and production of
+papers, this repository aims to make the solvers robust and easily applicable in
+general PorePy models.
 
-# Reproduce the experiments
+# Installation
+This package can be installed with
 
-A Docker image with the full environment is available on Zenodo ([here](https://zenodo.org/records/14609885)). Download the image and run these commands ([Docker](https://www.docker.com/) should be installed):
-```
-docker load -i fhm_solver.tar.gz
-docker run -it --name fhm_solver fhm_solver:latest
-docker exec -it fhm_solver /bin/bash
-```
-Please don't forget to pull the recent changes with `git pull`.
+    pip install -e .
 
-In the container, run the [experiments](experiments/) with `python`. Their results can be visualized in jupyter notebooks in the same folder, I use VSCode for it.
+It is assumed that working installations of PorePy and PETSc are available.
+
 
 # Understand the code
 
