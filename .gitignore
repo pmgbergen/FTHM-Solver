@@ -6,3 +6,4 @@
 *.npz
 *.npy
 figures/
+src/FTHM_Solver.egg-info/*
