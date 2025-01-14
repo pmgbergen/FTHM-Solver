@@ -7,12 +7,13 @@ name = "FTHM-Solver"
 version = "0.1.0"
 description = "Iterative solvers for PorePy using PETSc"
 authors = [
-  { name = "Yuri Zabegaev", email = "Yuri.Zabegaev@uib.no" },
+  { name = "Yury Zabegaev", email = "Yury.Zabegaev@uib.no" },
   { name = "Eirik Keilegavlen", email = "Eirik.Keilegavlen@uib.no"}
 ]
 dependencies = [
   "pandas"
 ]
+license = { text = "GPL-3" }
 
 [project.urls]
 "Homepage" = "https://github.com/pmgbergen/FTHM-Solver"
