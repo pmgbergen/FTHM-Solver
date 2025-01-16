@@ -369,7 +369,7 @@ class PetscPythonPC:
 
     def apply(self, pc: PETSc.PC, b: PETSc.Vec, x: PETSc.Vec) -> None:
         """Apply the preconditioner on vector b, return in x."""
-        result = self.pc.dot(b.getArray())
+        result = self.pc.dot(b.getArray(readonly=True))
         x.setArray(result)
 
 
