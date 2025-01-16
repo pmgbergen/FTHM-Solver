@@ -4,7 +4,7 @@ This repository contains the source code of the algorithm from the publication (
 
 # Reproduce the experiments
 
-A Docker image with the full environment is available on Zenodo: (to be done.) Download the image and run these commands ([Docker](https://www.docker.com/) should be installed):
+A Docker image with the full environment is available on Zenodo ([here](https://zenodo.org/records/14609885)). Download the image and run these commands ([Docker](https://www.docker.com/) should be installed):
 ```
 docker load -i fhm_solver.tar.gz
 docker run -it --name fhm_solver fhm_solver:latest
