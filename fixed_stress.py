@@ -158,7 +158,7 @@ def get_fs_fractures_analytical(model):
 
     val = (
         alpha_biot**2
-        * u_n# / resid_aperture# ** 3
+        * u_n  # / resid_aperture# ** 3
         / (lame_lambda / (compressibility * M) + porosity * lame_lambda)
     )
 
@@ -199,12 +199,32 @@ def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int):
 
 
 def make_fs_analytical_slow(model, J, p_mat_group: int, p_frac_group: int, groups):
-
-
     result = J.empty_container()[groups]
-    result[[p_mat_group]] = scipy.sparse.block_diag([get_fixed_stress_stabilization(model)], format="csr")
-    result[[p_frac_group]] = scipy.sparse.block_diag([get_fs_fractures_analytical(model)], format="csr")
+    result[[p_mat_group]] = scipy.sparse.block_diag(
+        [get_fixed_stress_stabilization(model)],format="csr"
+    )
+    result[[p_frac_group]] = scipy.sparse.block_diag(
+        [get_fs_fractures_analytical(model)], format="csr"
+    )
     return result
+
+
+def make_fs_analytical_slow_new(
+    model, J: BlockMatrixStorage, p_mat_group: int, p_frac_group: int, groups: list[int]
+):
+    index = J[groups].empty_container()
+    # assert p_mat_group in groups
+    # assert p_frac_group in groups
+    diagonals = []
+    for group in groups:
+        if group == p_mat_group:
+            diagonals.append(get_fixed_stress_stabilization(model))
+        elif groups == p_frac_group:
+            diagonals.append(get_fs_fractures_analytical(model))
+        else:
+            diagonals.append(index[[group]].mat)
+    index.mat = scipy.sparse.block_diag(diagonals, format="csr")
+    return index
 
 
 def make_fs_thermal(model, J, p_mat_group: int, t_mat_group: int, groups=None):

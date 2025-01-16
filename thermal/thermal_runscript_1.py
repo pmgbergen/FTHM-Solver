@@ -81,7 +81,7 @@ class Geometry(pp.SolutionStrategy):
         sides = self.domain_boundary_sides(boundary_grid)
         bc_values = np.zeros(boundary_grid.num_cells)
         bc_values[:] = self.reference_variable_values.temperature
-        bc_values[sides.east] = self.units.convert_units(600, units='K')
+        bc_values[sides.east] = self.units.convert_units(600, units="K")
         return bc_values
 
     def set_domain(self) -> None:
@@ -200,6 +200,11 @@ def run_model(setup: dict):
 
 if __name__ == "__main__":
 
+    # for s in [
+    #     1,
+    #     # 1.1,
+    #     # 1.2,
+    # ]:
     for g in [1, 2, 5, 25, 33, 40]:
         run_model(
             {
@@ -208,7 +213,7 @@ if __name__ == "__main__":
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": g,
-                "solver": 2,
+                "solver": 3,
                 "save_matrix": False,
                 "high_boundary_pressure_ratio": 13,
             }

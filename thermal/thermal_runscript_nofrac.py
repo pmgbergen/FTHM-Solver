@@ -1,12 +1,12 @@
 import porepy as pp
 import numpy as np
-from experiments.models import (
+from thermal.models import (
     Physics,
     ConstraintLineSearchNonlinearSolver,
     get_barton_bandis_config,
     get_friction_coef_config,
 )
-from hm_solver import IterativeHMSolver as Solver
+from thermal.thm_solver import THMSolver
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
 
@@ -30,6 +30,21 @@ class Geometry(pp.SolutionStrategy):
             self.equation_system.set_variable_values(
                 val,
                 variables=[self.pressure_variable],
+                iterate_index=iterate_index,
+            )
+
+        val = self.reference_variable_values.temperature * np.ones(num_cells)
+        for time_step_index in self.time_step_indices:
+            self.equation_system.set_variable_values(
+                val,
+                variables=[self.temperature_variable],
+                time_step_index=time_step_index,
+            )
+
+        for iterate_index in self.iterate_indices:
+            self.equation_system.set_variable_values(
+                val,
+                variables=[self.temperature_variable],
                 iterate_index=iterate_index,
             )
 
@@ -62,24 +77,21 @@ class Geometry(pp.SolutionStrategy):
 
         return bc_values.ravel("F")
 
+    def bc_values_temperature(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
+        sides = self.domain_boundary_sides(boundary_grid)
+        bc_values = np.zeros(boundary_grid.num_cells)
+        bc_values[:] = self.reference_variable_values.temperature
+        bc_values[sides.east] = self.units.convert_units(600, units="K")
+        return bc_values
+
     def set_domain(self) -> None:
         self._domain = pp.Domain({"xmin": 0, "xmax": XMAX, "ymin": 0, "ymax": YMAX})
 
     def set_fractures(self) -> None:
-        x = 0.2
-        y = 0.5
-        pts_list = [
-            np.array(
-                [
-                    [x * XMAX, (1 - x) * XMAX],  # x
-                    [y * YMAX, y * YMAX],  # y
-                ]
-            )
-        ]
-        self._fractures = [pp.LineFracture(pts) for pts in pts_list]
+        self._fractures = []
 
 
-class Setup(Geometry, Solver, StatisticsSavingMixin, Physics):
+class Setup(Geometry, THMSolver, StatisticsSavingMixin, Physics):
     pass
 
 
@@ -112,11 +124,19 @@ def make_model(setup: dict):
                 specific_storage=specific_storage,  # [Pa^-1]
                 **get_barton_bandis_config(setup),
                 **get_friction_coef_config(setup),
+                # Thermal
+                specific_heat_capacity=720.7,
+                thermal_conductivity=0.1,  # Diffusion coefficient
+                thermal_expansion=9.66e-6,
             ),
             "fluid": pp.FluidComponent(
                 compressibility=4.559 * 1e-10,  # [Pa^-1], fluid compressibility
                 density=998.2,  # [kg m^-3]
                 viscosity=1.002e-3,  # [Pa s], absolute viscosity
+                # Thermal
+                specific_heat_capacity=4182.0,  # Вместимость
+                thermal_conductivity=0.5975,  # Diffusion coefficient
+                thermal_expansion=2.068e-4,  # Density(T)
             ),
             "numerical": pp.NumericalConstants(
                 characteristic_displacement=1e-1,  # [m]
@@ -124,6 +144,7 @@ def make_model(setup: dict):
         },
         "reference_variable_values": pp.ReferenceVariableValues(
             pressure=1e6,  # [Pa]
+            temperature=350,  # [K]
         ),
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
@@ -169,32 +190,21 @@ def run_model(setup: dict):
 
 if __name__ == "__main__":
 
-    solver = 2
-    for g in [1, ]:
+    # for s in [
+    #     1,
+    #     # 1.1,
+    #     # 1.2,
+    # ]:
+    for g in [1]:
         run_model(
             {
                 "physics": 1,
-                "geometry": 0,
+                "geometry": 'nofrac',
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": g,
-                "solver": solver,
-                "save_matrix": False,
+                "solver": 3,
+                "save_matrix": True,
                 "high_boundary_pressure_ratio": 13,
             }
         )
-
-    # solver = 21
-    # for g in [1, 2, 5]:
-    #     run_model(
-    #         {
-    #             "physics": 1,
-    #             "geometry": 0,
-    #             "barton_bandis_stiffness_type": 2,
-    #             "friction_type": 1,
-    #             "grid_refinement": g,
-    #             "solver": solver,
-    #             "save_matrix": False,
-    #             "high_boundary_pressure_ratio": 13,
-    #         }
-    #     )

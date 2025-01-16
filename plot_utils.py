@@ -835,10 +835,11 @@ def write_dofs_info(model):
     for i in bmat.active_groups[0]:
         data[f"block {i}"] = bmat[0, i].shape[1]
     data["total dofs"] = bmat.shape[0]
-    cell_volumes = np.concatenate(
-        [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]
-    ).tolist()
-    data["cell_volumes"] = cell_volumes
+
+    frac_volume = [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]
+    if len(frac_volume) != 0:
+        cell_volumes = np.concatenate(frac_volume).tolist()
+        data["cell_volumes"] = cell_volumes
     dump_json(filename, data)
 
 
@@ -864,7 +865,7 @@ def solve_petsc_3(
     logx_eigs=False,
     normalize_residual=False,
     ksp_view: bool = False,
-    return_data: bool = False
+    return_data: bool = False,
 ):
     if rhs_global is None:
         rhs_global = np.ones(bmat.shape[0])
