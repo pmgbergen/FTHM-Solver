@@ -1,5 +1,6 @@
 import porepy as pp
 import numpy as np
+import time
 from thermal.models import (
     Physics,
     ConstraintLineSearchNonlinearSolver,
@@ -18,7 +19,7 @@ YMAX = 1000
 class Geometry(pp.SolutionStrategy):
     def initial_condition(self) -> None:
         super().initial_condition()
-        vals = np.load(f'{self.simulation_name()}_equilibrium.npy')
+        vals = np.load(f"{self.simulation_name()}_equilibrium.npy")
         self.equation_system.set_variable_values(vals, time_step_index=0)
         self.equation_system.set_variable_values(vals, iterate_index=0)
 
@@ -61,7 +62,7 @@ class Geometry(pp.SolutionStrategy):
     def bc_values_pressure(self, boundary_grid):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
-        x = 1
+        x = 10
         vals[sides.east] *= x
         return vals
 
@@ -81,7 +82,7 @@ class Geometry(pp.SolutionStrategy):
         bc_values[0, sides.east] = -val * boundary_grid.cell_volumes[sides.east]
 
         return bc_values.ravel("F")
-    
+
     def locate_source(self, subdomains):
         source_loc_x = XMAX * 0.9
         source_loc_y = YMAX * 0.1
@@ -93,19 +94,19 @@ class Geometry(pp.SolutionStrategy):
         source_loc = np.argmin((x - source_loc_x) ** 2 + (y - source_loc_y) ** 2)
         src_frac = np.zeros(x.size)
         src_frac[source_loc] = 1
-        
+
         zeros_ambient = np.zeros(sum(sd.num_cells for sd in ambient))
         zeros_lower = np.zeros(sum(sd.num_cells for sd in lower))
         return np.concatenate([zeros_ambient, src_frac, zeros_lower])
-    
+
     def fluid_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
         src = self.locate_source(subdomains)
-        src *= self.units.convert_units(1e+2, 'kg * s^-1')
+        src *= self.units.convert_units(1e2, "kg * s^-1")
         return super().fluid_source(subdomains) + pp.ad.DenseArray(src)
 
     def energy_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
         src = self.locate_source(subdomains)
-        src *= self.units.convert_units(1e+3, 'J * s^-1')
+        src *= self.units.convert_units(1e6, "J * s^-1")
         return super().energy_source(subdomains) + pp.ad.DenseArray(src)
 
     def bc_values_temperature(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
@@ -116,15 +117,25 @@ class Geometry(pp.SolutionStrategy):
         return bc_values
 
     def set_domain(self) -> None:
-        self._domain = pp.Domain({"xmin": -0.1 * XMAX, "xmax": 1.1 * XMAX, "ymin": -0.1 * YMAX, "ymax": 1.1 * YMAX})
+        self._domain = pp.Domain(
+            {
+                "xmin": -0.1 * XMAX,
+                "xmax": 1.1 * XMAX,
+                "ymin": -0.1 * YMAX,
+                "ymax": 1.1 * YMAX,
+            }
+        )
 
     def set_fractures(self) -> None:
         self._fractures = benchmark_2d_case_3(size=XMAX)
 
-    # def after_simulation(self):
-    #     super().after_simulation()
-    #     vals = self.equation_system.get_variable_values(time_step_index=0)
-    #     np.save(f'{self.simulation_name()}_equilibrium.npy', vals)
+    def after_simulation(self):
+        super().after_simulation()
+        vals = self.equation_system.get_variable_values(time_step_index=0)
+        # np.save(f'{self.simulation_name()}_equilibrium.npy', vals)
+        np.save(
+            f"{self.simulation_name()}_endstate_{int(time.time() * 1000)}.npy", vals
+        )
 
 
 class Setup(Geometry, THMSolver, StatisticsSavingMixin, Physics):
@@ -150,9 +161,9 @@ def make_model(setup: dict):
                 shear_modulus=shear,  # [Pa]
                 lame_lambda=lame,  # [Pa]
                 dilation_angle=5 * np.pi / 180,  # [rad]
-                residual_aperture=1e-4,  # [m]
+                residual_aperture=1e-4 * 1e2,  # [m]
                 normal_permeability=1e-4,
-                permeability=1e-14 * 1e3,  # [m^2]
+                permeability=1e-14 * 1e3,  # [m^2] #!
                 # granite
                 biot_coefficient=biot,  # [-]
                 density=2683.0,  # [kg * m^-3]
@@ -184,10 +195,11 @@ def make_model(setup: dict):
         ),
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
-            dt_init=0.5 * DAY,
-            schedule=[0, 3 * DAY],
+            dt_init=0.005 * DAY,
+            schedule=[0, 50 * DAY],
             iter_max=25,
-            constant_dt=True,
+            dt_min_max=(0.001 * DAY, 10 * DAY),
+            constant_dt=False,
         ),
         "units": pp.Units(kg=1e10),
         "meshing_arguments": {
@@ -212,7 +224,7 @@ def run_model(setup: dict):
             "nl_convergence_tol": float("inf"),
             "nl_convergence_tol_res": 1e-7,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 50,
+            "max_iterations": 15,
             # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
             "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
