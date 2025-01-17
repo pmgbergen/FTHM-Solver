@@ -22,7 +22,7 @@ from .mat_utils import (
 from .stats import LinearSolveStats
 
 
-class IterativeLinearSolver(pp.SolutionStrategy):
+class IterativeLinearSolver:
 
     _linear_solve_stats = LinearSolveStats()
     """A placeholder to statistics. The solver mixin only writes in it, not reads."""
@@ -35,8 +35,9 @@ class IterativeLinearSolver(pp.SolutionStrategy):
         """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
         (how they are arranged in the model).
 
-        Each list entry correspond to one variable on one grid. Constructed when first
-        accessed.
+        Returns:
+            List of numpy arrays. Each array contains the global degrees of freedom for
+                one variable on one grid.
 
         """
         var_dofs: list[np.ndarray] = []
@@ -46,11 +47,12 @@ class IterativeLinearSolver(pp.SolutionStrategy):
 
     @cached_property
     def eq_dofs(self) -> list[np.ndarray]:
-        """Equation degrees of freedom (rows of the Jacobian) in the PorePy order (how
-        they are arranged in the model).
+        """Equation indices (rows of the Jacobian) in the order defined by the PorePy
+        EquationSystem.
 
-        Each list entry correspond to one equation on one grid. Constructed when first
-        accessed. Encorporates the permutation `contact_permutation`.
+        Returns:
+            List of numpy arrays. Each list entry correspond to one equation on one
+                grid.
 
         """
         eq_dofs: list[np.ndarray] = []
@@ -65,11 +67,19 @@ class IterativeLinearSolver(pp.SolutionStrategy):
 
     @cached_property
     def variable_groups(self) -> list[list[int]]:
-        raise NotImplementedError
+
+        raise NotImplementedError("This method should be implemented in the subclass.")
 
     @cached_property
     def equation_groups(self) -> list[list[int]]:
-        raise NotImplementedError
+        """Prepares the groups of equation in the specific order, that we will use in
+        the block Jacobian to access the submatrices.
+
+        Returns:
+            List of lists of integers. Each list contains the indices of the equations
+                in the group.
+        """        
+        raise NotImplementedError("This method should be implemented in the subclass.")
 
     def group_row_names(self) -> list[str] | None:
         return None
@@ -78,14 +88,16 @@ class IterativeLinearSolver(pp.SolutionStrategy):
         return None
 
     def make_solver_scheme(self) -> FieldSplitScheme:
-        raise NotImplementedError
+        raise NotImplementedError("This method should be implemented in the subclass.")
 
     def assemble_linear_system(self) -> None:
+        """Assemble the linear system. Also build a block matrix representation of the
+        matrix.
+        """
         super().assemble_linear_system()
-        mat, rhs = self.linear_system
 
         bmat = BlockMatrixStorage(
-            mat=mat,
+            mat=self.linear_system[0],
             global_dofs_row=self.eq_dofs,
             global_dofs_col=self.var_dofs,
             groups_to_blocks_row=self.equation_groups,
@@ -97,9 +109,17 @@ class IterativeLinearSolver(pp.SolutionStrategy):
         self.bmat = bmat
 
     def solve_linear_system(self) -> np.ndarray:
+        """ Solve the linear system using the defined iterative scheme.
+
+        Raises:
+            ValueError: If the solver construction or solve fails.
+
+        """
         # Check that rhs is finite.
         mat, rhs = self.linear_system
         if not np.all(np.isfinite(rhs)):
+            # TODO: We should rather raise an exception here and let the caller handle
+            # it.
             self._linear_solve_stats.krylov_iters = 0
             result = np.zeros_like(rhs)
             result[:] = np.nan
@@ -115,7 +135,7 @@ class IterativeLinearSolver(pp.SolutionStrategy):
             self.save_matrix_state()
 
         scheme = self.make_solver_scheme()
-        # Constructing the solver.
+        # Construct the solver.
         bmat = self.bmat[scheme.get_groups()]
 
         t0 = time.time()
@@ -123,18 +143,19 @@ class IterativeLinearSolver(pp.SolutionStrategy):
             solver = scheme.make_solver(bmat)
         except:
             self.save_matrix_state()
-            raise
+            raise ValueError("Solver construction failed")
         print("Construction took:", round(time.time() - t0, 2))
 
         # Permute the rhs groups to match mat_permuted.
         rhs_local = bmat.project_rhs_to_local(rhs)
 
         t0 = time.time()
+        sol_local = solver.solve(rhs_local)
         try:
             sol_local = solver.solve(rhs_local)
         except:
             self.save_matrix_state()
-            raise
+            raise ValueError("Solver solve failed")
         print("Solve took:", round(time.time() - t0, 2))
 
         info = solver.ksp.getConvergedReason()
@@ -146,11 +167,13 @@ class IterativeLinearSolver(pp.SolutionStrategy):
         true_residual_nrm_drop = abs(mat @ sol - rhs).max() / abs(rhs).max()
 
         if info <= 0:
+            # TODO: Raise an exception here and let the caller handle it.
             print(f"GMRES failed, {info=}", file=sys.stderr)
             if info == -9:
                 sol[:] = np.nan
         else:
             if true_residual_nrm_drop >= 1:
+                # TODO: This should be a warning.
                 print("True residual did not decrease")
 
         # Write statistics
@@ -196,9 +219,16 @@ def get_equations_group_ids(
     sd1, sd2 and sd3, respectively. Combination of different equation in one group is
     also possible.
 
+    Parameters:
+        model: The PorePy model. The model should have the EquationSystem defined.
+        equations_group_order: The order of the groups of equations. Each group is a sequence of tuples.
+            Each tuple contains the name of the equation and the domain where it is
+            applied.
+
     """
-    equation_to_idx = {}
-    idx = 0
+    # Assign a unique index to each equation-domain pair.
+    equation_to_idx: dict[tuple[str, pp.GridLike], int] = {}
+    idx: int = 0
     for (
         eq_name,
         domains,
@@ -207,9 +237,12 @@ def get_equations_group_ids(
             equation_to_idx[(eq_name, domain)] = idx
             idx += 1
 
-    indices = []
+    indices: list[list[int]] = []
+    # The outer loop define different groups of equations (to become blocks in the
+    # block matrix).
     for group in equations_group_order:
         group_idx = []
+        # The inner loop gathers, for each the indices of the equations in the group.
         for eq_name, domains in group:
             for domain in domains:
                 if (eq_name, domain) in equation_to_idx:

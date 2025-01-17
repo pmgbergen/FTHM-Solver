@@ -136,7 +136,18 @@ class IterativeHMSolver(IterativeLinearSolver):
         return make_reorder_contact(self, contact_group=self.CONTACT_GROUP)
 
     @cached_property
-    def eq_dofs(self):
+    def eq_dofs(self) -> list[np.ndarray]:
+        """Equation indices (rows of the Jacobian) in the order defined by the PorePy
+        EquationSystem.
+
+        Compared to the parent class, this method corrects the contact equations
+        permutation. See method contact_permutation for details.
+
+        Returns:
+            List of numpy arrays. Each list entry correspond to one equation on one
+                grid.
+
+        """
         unpermuted_eq_dofs = super().eq_dofs
         return self._correct_contact_eq_dofs(
             unpermuted_eq_dofs, contact_group=self.CONTACT_GROUP
