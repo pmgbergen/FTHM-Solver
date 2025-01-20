@@ -19,3 +19,14 @@ license = { text = "GPL-3" }
 
 [project.urls]
 "Homepage" = "https://github.com/pmgbergen/FTHM-Solver"
+
+[project.optional-dependencies]{
+  development = [
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "isort",
+  ]
+}
