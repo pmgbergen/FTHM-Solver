@@ -24,6 +24,12 @@ from .stats import LinearSolveStats
 
 class IterativeLinearSolver:
 
+    nd: int
+    mdg: pp.MixedDimensionalGrid
+    params: dict
+    equation_system: pp.ad.EquationSystem
+    linear_system: tuple[sps.spmatrix, np.ndarray]
+
     _linear_solve_stats = LinearSolveStats()
     """A placeholder to statistics. The solver mixin only writes in it, not reads."""
 

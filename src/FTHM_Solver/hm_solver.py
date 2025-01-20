@@ -501,7 +501,7 @@ def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.nda
         dofs_contact_1 = dofs_contact[num_contact_cells:]
         reorder[dofs_contact_start:dofs_contact_end] = np.vstack(
             [dofs_contact_0, dofs_contact_1]
-        ).ravel("f")
+        ).ravel("F")
     elif model.nd == 3:
         # Do the same as in 2d, also for the second tangential component.
         dofs_contact_0 = dofs_contact[:num_contact_cells]
@@ -509,7 +509,7 @@ def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.nda
         dofs_contact_2 = dofs_contact[num_contact_cells + 1 :: 2]
         reorder[dofs_contact_start:dofs_contact_end] = np.vstack(
             [dofs_contact_0, dofs_contact_1, dofs_contact_2]
-        ).ravel("f")
+        ).ravel("F")
     else:
         raise ValueError("Model dimension must be 2 or 3.")
     return reorder
@@ -534,40 +534,40 @@ def build_mechanics_near_null_space(
     if model.nd == 3:
         vec = np.zeros((3, num_dofs))
         vec[0] = 1
-        null_space.append(vec.ravel("f"))
+        null_space.append(vec.ravel("F"))
         vec = np.zeros((3, num_dofs))
         vec[1] = 1
-        null_space.append(vec.ravel("f"))
+        null_space.append(vec.ravel("F"))
         vec = np.zeros((3, num_dofs))
         vec[2] = 1
-        null_space.append(vec.ravel("f"))
+        null_space.append(vec.ravel("F"))
         # # 0, -z, y
         vec = np.zeros((3, num_dofs))
         vec[1] = -z
         vec[2] = y
-        null_space.append(vec.ravel("f"))
+        null_space.append(vec.ravel("F"))
         # z, 0, -x
         vec = np.zeros((3, num_dofs))
         vec[0] = z
         vec[2] = -x
-        null_space.append(vec.ravel("f"))
+        null_space.append(vec.ravel("F"))
         # -y, x, 0
         vec = np.zeros((3, num_dofs))
         vec[0] = -y
         vec[1] = x
-        null_space.append(vec.ravel("f"))
+        null_space.append(vec.ravel("F"))
     elif model.nd == 2:
         vec = np.zeros((2, num_dofs))
         vec[0] = 1
-        null_space.append(vec.ravel("f"))
+        null_space.append(vec.ravel("F"))
         vec = np.zeros((2, num_dofs))
         vec[1] = 1
-        null_space.append(vec.ravel("f"))
+        null_space.append(vec.ravel("F"))
         # -x, y
         vec = np.zeros((2, num_dofs))
         vec[0] = -x
         vec[1] = y
-        null_space.append(vec.ravel("f"))
+        null_space.append(vec.ravel("F"))
     else:
         raise ValueError
 
