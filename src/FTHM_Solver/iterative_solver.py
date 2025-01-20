@@ -37,7 +37,8 @@ class IterativeLinearSolver:
 
         Returns:
             List of numpy arrays. Each array contains the global degrees of freedom for
-                one variable on one grid.
+                one variable on one grid and provides the fine-scale (actual column
+                indices) of the variable.
 
         """
         var_dofs: list[np.ndarray] = []
@@ -52,7 +53,7 @@ class IterativeLinearSolver:
 
         Returns:
             List of numpy arrays. Each list entry correspond to one equation on one
-                grid.
+                grid, and provides the fine-scale (actual row indices) of the equation.
 
         """
         eq_dofs: list[np.ndarray] = []
@@ -72,12 +73,13 @@ class IterativeLinearSolver:
 
     @cached_property
     def equation_groups(self) -> list[list[int]]:
-        """Prepares the groups of equation in the specific order, that we will use in
+        """Define the groups of equation in the specific order, that we will use in
         the block Jacobian to access the submatrices.
 
         Returns:
             List of lists of integers. Each list contains the indices of the equations
                 in the group.
+
         """        
         raise NotImplementedError("This method should be implemented in the subclass.")
 
@@ -195,8 +197,17 @@ def get_variables_group_ids(
     indices [0, 1, 2] which point to the pressure variable dofs on sd1, sd2 and sd3,
     respectively. Combination of different variables in one group is also possible.
 
-    """
+    Parameters:
+        model: The PorePy model. The model should have the EquationSystem defined.
+        md_variables_groups: The order of the groups of variables. Each group is a
+            sequence of variables (either MixedDimensionalVariable or Variable).
 
+    Returns:
+        List of lists of integers. Each inner list contains the indices of the variables
+            in defined in the respective item in md_variables_groups.
+
+    """
+    # Create a 0-based index for each variable.
     variable_to_idx = {var: i for i, var in enumerate(model.equation_system.variables)}
     indices = []
     for md_var_group in md_variables_groups:
@@ -214,16 +225,17 @@ def get_equations_group_ids(
     """Used to assemble the index that will later help accessing the submatrix
     corresponding to a group of equation, which may include one or more equation.
 
-    Example: Group 0 corresponds to the mass balance equation on all the subdomains.
-    It will contain indices [0, 1, 2] which point to the mass balance equation dofs on
-    sd1, sd2 and sd3, respectively. Combination of different equation in one group is
-    also possible.
-
     Parameters:
         model: The PorePy model. The model should have the EquationSystem defined.
-        equations_group_order: The order of the groups of equations. Each group is a sequence of tuples.
-            Each tuple contains the name of the equation and the domain where it is
-            applied.
+        equations_group_order: The order of the groups of equations. Each group is a
+            sequence of tuples. Each tuple contains the name of the equation and the
+            domain where it is applied.
+
+    Returns:
+        List of lists of integers. Each inner list contains the indices of the equations
+            in defined in the respective item in equations_group_order. The indices
+            refer to the block indices defined in
+            model.equation_system._equation_image_space_composition.
 
     """
     # Assign a unique index to each equation-domain pair.
@@ -242,10 +254,17 @@ def get_equations_group_ids(
     # block matrix).
     for group in equations_group_order:
         group_idx = []
-        # The inner loop gathers, for each the indices of the equations in the group.
+        # Items in the group will contain a single equation defined on one or more
+        # domains (subdomains or interfaces). Loop over equations an over all their
+        # domains to add the indices to the group.
         for eq_name, domains in group:
             for domain in domains:
                 if (eq_name, domain) in equation_to_idx:
                     group_idx.append(equation_to_idx[(eq_name, domain)])
         indices.append(group_idx)
+
+    # TODO EK: Added this assert just to verify that my understanding of the function
+    # is correct. Delete it later.
+    assert len(indices) == len(equations_group_order)
+
     return indices

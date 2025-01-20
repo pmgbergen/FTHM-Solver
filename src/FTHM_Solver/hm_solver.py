@@ -21,7 +21,7 @@ from .mat_utils import (
 
 class IterativeHMSolver(IterativeLinearSolver):
 
-    CONTACT_GROUP = 0
+    CONTACT_GROUP: int = 0
 
     def group_row_names(self) -> list[str]:
         return [
@@ -48,15 +48,19 @@ class IterativeHMSolver(IterativeLinearSolver):
         """Prepares the groups of variables in the specific order, that we will use in
         the block Jacobian to access the submatrices:
 
-        `J[x, 0]` - matrix pressure variable;
-        `J[x, 1]` - matrix displacement variable;
-        `J[x, 2]` - lower-dim pressure variable;
-        `J[x, 3]` - interface Darcy flux variable;
-        `J[x, 4]` - contact traction variable;
-        `J[x, 5]` - interface displacement variable;
+        `J[x, 0]` - contact traction variable;
+        `J[x, 1]` - interface Darcy flux variable;
+        `J[x, 2]` - matrix displacement variable;
+        `J[x, 3]` - interface displacement variable;
+        `J[x, 4]` - matrix pressure variable;
+        `J[x, 5]` - lower-dim pressure variable;
 
         This index is not equivalen to PorePy model natural ordering. Constructed when
         first accessed.
+
+        Returns:
+            List of lists of integers. Each list contains the indices (on the block
+                level) of the variables in the group (defined above).
 
         """
         dim_max = self.mdg.dim_max()
@@ -85,15 +89,21 @@ class IterativeHMSolver(IterativeLinearSolver):
         """Prepares the groups of equation in the specific order, that we will use in
         the block Jacobian to access the submatrices:
 
-        `J[0, x]` - matrix mass balance equation;
-        `J[1, x]` - matrix momentum balance equation;
-        `J[2, x]` - lower-dim mass balance equation;
-        `J[3, x]` - interface Darcy flux equation;
-        `J[4, x]` - contact traction equations;
-        `J[5, x]` - interface force balance equation;
+        `J[0, x]` - contact traction equations;
+        `J[1, x]` - interface Darcy flux equation;
+        `J[2, x]` - matrix momentum balance equation;
+        `J[3, x]` - interface force balance equation;
+        `J[4, x]` - matrix mass balance equation;
+        `J[5, x]` - lower-dim mass balance equation;
 
         This index is not equivalen to PorePy model natural ordering. Constructed when
-        first accessed. Encorporates the permutation `contact_permutation`.
+        first accessed. Encorporates the permutation `contact_permutation` which 
+        rearranges the conctact conditions into a cell-wise block structure.
+
+        Returns:
+            List of lists of integers. Each list contains the indices (in terms of the
+                blocks defined above) of the equations in the group, as defined by the
+                EquationSystem of the PorePy model. 
 
         """
         dim_max = self.mdg.dim_max()
@@ -127,10 +137,16 @@ class IterativeHMSolver(IterativeLinearSolver):
         Jacobian.
 
         The PorePy arrangement is:
-        `[[C0_norm], [C1_norm], [C0_tang], [C1_tang]]`,
+
+            `[[C0_norm], [C1_norm], [C0_tang], [C1_tang]]`,
+        
         where `C0` and `C1` correspond to the contact equation on fractures 0 and 1.
         We permute it to:
-        `[[f0_norm, f0_tang], [f1_norm, f1_tang]]`, a.k.a array of structures.
+        
+            `[[f0_norm, f0_tang], [f1_norm, f1_tang]]`
+        
+        Returns:
+
 
         """
         return make_reorder_contact(self, contact_group=self.CONTACT_GROUP)
@@ -145,7 +161,8 @@ class IterativeHMSolver(IterativeLinearSolver):
 
         Returns:
             List of numpy arrays. Each list entry correspond to one equation on one
-                grid.
+                grid. The arrays provide the fine-scale (actual row indices) of the
+                equation.
 
         """
         unpermuted_eq_dofs = super().eq_dofs
@@ -156,55 +173,99 @@ class IterativeHMSolver(IterativeLinearSolver):
     def _correct_contact_eq_dofs(
         self, unpermuted_eq_dofs: list[np.ndarray], contact_group: int
     ) -> list[np.ndarray]:
+        """Rearrange the unknowns (row indices) so that the contact equations are in a
+        cell-wise block structure.
+
+        Parameters:
+            unpermuted_eq_dofs: The unpermuted equation degrees of freedom.
+            contact_group: The group index of the contact mechanics equations.
+
+        Returns:
+            The corrected equation degrees of freedom.
+
+        See also:
+            _correct_contact_equations_groups for rearrane of the equation blocks
+                related to contact (as opposed to the individual dofs handled here).
+
+        """
+        # Short cut if no contact mechanics, hence no reordering.
         if len(self.equation_groups[contact_group]) == 0:
             return unpermuted_eq_dofs
 
-        # We assume that normal equations go first.
+        # We assume that normal equations go first. TODO: Can we make this more robust,
+        # or else put an assert here.
         normal_blocks = self.equation_groups[contact_group]
         num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
-        # One tangential block matches 1 normal for 2D and 1 tangential block for 3D.
+
+        # EK: I believe this is an assumption that the tangential equations are right
+        # after the normal equations.
         all_contact_blocks = [
             nb + i * num_fracs for i in range(2) for nb in normal_blocks
         ]
 
-        eq_dofs_corrected = []
+        eq_dofs_corrected: list[np.ndarray] = []
+        # Add all equations that are not contact equations without any changes.
         for i, x in enumerate(unpermuted_eq_dofs):
             if i not in all_contact_blocks:
                 eq_dofs_corrected.append(x)
             elif i in normal_blocks:
                 eq_dofs_corrected.append(None)
 
-        i = unpermuted_eq_dofs[normal_blocks[0]][0]
+        offset = unpermuted_eq_dofs[normal_blocks[0]][0]
         for nb in normal_blocks:
-            res = i + np.arange(unpermuted_eq_dofs[nb].size * self.nd)
-            i = res[-1] + 1
-            eq_dofs_corrected[nb] = np.array(res)
+            # Create indices for the normal and tangential components of the contact.
+            # There will be self.nd equations for each block.
+            inds = offset + np.arange(unpermuted_eq_dofs[nb].size * self.nd)
+            offset = inds[-1] + 1
+            eq_dofs_corrected[nb] = np.array(inds)
 
         return eq_dofs_corrected
 
     def _correct_contact_equations_groups(
         self, equation_groups: list[list[int]], contact_group: int
     ) -> list[list[int]]:
-        """PorePy provides 2 contact equation blocks for each fracture: normal and
-        tangential. This merges them.
+        """The block ordering from PorePy assigns different block indices to the normal
+        and tangential components of the contact equations. This method corrects this
+        indexing by assigning a single block index for each fracture.
+
+        The method further adjusts the indices of the other equation groups to account
+        for the reduced number of blocks.
+
+        Parameters:
+            equation_groups: The uncorrected equation groups.
+            contact_group: The group index of the contact mechanics equations.
+
+        Returns:
+            The corrected equation groups.
+
+        See also:
+            _correct_contact_eq_dofs for rearrane of the individual dofs related to
+                contact (as opposed to the equation blocks handled here).
 
         """
         if len(equation_groups[contact_group]) == 0:
             return equation_groups
 
+        # Create a copy of the equation groups to avoid modifying the original.
         eq_groups_corrected = [x.copy() for x in equation_groups]
 
         num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
+        # Index of the first block after the contact group. This and all subsequent
+        # indexes will be reduced by the number of fractures (e.g., the number of 
+        # block equations that have been removed).
         block_after_contact = max(equation_groups[contact_group]) + 1
-        # Now each dof array in the contact group corresponds normal and tangential
-        # components of contact relations on a specific fracture.
+
+        # Change the number of blocks in the contact group to the number of fractures,
+        # since we have merged the normal and tangential components.
         eq_groups_corrected[contact_group] = equation_groups[contact_group][:num_fracs]
 
-        # Since the number of groups decreased, we need to subtract the difference.
+        # For all other groups with block index after the contact group, reduce the
+        # block index by the number of fractures.
         for blocks in eq_groups_corrected:
             for i in range(len(blocks)):
                 if blocks[i] >= block_after_contact:
                     blocks[i] -= num_fracs
+
         return eq_groups_corrected
 
     def Qright(self, contact_group: int, u_intf_group: int) -> BlockMatrixStorage:
@@ -393,39 +454,64 @@ class IterativeHMSolver(IterativeLinearSolver):
 
 
 def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.ndarray:
-    """Permutation of the contact mechanics equations. The PorePy arrangement is:
-    `[C_n^0, C_n^1, ..., C_n^K, C_y^0, C_z^0, C_y^1, C_z^1, ..., C_z^K, C_z^k]`,
+    """Permutate the contact mechanics equations to a cell-wise block structure.
+     
+     The PorePy arrangement is:
+    
+        [C_n^0, C_n^1, ..., C_n^K, C_y^0, C_z^0, C_y^1, C_z^1, ..., C_z^K, C_z^k],
+    
     where `C_n` is a normal component, `C_y` and `C_z` are two tangential
-    components. Superscript corresponds to its position in space. We permute it to:
-    `[C_n^0, C_y^0, C_z^0, ..., C_n^K, C_y^K, C_z^K]`, a.k.a array of structures.
+    components. The superscript corresponds to cell index. We permute it to
+    
+        `[C_n^0, C_y^0, C_z^0, ..., C_n^K, C_y^K, C_z^K]`.
+
+    Parameters:
+        model: The PorePy model.
+        contact_group: The group index of the contact mechanics equations.
+
+    Raises:
+        ValueError: If the model dimension is not 2 or 3.
+
+    Returns:
+
 
     """
     reorder = np.arange(model.equation_system.num_dofs())
+
+    # Short cut if no contact mechanics, hence no reordering.
     if len(model.equation_groups[contact_group]) == 0:
         return reorder
 
+    # Get the (fine-scale, not block(!)) dofs of the contact mechanics equations.
     dofs_contact = np.concatenate(
         [model.eq_dofs[i] for i in model.equation_groups[contact_group]]
     )
+
+    # The start and end indices of all contact mechanics equations.
     dofs_contact_start = dofs_contact[0]
     dofs_contact_end = dofs_contact[-1] + 1
 
+    # The number of cells in the contact mechanics equations.
+    num_contact_cells = len(dofs_contact) // model.nd
+
+    # 2d and 3d have respectively 1 and 2 tangential components, hence the branch.
     if model.nd == 2:
-        dofs_contact_0 = dofs_contact[: len(dofs_contact) // model.nd]
-        dofs_contact_1 = dofs_contact[len(dofs_contact) // model.nd :]
-        reorder[dofs_contact_start:dofs_contact_end] = np.stack(
+        # Rearrange the dofs into cell-wise blocks.
+        dofs_contact_0 = dofs_contact[:num_contact_cells]
+        dofs_contact_1 = dofs_contact[num_contact_cells:]
+        reorder[dofs_contact_start:dofs_contact_end] = np.vstack(
             [dofs_contact_0, dofs_contact_1]
         ).ravel("f")
     elif model.nd == 3:
-        div = len(dofs_contact) // model.nd
-        dofs_contact_0 = dofs_contact[:div]
-        dofs_contact_1 = dofs_contact[div::2]
-        dofs_contact_2 = dofs_contact[div + 1 :: 2]
-        reorder[dofs_contact_start:dofs_contact_end] = np.stack(
+        # Do the same as in 2d, also for the second tangential component.
+        dofs_contact_0 = dofs_contact[:num_contact_cells]
+        dofs_contact_1 = dofs_contact[num_contact_cells::2]
+        dofs_contact_2 = dofs_contact[num_contact_cells + 1 :: 2]
+        reorder[dofs_contact_start:dofs_contact_end] = np.vstack(
             [dofs_contact_0, dofs_contact_1, dofs_contact_2]
         ).ravel("f")
     else:
-        raise ValueError(f"{model.nd = }")
+        raise ValueError("Model dimension must be 2 or 3.")
     return reorder
 
 
