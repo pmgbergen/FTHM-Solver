@@ -83,14 +83,17 @@ def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
     alpha_biot = model.solid.biot_coefficient
     dim = model.nd
 
+    subdomains = model.mdg.subdomains(dim=dim)
+    cell_volumes = subdomains[0].cell_volumes
+    if alpha_biot == 0:
+        return scipy.sparse.diags(0 * cell_volumes)
+
     l_phys = alpha_biot**2 / (2 * mu_lame / dim + lambda_lame)
     l_min = alpha_biot**2 / (4 * mu_lame + 2 * lambda_lame)
 
     val = l_min * (l_phys / l_min) ** l_factor
 
     diagonal_approx = val
-    subdomains = model.mdg.subdomains(dim=dim)
-    cell_volumes = subdomains[0].cell_volumes
     diagonal_approx *= cell_volumes
 
     density = model.fluid.density(subdomains).value(model.equation_system)
@@ -201,7 +204,7 @@ def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int):
 def make_fs_analytical_slow(model, J, p_mat_group: int, p_frac_group: int, groups):
     result = J.empty_container()[groups]
     result[[p_mat_group]] = scipy.sparse.block_diag(
-        [get_fixed_stress_stabilization(model)],format="csr"
+        [get_fixed_stress_stabilization(model)], format="csr"
     )
     result[[p_frac_group]] = scipy.sparse.block_diag(
         [get_fs_fractures_analytical(model)], format="csr"
