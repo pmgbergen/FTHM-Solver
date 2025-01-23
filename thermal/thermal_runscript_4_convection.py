@@ -19,41 +19,41 @@ YMAX = 1000
 class Geometry(pp.SolutionStrategy):
     def initial_condition(self) -> None:
         super().initial_condition()
-        vals = np.load("stats_thermal_geo4x2_sol3_bb2_fr1_h.npy")
+        # vals = np.load("stats_thermal_geo4x2_sol3_bb2_fr1_h.npy")
         # vals = np.load("stats_thermal_geo4x2_sol3_bb2_fr1_p.npy")
-        self.equation_system.set_variable_values(vals, time_step_index=0)
-        self.equation_system.set_variable_values(vals, iterate_index=0)
+        # self.equation_system.set_variable_values(vals, time_step_index=0)
+        # self.equation_system.set_variable_values(vals, iterate_index=0)
 
-        # num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
-        # val = self.reference_variable_values.pressure * np.ones(num_cells)
-        # for time_step_index in self.time_step_indices:
-        #     self.equation_system.set_variable_values(
-        #         val,
-        #         variables=[self.pressure_variable],
-        #         time_step_index=time_step_index,
-        #     )
+        num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
+        val = self.reference_variable_values.pressure * np.ones(num_cells)
+        for time_step_index in self.time_step_indices:
+            self.equation_system.set_variable_values(
+                val,
+                variables=[self.pressure_variable],
+                time_step_index=time_step_index,
+            )
 
-        # for iterate_index in self.iterate_indices:
-        #     self.equation_system.set_variable_values(
-        #         val,
-        #         variables=[self.pressure_variable],
-        #         iterate_index=iterate_index,
-        #     )
+        for iterate_index in self.iterate_indices:
+            self.equation_system.set_variable_values(
+                val,
+                variables=[self.pressure_variable],
+                iterate_index=iterate_index,
+            )
 
-        # val = self.reference_variable_values.temperature * np.ones(num_cells)
-        # for time_step_index in self.time_step_indices:
-        #     self.equation_system.set_variable_values(
-        #         val,
-        #         variables=[self.temperature_variable],
-        #         time_step_index=time_step_index,
-        #     )
+        val = self.reference_variable_values.temperature * np.ones(num_cells)
+        for time_step_index in self.time_step_indices:
+            self.equation_system.set_variable_values(
+                val,
+                variables=[self.temperature_variable],
+                time_step_index=time_step_index,
+            )
 
-        # for iterate_index in self.iterate_indices:
-        #     self.equation_system.set_variable_values(
-        #         val,
-        #         variables=[self.temperature_variable],
-        #         iterate_index=iterate_index,
-        #     )
+        for iterate_index in self.iterate_indices:
+            self.equation_system.set_variable_values(
+                val,
+                variables=[self.temperature_variable],
+                iterate_index=iterate_index,
+            )
 
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
@@ -120,22 +120,22 @@ class Geometry(pp.SolutionStrategy):
         return self.units.convert_units(3e1, "kg * s^-1")  # very high
         # maybe inject and then stop injecting?
 
-    def fluid_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
-        src = self.locate_source(subdomains)
-        src *= self.fluid_source_mass_rate()
-        return super().fluid_source(subdomains) + pp.ad.DenseArray(src)
+    # def fluid_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
+    #     src = self.locate_source(subdomains)
+    #     src *= self.fluid_source_mass_rate()
+    #     return super().fluid_source(subdomains) + pp.ad.DenseArray(src)
 
-    def energy_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
-        src = self.locate_source(subdomains)
-        src *= self.fluid_source_mass_rate()
-        cv = self.fluid.components[0].specific_heat_capacity
-        t_inj = (
-            self.units.convert_units(273 + 40, "K")
-            - self.reference_variable_values.temperature
-        )
-        src *= cv * t_inj
-        # src *= self.units.convert_units(1e6, "J * s^-1")
-        return super().energy_source(subdomains) + pp.ad.DenseArray(src)
+    # def energy_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
+    #     src = self.locate_source(subdomains)
+    #     src *= self.fluid_source_mass_rate()
+    #     cv = self.fluid.components[0].specific_heat_capacity
+    #     t_inj = (
+    #         self.units.convert_units(273 + 40, "K")
+    #         - self.reference_variable_values.temperature
+    #     )
+    #     src *= cv * t_inj
+    #     # src *= self.units.convert_units(1e6, "J * s^-1")
+    #     return super().energy_source(subdomains) + pp.ad.DenseArray(src)
 
     def bc_values_temperature(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         sides = self.domain_boundary_sides(boundary_grid)
@@ -179,8 +179,8 @@ def make_model(setup: dict):
 
     shear = 1.2e10
     lame = 1.2e10
-    biot = 0.47
-    # biot = 0
+    # biot = 0.47
+    biot = 0
     porosity = 1.3e-2  # probably on the low side
     specific_storage = 1 / (lame + 2 / 3 * shear) * (biot - porosity) * (1 - biot)
 
@@ -230,7 +230,7 @@ def make_model(setup: dict):
         "time_manager": pp.TimeManager(
             dt_init=5e-1 * DAY,
             # schedule=[0, 50 * DAY],
-            schedule=[0, 1e2 * DAY],
+            schedule=[0, 1e1 * DAY],
             iter_max=25,
             constant_dt=False,
         ),
