@@ -19,8 +19,8 @@ YMAX = 1000
 class Geometry(pp.SolutionStrategy):
     def initial_condition(self) -> None:
         super().initial_condition()
-        vals = np.load("stats_thermal_geo4x2_sol3_bb2_fr1_h.npy")
-        # vals = np.load("stats_thermal_geo4x2_sol3_bb2_fr1_p.npy")
+        # vals = np.load("stats_thermal_geo4x2_sol3_bb2_fr1_h.npy")
+        vals = np.load("stats_thermal_geo4x2_sol3_bb2_fr1_p.npy")
         self.equation_system.set_variable_values(vals, time_step_index=0)
         self.equation_system.set_variable_values(vals, iterate_index=0)
 
@@ -63,21 +63,18 @@ class Geometry(pp.SolutionStrategy):
     def bc_values_pressure(self, boundary_grid):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
-        mul = 2  # maybe too much
+        mul = 1.1  # maybe too much
         vals[sides.east] *= mul
         # gradient
-        x = boundary_grid.cell_centers[0]
-        xmax = XMAX * 1.1
-        xmin = XMAX * -0.1
         vals[sides.north] += (
             (vals[sides.north] * mul - vals[sides.north])
-            / (xmax - xmin)
-            * (x[sides.north] - xmin)
+            / (XMAX * 1.1 - XMAX * -0.1)
+            * (boundary_grid.cell_centers[0, sides.north] - XMAX * -0.1)
         )
         vals[sides.south] += (
             (vals[sides.south] * mul - vals[sides.south])
-            / (xmax - xmin)
-            * (x[sides.south] - xmin)
+            / (XMAX * 1.1 - XMAX * -0.1)
+            * (boundary_grid.cell_centers[0, sides.south] - XMAX * -0.1)
         )
         return vals
 
@@ -117,7 +114,7 @@ class Geometry(pp.SolutionStrategy):
         return np.concatenate([zeros_ambient, src_frac, zeros_lower])
 
     def fluid_source_mass_rate(self):
-        return self.units.convert_units(3e1, "kg * s^-1")  # very high
+        return self.units.convert_units(3e-1, "kg * s^-1")  # very high
         # maybe inject and then stop injecting?
 
     def fluid_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
@@ -189,7 +186,7 @@ def make_model(setup: dict):
         "material_constants": {
             "solid": pp.SolidConstants(
                 # IMPORTANT
-                permeability=1e-14 * 1e2,  # [m^2]
+                permeability=1e-14,  # [m^2]
                 residual_aperture=1e-4 * 1e1,  # [m]
                 # LESS IMPORTANT
                 shear_modulus=shear,  # [Pa]
@@ -218,7 +215,7 @@ def make_model(setup: dict):
                 thermal_expansion=2.068e-4,  # Density(T)
             ),
             "numerical": pp.NumericalConstants(
-                characteristic_displacement=2e0,  # [m]
+                characteristic_displacement=1e-1,  # [m]
             ),
         },
         "reference_variable_values": pp.ReferenceVariableValues(
@@ -228,9 +225,9 @@ def make_model(setup: dict):
         ),
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
-            dt_init=5e-1 * DAY,
+            dt_init=1e1 * DAY,
             # schedule=[0, 50 * DAY],
-            schedule=[0, 1e2 * DAY],
+            schedule=[0, 1e4 * DAY],
             iter_max=25,
             constant_dt=False,
         ),
@@ -260,7 +257,7 @@ def run_model(setup: dict):
             "max_iterations": 30,
             # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
-            "Global_line_search": 0,  # Set to 1 to use turn on a residual-based line search
+            "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
             "Local_line_search": 1,  # Set to 0 to use turn off the tailored line search
         },
     )
