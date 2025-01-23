@@ -19,67 +19,66 @@ YMAX = 1000
 class Geometry(pp.SolutionStrategy):
     def initial_condition(self) -> None:
         super().initial_condition()
-        # vals = np.load("stats_thermal_geo4x2_sol3_bb2_fr1_h.npy")
-        # vals = np.load("stats_thermal_geo4x2_sol3_bb2_fr1_p.npy")
-        # self.equation_system.set_variable_values(vals, time_step_index=0)
-        # self.equation_system.set_variable_values(vals, iterate_index=0)
+        vals = np.load("stats_thermal_geo4hx2_sol3_bb2_fr1_endstate_1737646072866.npy")
+        self.equation_system.set_variable_values(vals, time_step_index=0)
+        self.equation_system.set_variable_values(vals, iterate_index=0)
 
-        num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
-        val = self.reference_variable_values.pressure * np.ones(num_cells)
-        for time_step_index in self.time_step_indices:
-            self.equation_system.set_variable_values(
-                val,
-                variables=[self.pressure_variable],
-                time_step_index=time_step_index,
-            )
+        # num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
+        # val = self.reference_variable_values.pressure * np.ones(num_cells)
+        # for time_step_index in self.time_step_indices:
+        #     self.equation_system.set_variable_values(
+        #         val,
+        #         variables=[self.pressure_variable],
+        #         time_step_index=time_step_index,
+        #     )
 
-        for iterate_index in self.iterate_indices:
-            self.equation_system.set_variable_values(
-                val,
-                variables=[self.pressure_variable],
-                iterate_index=iterate_index,
-            )
+        # for iterate_index in self.iterate_indices:
+        #     self.equation_system.set_variable_values(
+        #         val,
+        #         variables=[self.pressure_variable],
+        #         iterate_index=iterate_index,
+        #     )
 
-        val = self.reference_variable_values.temperature * np.ones(num_cells)
-        for time_step_index in self.time_step_indices:
-            self.equation_system.set_variable_values(
-                val,
-                variables=[self.temperature_variable],
-                time_step_index=time_step_index,
-            )
+        # val = self.reference_variable_values.temperature * np.ones(num_cells)
+        # for time_step_index in self.time_step_indices:
+        #     self.equation_system.set_variable_values(
+        #         val,
+        #         variables=[self.temperature_variable],
+        #         time_step_index=time_step_index,
+        #     )
 
-        for iterate_index in self.iterate_indices:
-            self.equation_system.set_variable_values(
-                val,
-                variables=[self.temperature_variable],
-                iterate_index=iterate_index,
-            )
+        # for iterate_index in self.iterate_indices:
+        #     self.equation_system.set_variable_values(
+        #         val,
+        #         variables=[self.temperature_variable],
+        #         iterate_index=iterate_index,
+        #     )
 
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
         bc = pp.BoundaryCondition(sd, sides.all_bf, "dir")
         return bc
 
-    def bc_values_pressure(self, boundary_grid):
-        vals = super().bc_values_pressure(boundary_grid)
-        sides = self.domain_boundary_sides(boundary_grid)
-        mul = 2  # maybe too much
-        vals[sides.east] *= mul
-        # gradient
-        x = boundary_grid.cell_centers[0]
-        xmax = XMAX * 1.1
-        xmin = XMAX * -0.1
-        vals[sides.north] += (
-            (vals[sides.north] * mul - vals[sides.north])
-            / (xmax - xmin)
-            * (x[sides.north] - xmin)
-        )
-        vals[sides.south] += (
-            (vals[sides.south] * mul - vals[sides.south])
-            / (xmax - xmin)
-            * (x[sides.south] - xmin)
-        )
-        return vals
+    # def bc_values_pressure(self, boundary_grid):
+    #     vals = super().bc_values_pressure(boundary_grid)
+    #     sides = self.domain_boundary_sides(boundary_grid)
+    #     mul = 1.5  # maybe too much
+    #     vals[sides.east] *= mul
+    #     # gradient
+    #     x = boundary_grid.cell_centers[0]
+    #     xmax = XMAX * 1.1
+    #     xmin = XMAX * -0.1
+    #     vals[sides.north] += (
+    #         (vals[sides.north] * mul - vals[sides.north])
+    #         / (xmax - xmin)
+    #         * (x[sides.north] - xmin)
+    #     )
+    #     vals[sides.south] += (
+    #         (vals[sides.south] * mul - vals[sides.south])
+    #         / (xmax - xmin)
+    #         * (x[sides.south] - xmin)
+    #     )
+    #     return vals
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
         sides = self.domain_boundary_sides(sd)
@@ -117,25 +116,25 @@ class Geometry(pp.SolutionStrategy):
         return np.concatenate([zeros_ambient, src_frac, zeros_lower])
 
     def fluid_source_mass_rate(self):
-        return self.units.convert_units(3e1, "kg * s^-1")  # very high
+        return self.units.convert_units(1e1, "kg * s^-1")  # very high
         # maybe inject and then stop injecting?
 
-    # def fluid_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
-    #     src = self.locate_source(subdomains)
-    #     src *= self.fluid_source_mass_rate()
-    #     return super().fluid_source(subdomains) + pp.ad.DenseArray(src)
+    def fluid_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
+        src = self.locate_source(subdomains)
+        src *= self.fluid_source_mass_rate()
+        return super().fluid_source(subdomains) + pp.ad.DenseArray(src)
 
-    # def energy_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
-    #     src = self.locate_source(subdomains)
-    #     src *= self.fluid_source_mass_rate()
-    #     cv = self.fluid.components[0].specific_heat_capacity
-    #     t_inj = (
-    #         self.units.convert_units(273 + 40, "K")
-    #         - self.reference_variable_values.temperature
-    #     )
-    #     src *= cv * t_inj
-    #     # src *= self.units.convert_units(1e6, "J * s^-1")
-    #     return super().energy_source(subdomains) + pp.ad.DenseArray(src)
+    def energy_source(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
+        src = self.locate_source(subdomains)
+        src *= self.fluid_source_mass_rate()
+        cv = self.fluid.components[0].specific_heat_capacity
+        t_inj = (
+            self.units.convert_units(273 + 40, "K")
+            - self.reference_variable_values.temperature
+        )
+        src *= cv * t_inj
+        # src *= self.units.convert_units(1e6, "J * s^-1")
+        return super().energy_source(subdomains) + pp.ad.DenseArray(src)
 
     def bc_values_temperature(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         sides = self.domain_boundary_sides(boundary_grid)
@@ -161,7 +160,6 @@ class Geometry(pp.SolutionStrategy):
     def after_simulation(self):
         super().after_simulation()
         vals = self.equation_system.get_variable_values(time_step_index=0)
-        # np.save(f'{self.simulation_name()}_equilibrium.npy', vals)
         name = f"{self.simulation_name()}_endstate_{int(time.time() * 1000)}.npy"
         print("Saving", name)
         np.save(name, vals)
@@ -179,8 +177,8 @@ def make_model(setup: dict):
 
     shear = 1.2e10
     lame = 1.2e10
-    # biot = 0.47
-    biot = 0
+    biot = 0.47
+    # biot = 0
     porosity = 1.3e-2  # probably on the low side
     specific_storage = 1 / (lame + 2 / 3 * shear) * (biot - porosity) * (1 - biot)
 
@@ -189,8 +187,8 @@ def make_model(setup: dict):
         "material_constants": {
             "solid": pp.SolidConstants(
                 # IMPORTANT
-                permeability=1e-14 * 1e2,  # [m^2]
-                residual_aperture=1e-4 * 1e1,  # [m]
+                permeability=1e-13,  # [m^2]
+                residual_aperture=1e-3,  # [m]
                 # LESS IMPORTANT
                 shear_modulus=shear,  # [Pa]
                 lame_lambda=lame,  # [Pa]
@@ -228,9 +226,8 @@ def make_model(setup: dict):
         ),
         "grid_type": "simplex",
         "time_manager": pp.TimeManager(
-            dt_init=5e-1 * DAY,
-            # schedule=[0, 50 * DAY],
-            schedule=[0, 1e1 * DAY],
+            dt_init=1e-2 * DAY,
+            schedule=[0, 1e3 * DAY],
             iter_max=25,
             constant_dt=False,
         ),
@@ -280,7 +277,7 @@ if __name__ == "__main__":
         run_model(
             {
                 "physics": 1,
-                "geometry": 4,
+                "geometry": "4h",
                 "barton_bandis_stiffness_type": 2,
                 "friction_type": 1,
                 "grid_refinement": g,
