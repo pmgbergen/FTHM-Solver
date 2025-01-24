@@ -885,7 +885,6 @@ def solve_petsc_3(
     print("Solve", label, "took:", round(time.time() - t0, 2))
     residuals = krylov.get_residuals()
     info = krylov.ksp.getConvergedReason()
-    eigs = krylov.ksp.computeEigenvalues()
 
     print(
         "True residual:",
@@ -893,11 +892,17 @@ def solve_petsc_3(
     )
 
     print("PETSc Converged Reason:", info)
+    
     linestyle = "-"
-    if info <= 0:
-        linestyle = "--"
-        if len(eigs) > 0:
-            print("lambda min:", min(abs(eigs)))
+    try:
+        eigs = krylov.ksp.computeEigenvalues()
+    except:
+        eigs = None
+    else:
+        if info <= 0:
+            linestyle = "--"
+            if len(eigs) > 0:
+                print("lambda min:", min(abs(eigs)))
 
     plt.gcf().set_size_inches(14, 4)
 
@@ -921,17 +926,18 @@ def solve_petsc_3(
     ax.set_title("Krylov Convergence")
 
     ax = plt.subplot(1, 2, 2)
-    if logx_eigs:
+    if eigs is not None and logx_eigs:
         eigs.real = abs(eigs.real)
-    ax.scatter(eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS))
-    ax.set_xlabel(r"Re($\lambda)$")
-    ax.set_ylabel(r"Im($\lambda$)")
-    ax.grid(True)
+    if eigs:
+        ax.scatter(eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS))
+        ax.set_xlabel(r"Re($\lambda)$")
+        ax.set_ylabel(r"Im($\lambda$)")
+        ax.grid(True)
+        if logx_eigs:
+            plt.xscale("log")
+        ax.set_title("Eigenvalues estimate")
     if label != "":
         ax.legend()
-    if logx_eigs:
-        plt.xscale("log")
-    ax.set_title("Eigenvalues estimate")
 
     if return_data:
         return krylov
