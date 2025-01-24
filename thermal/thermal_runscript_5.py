@@ -10,7 +10,6 @@ from thermal.models import (
 from thermal.thm_solver import THMSolver
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
-from porepy.applications.md_grids.mdg_library import benchmark_3d_case_3
 
 
 class Geometry(pp.SolutionStrategy):
@@ -59,7 +58,7 @@ class Geometry(pp.SolutionStrategy):
 
     def bc_type_mechanics(self, sd: pp.Grid) -> pp.BoundaryConditionVectorial:
         sides = self.domain_boundary_sides(sd)
-        bc = pp.BoundaryConditionVectorial(sd, sides.bottom, "dir")
+        bc = pp.BoundaryConditionVectorial(sd, sides.north, "dir")
         bc.internal_to_dirichlet(sd)
         return bc
 
@@ -69,27 +68,21 @@ class Geometry(pp.SolutionStrategy):
         # rho * g * h
         # 2683 * 10 * 3000
         val = self.units.convert_units(8e7, units="Pa")
-        bc_values[2, sides.top] = -val * boundary_grid.cell_volumes[sides.top]
-        bc_values[1, sides.south] = (
-            +val * boundary_grid.cell_volumes[sides.south]
-        )  # * 0.9
-        bc_values[1, sides.north] = (
-            -val * boundary_grid.cell_volumes[sides.north]
-        )  # * 0.9
-        bc_values[0, sides.west] = (
-            +val * boundary_grid.cell_volumes[sides.west]
-        )  # * 1.2
-        bc_values[0, sides.east] = (
-            -val * boundary_grid.cell_volumes[sides.east]
-        )  # * 1.2
+        bc_values[1, sides.south] = +val * boundary_grid.cell_volumes[sides.south]
+        bc_values[2, sides.top] = -val * boundary_grid.cell_volumes[sides.top] * 0.9
+        bc_values[2, sides.bottom] = (
+            val * boundary_grid.cell_volumes[sides.bottom] * 0.9
+        )
+        bc_values[0, sides.west] = +val * boundary_grid.cell_volumes[sides.west] * 1.2
+        bc_values[0, sides.east] = (-val * boundary_grid.cell_volumes[sides.east]) * 1.2
         return bc_values.ravel("F")
 
     def locate_source(self, subdomains):
         xmax = self._domain.bounding_box["xmax"]
         ymax = self._domain.bounding_box["ymax"]
         zmax = self._domain.bounding_box["zmax"]
-        source_loc_x = xmax * 0.9
-        source_loc_y = ymax * 0.5
+        source_loc_x = xmax * 0.5
+        source_loc_y = ymax * 0.1
         source_loc_z = zmax * 0.5
         ambient = [sd for sd in subdomains if sd.dim == self.nd]
         fractures = [sd for sd in subdomains if sd.dim == self.nd - 1]
@@ -135,21 +128,17 @@ class Geometry(pp.SolutionStrategy):
         #     )
         self._domain = pp.Domain(
             {"xmin": 0, "xmax": 1000, "ymin": 0, "ymax": 2250, "zmin": 0, "zmax": 1000}
-            # {
-            #     "xmin": -500,
-            #     "xmax": 1500,
-            #     "ymin": -500,
-            #     "ymax": 3250,
-            #     "zmin": -5,
-            #     "zmax": 1500,
-            # }
         )
-        self._domain.bounding_box["xmin"] = -0.5 * self._domain.bounding_box["xmax"]
-        self._domain.bounding_box["ymin"] = -0.5 * self._domain.bounding_box["ymax"]
-        self._domain.bounding_box["zmin"] = -0.5 * self._domain.bounding_box["zmax"]
-        self._domain.bounding_box["xmax"] *= 1.5
-        self._domain.bounding_box["ymax"] *= 1.5
-        self._domain.bounding_box["zmax"] *= 1.5
+        self._domain = pp.Domain(
+            {
+                "xmin": -0.1 * self._domain.bounding_box["xmax"],
+                "ymin": -0.1 * self._domain.bounding_box["ymax"],
+                "zmin": -0.1 * self._domain.bounding_box["zmax"],
+                "xmax": 1.1 * self._domain.bounding_box["xmax"],
+                "ymax": 1.1 * self._domain.bounding_box["ymax"],
+                "zmax": 1.1 * self._domain.bounding_box["zmax"],
+            }
+        )
 
     def set_fractures(self) -> None:
         #     coords_a = [0.5, 0.5, 0.5, 0.5]
@@ -259,10 +248,8 @@ def make_model(setup: dict):
         end_time = 1e1
     else:
         biot = 0.47
-        dt_init = 1e-3
-        if setup["grid_refinement"] >= 33:
-            dt_init = 1e-4
-        end_time = 5e2
+        dt_init = 1e-4
+        end_time = 2e3
     porosity = 1.3e-2  # probably on the low side
 
     params = {

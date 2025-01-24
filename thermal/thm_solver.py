@@ -344,6 +344,8 @@ class THMSolver(IterativeHMSolver):
                                     "pc_type": "hypre",
                                     "pc_hypre_type": "boomeramg",
                                     "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    # not sure:
+                                    "pc_hypre_boomeramg_smooth_type": "Euclid",
                                 },
                                 block_size=self.nd,
                                 invert=lambda bmat: csr_to_petsc(
