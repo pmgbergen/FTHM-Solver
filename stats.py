@@ -31,6 +31,9 @@ class LinearSolveStats:
     rhs_id: str = ""
     state_id: str = ""
     iterate_id: str = ""
+    # Thermal
+    temp_min: float = -1
+    temp_max: float = -1
 
 
 @dataclass

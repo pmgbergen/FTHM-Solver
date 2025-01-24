@@ -43,8 +43,6 @@ class THMSolver(IterativeHMSolver):
         setup = self.params["setup"]
         name = f'{name}_geo{setup["geometry"]}x{setup["grid_refinement"]}'
         name = f'{name}_sol{setup["solver"]}'
-        name = f'{name}_bb{setup["barton_bandis_stiffness_type"]}'
-        name = f'{name}_fr{setup["friction_type"]}'
         return name
 
     CONTACT_GROUP = 0

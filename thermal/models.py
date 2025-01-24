@@ -28,7 +28,10 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
 
     def before_nonlinear_iteration(self):
         t = self.temperature(self.mdg.subdomains()).value(self.equation_system)
-        print(f"{min(t) }, {max(t) }")
+        tmin, tmax = min(t), max(t)
+        self._linear_solve_stats.temp_min = tmin
+        self._linear_solve_stats.temp_max = tmax
+        print(f"Temperature: {tmin:.2f}, {tmax:.2f}")
         super().before_nonlinear_iteration()
 
     pass
