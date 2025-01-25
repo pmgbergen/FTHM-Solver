@@ -259,7 +259,7 @@ def make_model(setup: dict):
             "solid": pp.SolidConstants(
                 # IMPORTANT
                 permeability=1e-13,  # [m^2]
-                residual_aperture=1e-4,  # [m]
+                residual_aperture=1e-3,  # [m]
                 # LESS IMPORTANT
                 shear_modulus=shear,  # [Pa]
                 lame_lambda=lame,  # [Pa]
@@ -342,7 +342,15 @@ if __name__ == "__main__":
         "solver": 3,
         "save_matrix": False,
     }
-    for g in [1, 2, 3]:
+    for g in [
+        # 1,
+        # 2,
+        5,
+        10,
+        15,
+        20,
+        25
+    ]:
         print("Running steady state")
         params = {
             "grid_refinement": g,
