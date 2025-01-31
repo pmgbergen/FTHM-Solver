@@ -3,6 +3,7 @@ from functools import cached_property
 from typing import Sequence
 import time
 
+import scipy.sparse as sps
 import numpy as np
 import porepy as pp
 from porepy.models.solution_strategy import SolutionStrategy
@@ -23,7 +24,6 @@ from .stats import LinearSolveStats
 
 
 class IterativeLinearSolver:
-
     nd: int
     mdg: pp.MixedDimensionalGrid
     params: dict
@@ -74,7 +74,6 @@ class IterativeLinearSolver:
 
     @cached_property
     def variable_groups(self) -> list[list[int]]:
-
         raise NotImplementedError("This method should be implemented in the subclass.")
 
     @cached_property
@@ -86,7 +85,7 @@ class IterativeLinearSolver:
             List of lists of integers. Each list contains the indices of the equations
                 in the group.
 
-        """        
+        """
         raise NotImplementedError("This method should be implemented in the subclass.")
 
     def group_row_names(self) -> list[str] | None:
@@ -117,7 +116,7 @@ class IterativeLinearSolver:
         self.bmat = bmat
 
     def solve_linear_system(self) -> np.ndarray:
-        """ Solve the linear system using the defined iterative scheme.
+        """Solve the linear system using the defined iterative scheme.
 
         Raises:
             ValueError: If the solver construction or solve fails.
