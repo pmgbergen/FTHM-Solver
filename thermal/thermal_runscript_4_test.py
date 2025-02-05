@@ -51,6 +51,7 @@ class Geometry(pp.SolutionStrategy):
                     iterate_index=iterate_index,
                 )
         else:
+            # vals = np.load("stats_thermal_geo4hx2_sol3_bb2_fr1_endstate_1737646072866.npy")
             vals = np.load(self.params["setup"]["initial_state"])
             self.equation_system.set_variable_values(vals, time_step_index=0)
             self.equation_system.set_variable_values(vals, iterate_index=0)
@@ -86,14 +87,14 @@ class Geometry(pp.SolutionStrategy):
         fractures = [sd for sd in subdomains if sd.dim == self.nd - 1]
         lower = [sd for sd in subdomains if sd.dim <= self.nd - 2]
 
-        x, y, z = np.concatenate([sd.cell_centers for sd in ambient], axis=1)
+        x, y, z = np.concatenate([sd.cell_centers for sd in fractures], axis=1)
         source_loc = np.argmin((x - source_loc_x) ** 2 + (y - source_loc_y) ** 2)
-        src_mat = np.zeros(x.size)
-        src_mat[source_loc] = 1
+        src_frac = np.zeros(x.size)
+        src_frac[source_loc] = 1
 
-        zeros_frac = np.zeros(sum(sd.num_cells for sd in fractures))
+        zeros_ambient = np.zeros(sum(sd.num_cells for sd in ambient))
         zeros_lower = np.zeros(sum(sd.num_cells for sd in lower))
-        return np.concatenate([src_mat, zeros_frac, zeros_lower])
+        return np.concatenate([zeros_ambient, src_frac, zeros_lower])
 
     def fluid_source_mass_rate(self):
         if self.params["setup"]["steady_state"]:
@@ -129,7 +130,7 @@ class Geometry(pp.SolutionStrategy):
         )
 
     def set_fractures(self) -> None:
-        self._fractures = []
+        self._fractures = benchmark_2d_case_3(size=XMAX)
 
     def after_simulation(self):
         super().after_simulation()
@@ -166,7 +167,7 @@ def make_model(setup: dict):
 
     params = {
         "setup": setup,
-        "folder_name": "visualization_2d_nofrac",
+        "folder_name": "visualization_2d_test",
         "material_constants": {
             "solid": pp.SolidConstants(
                 # IMPORTANT
@@ -211,7 +212,7 @@ def make_model(setup: dict):
             iter_max=30,
             constant_dt=False,
         ),
-        "units": pp.Units(kg=1e10, K=1e2),
+        "units": pp.Units(kg=1e10),
         "meshing_arguments": {
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
@@ -249,32 +250,30 @@ def run_model(setup: dict):
 if __name__ == "__main__":
 
     common_params = {
-        "geometry": "nofrac",
-        "save_matrix": True,
+        "geometry": "4test",
+        "solver": 4,
     }
     for g in [
-        1,
+        # 1,
         2,
-        5,
-        25,
+        # 5,
+        # 25,
         # 33,
         # 40,
     ]:
-        for s in [3,4]:
-            print("Running steady state")
-            params = {
-                "grid_refinement": g,
-                "steady_state": True,
-                "solver": s,
-            } | common_params
-            run_model(params)
-            end_state_filename = params["end_state_filename"]
+        print("Running steady state")
+        params = {
+            "grid_refinement": g,
+            "steady_state": True,
+        } | common_params
+        run_model(params)
+        end_state_filename = params["end_state_filename"]
 
-            print("Running injection")
-            params = {
-                "grid_refinement": g,
-                "steady_state": False,
-                "initial_state": end_state_filename,
-                "solver": s,
-            } | common_params
-            run_model(params)
+        print("Running injection")
+        params = {
+            "grid_refinement": g,
+            "steady_state": False,
+            "initial_state": end_state_filename,
+            'save_matrix': True,
+        } | common_params
+        run_model(params)

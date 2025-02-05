@@ -865,6 +865,7 @@ def solve_petsc_3(
     logx_eigs=False,
     normalize_residual=False,
     ksp_view: bool = False,
+    options_view: bool = False,
     return_data: bool = False,
 ):
     if rhs_global is None:
@@ -873,12 +874,12 @@ def solve_petsc_3(
 
     t0 = time.time()
     krylov = ksp_scheme.make_solver(bmat)
+    if options_view:
+        for k, v in ksp_scheme.options.items():
+            print(k, v)
     print("Construction took:", round(time.time() - t0, 2))
 
     rhs_local = bmat.project_rhs_to_local(rhs_global)
-
-    if ksp_view:
-        krylov.ksp.view()
 
     t0 = time.time()
     sol_local = krylov.solve(rhs_local)
@@ -938,6 +939,9 @@ def solve_petsc_3(
         ax.set_title("Eigenvalues estimate")
     if label != "":
         ax.legend()
+
+    if ksp_view:
+        krylov.ksp.view()
 
     if return_data:
         return krylov

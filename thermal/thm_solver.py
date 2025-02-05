@@ -5,7 +5,7 @@ from block_matrix import (
     KSPScheme,
     MultiStageScheme,
 )
-from fixed_stress import make_fs_analytical_slow_new
+from fixed_stress import make_fs_analytical_slow_new, make_fs_thermal
 from full_petsc_solver import (
     LinearTransformedScheme,
     PetscCPRScheme,
@@ -354,6 +354,85 @@ class THMSolver(IterativeHMSolver):
                                         bmat,
                                         p_mat_group=5,
                                         p_frac_group=6,
+                                        groups=flow + temp,
+                                    ).mat,
+                                    bsize=1,
+                                ),
+                                complement=PetscCPRScheme(
+                                    groups=flow + temp,
+                                    pressure_groups=flow,
+                                    pressure_options={
+                                        "ksp_type": "preonly",
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                    },
+                                    others_options={
+                                        "ksp_type": "preonly",
+                                        "pc_type": "none",
+                                    },
+                                    cpr_options={
+                                        'pc_composite_pcs': 'fieldsplit,ilu',
+                                    },
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        
+        elif solver_type == 4:
+            contact = [0]
+            intf = [1, 2]
+            mech = [3, 4]
+            flow = [5, 6, 7]
+            temp = [8, 9, 10]
+            return LinearTransformedScheme(
+                right_transformations=[
+                    lambda bmat: self.Qright(contact_group=0, u_intf_group=4)
+                ],
+                inner=PetscKSPScheme(
+                    petsc_options={
+                        # 'ksp_type': 'fgmres',
+                        # "ksp_monitor": None,
+                    },
+                    preconditioner=PetscFieldSplitScheme(
+                        groups=contact,
+                        block_size=self.nd,
+                        fieldsplit_options={
+                            "pc_fieldsplit_schur_precondition": "selfp",
+                        },
+                        subsolver_options={
+                            "pc_type": "pbjacobi",
+                        },
+                        tmp_options={
+                            "mat_schur_complement_ainv_type": "blockdiag",
+                        },
+                        complement=PetscFieldSplitScheme(
+                            groups=intf,
+                            subsolver_options={
+                                "pc_type": "ilu",
+                            },
+                            fieldsplit_options={
+                                "pc_fieldsplit_schur_precondition": "selfp",
+                            },
+                            complement=PetscFieldSplitScheme(
+                                groups=mech,
+                                subsolver_options={
+                                    "pc_type": "hypre",
+                                    "pc_hypre_type": "boomeramg",
+                                    "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    # not sure:
+                                    "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                },
+                                block_size=self.nd,
+                                invert=lambda bmat: csr_to_petsc(
+                                    make_fs_thermal(
+                                        self,
+                                        bmat,
+                                        p_mat_group=5,
+                                        p_frac_group=6,
+                                        t_mat_group=8,
+                                        t_frac_group=9,
                                         groups=flow + temp,
                                     ).mat,
                                     bsize=1,
