@@ -80,7 +80,7 @@ class Geometry(pp.SolutionStrategy):
         return bc_values.ravel("F")
 
     def locate_source(self, subdomains):
-        source_loc_x = XMAX * 0.9
+        source_loc_x = XMAX * 0.5
         source_loc_y = YMAX * 0.5
         ambient = [sd for sd in subdomains if sd.dim == self.nd]
         fractures = [sd for sd in subdomains if sd.dim == self.nd - 1]
@@ -185,7 +185,7 @@ def make_model(setup: dict):
                 # Thermal
                 specific_heat_capacity=720.7,
                 thermal_conductivity=0.1,  # Diffusion coefficient
-                thermal_expansion=9.66e-6,
+                thermal_expansion=9.66e-6 * 1e2,
             ),
             "fluid": pp.FluidComponent(
                 compressibility=4.559 * 1e-10,  # [Pa^-1], fluid compressibility
@@ -211,7 +211,7 @@ def make_model(setup: dict):
             iter_max=30,
             constant_dt=False,
         ),
-        "units": pp.Units(kg=1e10, K=1e2),
+        "units": pp.Units(kg=1e10),
         "meshing_arguments": {
             "cell_size": (0.1 * XMAX / cell_size_multiplier),
         },
@@ -250,14 +250,14 @@ if __name__ == "__main__":
 
     common_params = {
         "geometry": "nofrac",
-        "save_matrix": True,
+        "save_matrix": False,
     }
     for g in [
-        1,
-        2,
-        5,
+        # 1,
+        # 2,
+        # 5,
         25,
-        # 33,
+        33,
         # 40,
     ]:
         for s in [3,4]:

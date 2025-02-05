@@ -929,7 +929,7 @@ def solve_petsc_3(
     ax = plt.subplot(1, 2, 2)
     if eigs is not None and logx_eigs:
         eigs.real = abs(eigs.real)
-    if eigs:
+    if eigs is not None:
         ax.scatter(eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS))
         ax.set_xlabel(r"Re($\lambda)$")
         ax.set_ylabel(r"Im($\lambda$)")

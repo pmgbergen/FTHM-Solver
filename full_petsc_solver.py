@@ -150,6 +150,7 @@ class PetscFieldSplitScheme:
 class PetscKSPScheme:
     preconditioner: Optional[PetscFieldSplitScheme] = None
     petsc_options: Optional[dict] = None
+    compute_eigenvalues: bool = False
 
     def get_groups(self) -> list[int]:
         return self.preconditioner.get_groups()
@@ -177,6 +178,8 @@ class PetscKSPScheme:
                 bmat=mat_orig,
                 petsc_pc=petsc_pc,
             )
+        if self.compute_eigenvalues:
+            petsc_ksp.setComputeEigenvalues(True)
         petsc_ksp.setUp()
         self.options = options
         return PetscKrylovSolver(petsc_ksp)
