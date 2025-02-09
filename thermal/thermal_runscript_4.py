@@ -167,6 +167,7 @@ def make_model(setup: dict):
 
     params = {
         "setup": setup,
+        "folder_name": "visualization_2d",
         "material_constants": {
             "solid": pp.SolidConstants(
                 # IMPORTANT
@@ -254,10 +255,10 @@ if __name__ == "__main__":
         "save_matrix": False,
     }
     for g in [
-        # 1,
-        # 2,
-        # 5,
-        # 25,
+        1,
+        2,
+        5,
+        25,
         33,
         40,
     ]:

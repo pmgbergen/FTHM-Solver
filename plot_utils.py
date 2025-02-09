@@ -352,6 +352,14 @@ def get_time_steps(x: Sequence[TimeStepStats]) -> list[float]:
     return result
 
 
+def get_ls_indices(x: Sequence[TimeStepStats]) -> list[int]:
+    result = []
+    for i, ts in enumerate(x):
+        for _ in ts.linear_solves:
+            result.append(i)
+    return result
+
+
 def get_jacobian_cond(data: Sequence[TimeStepStats]):
     res = []
     for i in range(sum(len(x.linear_solves) for x in data)):
@@ -460,6 +468,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         -3: "C3",
         -4: "C4",
         -100: "black",
+        -11: 'black',
     }
 
     reasons_explained = {
@@ -469,6 +478,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         2: "Converged reltol",
         3: "Converged abstol",
         -100: "No data",
+        -11: 'PC failed',
         -4: "Diverged dtol",
     }
 

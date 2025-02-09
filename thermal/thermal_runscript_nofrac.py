@@ -185,7 +185,7 @@ def make_model(setup: dict):
                 # Thermal
                 specific_heat_capacity=720.7,
                 thermal_conductivity=0.1,  # Diffusion coefficient
-                thermal_expansion=9.66e-6 * 1e2,
+                thermal_expansion=9.66e-6,
             ),
             "fluid": pp.FluidComponent(
                 compressibility=4.559 * 1e-10,  # [Pa^-1], fluid compressibility
@@ -252,15 +252,15 @@ if __name__ == "__main__":
         "geometry": "nofrac",
         "save_matrix": False,
     }
-    for g in [
-        # 1,
-        # 2,
-        # 5,
+    for g in reversed([
+        1,
+        2,
+        5,
         25,
         33,
-        # 40,
-    ]:
-        for s in [3,4]:
+        40,
+    ]):
+        for s in [3]:
             print("Running steady state")
             params = {
                 "grid_refinement": g,

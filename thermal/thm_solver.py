@@ -315,7 +315,7 @@ class THMSolver(IterativeHMSolver):
                 ],
                 inner=PetscKSPScheme(
                     petsc_options={
-                        # 'ksp_type': 'fgmres',
+                        "ksp_type": "fgmres",
                         # "ksp_monitor": None,
                     },
                     preconditioner=PetscFieldSplitScheme(
@@ -340,19 +340,39 @@ class THMSolver(IterativeHMSolver):
                             },
                             complement=PetscFieldSplitScheme(
                                 groups=mech,
-                                subsolver_options={
-                                    # "pc_type": "hypre",
-                                    # "pc_hypre_type": "boomeramg",
-                                    # "pc_hypre_boomeramg_strong_threshold": 0.7,
-                                    # # not sure:
-                                    # "pc_hypre_boomeramg_smooth_type": "Euclid",
-                                    "pc_type": "hypre",
-                                    "pc_hypre_type": "boomeramg",
-                                    "pc_hypre_boomeramg_strong_threshold": 0.6,
-                                    # not sure:
-                                    "pc_hypre_boomeramg_P_max": 1,
-                                    'pc_hypre_boomeramg_max_iter': 1,
-                                    'pc_hypre_boomeramg_cycle_type': 'W',
+                                subsolver_options=(
+                                    {
+                                        "ksp_type": "gmres",
+                                        "ksp_rtol": 1e-2,
+                                        "ksp_pc_side": "right",
+                                        "ksp_monitor": None,
+                                        # # old
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                        "pc_hypre_boomeramg_smooth_type": "Euclid",
+
+                                    }
+                                    if self.nd == 3
+                                    else {
+                                        "ksp_type": "gmres",
+                                        "ksp_rtol": 1e-2,
+                                        "ksp_pc_side": "right",
+                                        "ksp_monitor": None,
+                                        # old
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_strong_threshold": 0.6,
+                                        "pc_hypre_boomeramg_P_max": 1,
+                                        "pc_hypre_boomeramg_max_iter": 1,
+                                        "pc_hypre_boomeramg_cycle_type": "W",
+                                    }
+                                ),
+                                tmp_options={
+                                    # "ksp_type": "gmres",
+                                    # "ksp_rtol": 1e-3,
+                                    # "ksp_pc_side": "right",
+                                    # "ksp_monitor": None,
                                 },
                                 block_size=self.nd,
                                 invert=lambda bmat: csr_to_petsc(
@@ -378,7 +398,14 @@ class THMSolver(IterativeHMSolver):
                                         "pc_type": "none",
                                     },
                                     cpr_options={
-                                        'pc_composite_pcs': 'fieldsplit,ilu',
+                                        # "pc_composite_pcs": "fieldsplit,ilu",
+                                        "pc_composite_pcs": "fieldsplit,ksp",
+                                        'sub_1_ksp_ksp_pc_side': 'right',
+                                        'sub_1_ksp_ksp_rtol': 1e-2,
+                                        'sub_1_ksp_pc_type': 'hypre',
+                                        'sub_1_ksp_pc_hypre_type': "Euclid",
+                                        'sub_1_ksp_ksp_monitor': None,
+                                        'sub_1_ksp_ksp_max_it': 120,
                                     },
                                 ),
                             ),
@@ -386,7 +413,7 @@ class THMSolver(IterativeHMSolver):
                     ),
                 ),
             )
-        
+
         elif solver_type == 4:
             contact = [0]
             intf = [1, 2]
@@ -435,8 +462,8 @@ class THMSolver(IterativeHMSolver):
                                     "pc_hypre_boomeramg_strong_threshold": 0.6,
                                     # not sure:
                                     "pc_hypre_boomeramg_P_max": 1,
-                                    'pc_hypre_boomeramg_max_iter': 1, 
-                                    'pc_hypre_boomeramg_cycle_type': 'W',
+                                    "pc_hypre_boomeramg_max_iter": 1,
+                                    "pc_hypre_boomeramg_cycle_type": "W",
                                 },
                                 block_size=self.nd,
                                 invert=lambda bmat: csr_to_petsc(
@@ -464,7 +491,7 @@ class THMSolver(IterativeHMSolver):
                                         "pc_type": "none",
                                     },
                                     cpr_options={
-                                        'pc_composite_pcs': 'fieldsplit,ilu',
+                                        "pc_composite_pcs": "fieldsplit,ilu",
                                     },
                                 ),
                             ),

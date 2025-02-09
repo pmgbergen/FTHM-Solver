@@ -125,7 +125,8 @@ class PetscFieldSplitScheme:
 
         petsc_pc.setUp()
 
-        petsc_pc_keep = petsc_pc.getFieldSplitSubKSP()[1].getPC()
+        petsc_ksp_keep = petsc_pc.getFieldSplitSubKSP()[1]
+        petsc_pc_keep = petsc_ksp_keep.getPC()
 
         # if scheme.pcmat is not None:
         #     Ainv = scheme.pcmat(None)
@@ -143,6 +144,9 @@ class PetscFieldSplitScheme:
             prefix=f"{prefix}fieldsplit_{keep_tag}_",
             petsc_pc=petsc_pc_keep,
         )
+        # petsc_ksp_keep.setFromOptions()
+        # petsc_ksp_keep.setUp()
+
         return options
 
 
@@ -312,7 +316,7 @@ class PetscCPRScheme:
     ) -> dict:
         bmat = bmat[self.groups]
         cpr_options = self.cpr_options or {}
-        flow_options = self.pressure_options or {}
+        flow_options = {"ksp_type": "preonly"} | (self.pressure_options or {})
         others_options = self.others_options or {}
         other_groups = [gr for gr in self.groups if gr not in self.pressure_groups]
         flow_tag = build_tag(self.pressure_groups)

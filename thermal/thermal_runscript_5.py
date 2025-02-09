@@ -343,8 +343,8 @@ if __name__ == "__main__":
         "save_matrix": False,
     }
     for g in [
-        # 1,
-        # 2,
+        1,
+        2,
         5,
         10,
         15,
