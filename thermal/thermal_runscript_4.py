@@ -256,10 +256,10 @@ if __name__ == "__main__":
     }
     for g in [
         1,
-        2,
-        5,
-        25,
-        33,
+        # 2,
+        # 5,
+        # 25,
+        # 33,
         40,
     ]:
         print("Running steady state")

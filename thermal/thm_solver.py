@@ -499,5 +499,89 @@ class THMSolver(IterativeHMSolver):
                     ),
                 ),
             )
+        
+        elif solver_type == 5:
+            contact = [0]
+            intf = [1, 2]
+            mech = [3, 4]
+            flow = [5, 6, 7]
+            temp = [8, 9, 10]
+            return LinearTransformedScheme(
+                right_transformations=[lambda bmat: self.Qright(contact_group=0, u_intf_group=4)],
+                inner=PetscKSPScheme(
+                    petsc_options={
+                        # "ksp_type": "fgmres",
+                        "ksp_monitor": None,
+                    },
+                    compute_eigenvalues=True,
+                    preconditioner=PetscFieldSplitScheme(
+                        groups=contact,
+                        block_size=self.nd,
+                        fieldsplit_options={
+                            "pc_fieldsplit_schur_precondition": "selfp",
+                        },
+                        subsolver_options={
+                            "pc_type": "pbjacobi",
+                        },
+                        tmp_options={
+                            "mat_schur_complement_ainv_type": "blockdiag",
+                        },
+                        complement=PetscFieldSplitScheme(
+                            groups=intf,
+                            subsolver_options={
+                                "pc_type": "ilu",
+                            },
+                            fieldsplit_options={
+                                "pc_fieldsplit_schur_precondition": "selfp",
+                            },
+                            complement=PetscFieldSplitScheme(
+                                groups=mech,
+                                subsolver_options=(
+                                    {
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                        "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                    }
+                                ),
+                                tmp_options={
+                                },
+                                block_size=self.nd,
+                                invert=lambda bmat: csr_to_petsc(
+                                    make_fs_analytical_slow_new(
+                                        self,
+                                        bmat,
+                                        p_mat_group=5,
+                                        p_frac_group=6,
+                                        groups=flow + temp,
+                                    ).mat,
+                                    bsize=1,
+                                ),
+                                complement=PetscCPRScheme(
+                                    groups=flow + temp,
+                                    pressure_groups=flow,
+                                    pressure_options={
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                        "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                    },
+                                    others_options={
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    },
+                                    cpr_options={
+                                        "pc_composite_pcs": "fieldsplit,ksp",
+                                        "sub_1_ksp_ksp_type": "preonly",
+                                        "sub_1_ksp_pc_type": "hypre",
+                                        "sub_1_ksp_pc_hypre_type": "Euclid",
+                                    },
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
 
         raise ValueError(f"{solver_type}")

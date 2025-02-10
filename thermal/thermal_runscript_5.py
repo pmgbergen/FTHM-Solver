@@ -339,7 +339,7 @@ if __name__ == "__main__":
 
     common_params = {
         "geometry": "5",
-        "solver": 3,
+        "solver": 5,
         "save_matrix": False,
     }
     for g in [

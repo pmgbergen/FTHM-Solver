@@ -200,12 +200,7 @@ def run_model(setup: dict):
 
 if __name__ == "__main__":
 
-    # for s in [
-    #     1,
-    #     # 1.1,
-    #     # 1.2,
-    # ]:
-    for g in [1, 2, 5, 25, 33, 40]:
+    for g in reversed([1, 2, 5, 25, 33, 40]):
         run_model(
             {
                 "physics": 1,
