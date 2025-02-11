@@ -1,60 +1,16 @@
 import porepy as pp
 import numpy as np
 import time
-from thermal.models import (
-    Physics,
-    ConstraintLineSearchNonlinearSolver,
-    get_barton_bandis_config,
-    get_friction_coef_config,
-)
+from thermal.models import Physics, ConstraintLineSearchNonlinearSolver
 from thermal.thm_solver import THMSolver
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
-from porepy.applications.md_grids.fracture_sets import benchmark_2d_case_3
 
 XMAX = 1000
 YMAX = 1000
 
 
 class Geometry(pp.SolutionStrategy):
-    def initial_condition(self) -> None:
-        super().initial_condition()
-        if self.params["setup"]["steady_state"]:
-            num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
-            val = self.reference_variable_values.pressure * np.ones(num_cells)
-            for time_step_index in self.time_step_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.pressure_variable],
-                    time_step_index=time_step_index,
-                )
-
-            for iterate_index in self.iterate_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.pressure_variable],
-                    iterate_index=iterate_index,
-                )
-
-            val = self.reference_variable_values.temperature * np.ones(num_cells)
-            for time_step_index in self.time_step_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.temperature_variable],
-                    time_step_index=time_step_index,
-                )
-
-            for iterate_index in self.iterate_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.temperature_variable],
-                    iterate_index=iterate_index,
-                )
-        else:
-            vals = np.load(self.params["setup"]["initial_state"])
-            self.equation_system.set_variable_values(vals, time_step_index=0)
-            self.equation_system.set_variable_values(vals, iterate_index=0)
-
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
         bc = pp.BoundaryCondition(sd, sides.all_bf, "dir")
@@ -252,15 +208,17 @@ if __name__ == "__main__":
         "geometry": "nofrac",
         "save_matrix": False,
     }
-    for g in reversed([
-        1,
-        2,
-        5,
-        25,
-        33,
-        40,
-    ]):
-        for s in [3]:
+    for g in reversed(
+        [
+            1,
+            2,
+            5,
+            25,
+            33,
+            40,
+        ]
+    ):
+        for s in [5]:
             print("Running steady state")
             params = {
                 "grid_refinement": g,

@@ -42,10 +42,9 @@ class PetscFieldSplitScheme:
     fieldsplit_options: dict = None
     tmp_options: dict = None
     block_size: int = 1
-    # experimental
-    pcmat: Callable[[PETSc.Mat], PETSc.Mat] = None
     invert: Callable[[PETSc.Mat], PETSc.Mat] = None
-    tmp: PETSc.Mat = None
+    # experimental
+    python_pc: PETSc.PC = None
 
     def get_groups(self) -> list[int]:
         groups = [g for g in self.groups]
@@ -73,6 +72,14 @@ class PetscFieldSplitScheme:
                 | {f"{prefix}{k}": v for k, v in subsolver_options.items()}
                 | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
             )
+
+            if self.python_pc is not None:
+                options[f'{prefix}pc_type'] = 'python'
+                python_pc = self.python_pc(bmat)
+                python_pc.petsc_pc.setOptionsPrefix(f'{prefix}python_')
+                petsc_pc.setType('python')
+                petsc_pc.setPythonContext(python_pc)
+
             insert_petsc_options(options)
             petsc_pc.setFromOptions()
             petsc_pc.setUp()
@@ -86,8 +93,6 @@ class PetscFieldSplitScheme:
         petsc_is_elim = construct_is(empty_bmat, elim)
         petsc_is_elim.setBlockSize(self.block_size)
 
-        # if scheme.pcmat is not None:
-        #     subsolver_options["pc_type"] = "mat"
 
         if self.invert is not None:
             fieldsplit_options["pc_fieldsplit_schur_precondition"] = "user"
@@ -110,7 +115,6 @@ class PetscFieldSplitScheme:
             | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
         )
 
-        # options['fieldsplit_3_mat_schur_complement_ainv_type'] = 'blockdiag'
 
         insert_petsc_options(options)
         petsc_pc.setFromOptions()
@@ -128,24 +132,11 @@ class PetscFieldSplitScheme:
         petsc_ksp_keep = petsc_pc.getFieldSplitSubKSP()[1]
         petsc_pc_keep = petsc_ksp_keep.getPC()
 
-        # if scheme.pcmat is not None:
-        #     Ainv = scheme.pcmat(None)
-        #     petsc_pc_elim.setOperators(Ainv, Ainv)
-        #     S = scheme.tmp
-        #     petsc_pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
-
-        # should we delete the old matrices ???
-
-        # petsc_pc_keep.setUp()
-        # petsc_pc_elim.setUp()
-
         options |= self.complement.configure(
             bmat,
             prefix=f"{prefix}fieldsplit_{keep_tag}_",
             petsc_pc=petsc_pc_keep,
         )
-        # petsc_ksp_keep.setFromOptions()
-        # petsc_ksp_keep.setUp()
 
         return options
 
@@ -348,3 +339,43 @@ class PetscCPRScheme:
         petsc_pc.setUp()
         fieldsplit.setUp()
         return options
+
+
+class PcPythonPermutation:
+
+    def __init__(self, perm: np.ndarray, block_size: int):
+        self.petsc_pc = PETSc.PC().create()
+        self.petsc_is_perm = PETSc.IS().createGeneral(perm.astype(np.int32))
+        self.P_perm = PETSc.Mat()
+        self.b = PETSc.Vec().create()
+        self.bs = block_size
+        self.b.setSizes(perm.size)
+        self.b.setUp()
+
+    def __del__(self):
+        self.petsc_pc.destroy()
+        self.petsc_is_perm.destroy()
+        self.b.destroy()
+
+    def view(self, pc: PETSc.PC, viewer: PETSc.Viewer) -> None:
+        self.petsc_pc.view(viewer)
+
+    def setFromOptions(self, pc: PETSc.PC) -> None:
+        self.petsc_pc.setFromOptions()
+
+    def setUp(self, pc: PETSc.PC) -> None:
+        _, P = pc.getOperators()
+        self.P_perm = P.permute(self.petsc_is_perm, self.petsc_is_perm)
+        self.P_perm.setBlockSize(self.bs)
+        self.petsc_pc.setOperators(self.P_perm, self.P_perm)
+        self.petsc_pc.setUp()
+
+    def reset(self, pc: PETSc.PC) -> None:
+        self.petsc_pc.reset()
+        self.P_perm.destroy()
+
+    def apply(self, pc: PETSc.PC, b: PETSc.Vec, x: PETSc.Vec) -> None:
+        b.copy(self.b)
+        self.b.permute(self.petsc_is_perm)
+        self.petsc_pc.apply(self.b, x)
+        x.permute(self.petsc_is_perm, invert=True)

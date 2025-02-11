@@ -404,6 +404,18 @@ def get_sticking_sliding_open(x: Sequence[TimeStepStats], idx: int):
     return get_sticking(x, idx), get_sliding(x, idx), get_open(x, idx)
 
 
+def get_cfl(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.cfl for ts in x for ls in ts.linear_solves]
+
+
+def get_peclet_max(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.peclet_max for ts in x for ls in ts.linear_solves]
+
+
+def get_peclet_mean(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.peclet_mean for ts in x for ls in ts.linear_solves]
+
+
 def group_intervals(arr):
     diffs = np.diff(arr)
     change_positions = np.where(diffs != 0)[0] + 1
@@ -468,7 +480,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         -3: "C3",
         -4: "C4",
         -100: "black",
-        -11: 'black',
+        -11: "black",
     }
 
     reasons_explained = {
@@ -478,7 +490,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         2: "Converged reltol",
         3: "Converged abstol",
         -100: "No data",
-        -11: 'PC failed',
+        -11: "PC failed",
         -4: "Diverged dtol",
     }
 
@@ -903,7 +915,7 @@ def solve_petsc_3(
     )
 
     print("PETSc Converged Reason:", info)
-    
+
     linestyle = "-"
     try:
         eigs = krylov.ksp.computeEigenvalues()
@@ -940,7 +952,9 @@ def solve_petsc_3(
     if eigs is not None and logx_eigs:
         eigs.real = abs(eigs.real)
     if eigs is not None:
-        ax.scatter(eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS))
+        ax.scatter(
+            eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS)
+        )
         ax.set_xlabel(r"Re($\lambda)$")
         ax.set_ylabel(r"Im($\lambda$)")
         ax.grid(True)

@@ -34,6 +34,9 @@ class LinearSolveStats:
     # Thermal
     temp_min: float = -1
     temp_max: float = -1
+    cfl: float = -1
+    peclet_max: float = -1
+    peclet_mean: float = -1
 
 
 @dataclass

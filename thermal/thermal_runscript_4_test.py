@@ -17,45 +17,6 @@ YMAX = 1000
 
 
 class Geometry(pp.SolutionStrategy):
-    def initial_condition(self) -> None:
-        super().initial_condition()
-        if self.params["setup"]["steady_state"]:
-            num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
-            val = self.reference_variable_values.pressure * np.ones(num_cells)
-            for time_step_index in self.time_step_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.pressure_variable],
-                    time_step_index=time_step_index,
-                )
-
-            for iterate_index in self.iterate_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.pressure_variable],
-                    iterate_index=iterate_index,
-                )
-
-            val = self.reference_variable_values.temperature * np.ones(num_cells)
-            for time_step_index in self.time_step_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.temperature_variable],
-                    time_step_index=time_step_index,
-                )
-
-            for iterate_index in self.iterate_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.temperature_variable],
-                    iterate_index=iterate_index,
-                )
-        else:
-            # vals = np.load("stats_thermal_geo4hx2_sol3_bb2_fr1_endstate_1737646072866.npy")
-            vals = np.load(self.params["setup"]["initial_state"])
-            self.equation_system.set_variable_values(vals, time_step_index=0)
-            self.equation_system.set_variable_values(vals, iterate_index=0)
-
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
         bc = pp.BoundaryCondition(sd, sides.all_bf, "dir")

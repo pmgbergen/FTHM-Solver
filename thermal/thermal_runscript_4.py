@@ -1,12 +1,7 @@
 import porepy as pp
 import numpy as np
 import time
-from thermal.models import (
-    Physics,
-    ConstraintLineSearchNonlinearSolver,
-    get_barton_bandis_config,
-    get_friction_coef_config,
-)
+from thermal.models import Physics, ConstraintLineSearchNonlinearSolver
 from thermal.thm_solver import THMSolver
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
@@ -251,15 +246,15 @@ if __name__ == "__main__":
 
     common_params = {
         "geometry": "4h_steady",
-        "solver": 3,
+        "solver": 5,
         "save_matrix": False,
     }
     for g in [
         1,
-        # 2,
-        # 5,
-        # 25,
-        # 33,
+        2,
+        5,
+        25,
+        33,
         40,
     ]:
         print("Running steady state")

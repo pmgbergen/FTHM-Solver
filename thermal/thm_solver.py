@@ -389,9 +389,10 @@ class THMSolver(IterativeHMSolver):
                                     groups=flow + temp,
                                     pressure_groups=flow,
                                     pressure_options={
-                                        "ksp_type": "preonly",
                                         "pc_type": "hypre",
                                         "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                        "pc_hypre_boomeramg_smooth_type": "Euclid",
                                     },
                                     others_options={
                                         "ksp_type": "preonly",
