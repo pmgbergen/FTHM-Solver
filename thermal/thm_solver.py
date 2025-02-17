@@ -5,10 +5,13 @@ from block_matrix import (
     KSPScheme,
     MultiStageScheme,
 )
+import numpy as np
 from fixed_stress import make_fs_analytical_slow_new, make_fs_thermal
 from full_petsc_solver import (
     LinearTransformedScheme,
+    PcPythonPermutation,
     PetscCPRScheme,
+    PetscCompositeScheme,
     PetscFieldSplitScheme,
     PetscKSPScheme,
 )
@@ -351,7 +354,6 @@ class THMSolver(IterativeHMSolver):
                                         "pc_hypre_type": "boomeramg",
                                         "pc_hypre_boomeramg_strong_threshold": 0.7,
                                         "pc_hypre_boomeramg_smooth_type": "Euclid",
-
                                     }
                                     if self.nd == 3
                                     else {
@@ -401,12 +403,12 @@ class THMSolver(IterativeHMSolver):
                                     cpr_options={
                                         # "pc_composite_pcs": "fieldsplit,ilu",
                                         "pc_composite_pcs": "fieldsplit,ksp",
-                                        'sub_1_ksp_ksp_pc_side': 'right',
-                                        'sub_1_ksp_ksp_rtol': 1e-2,
-                                        'sub_1_ksp_pc_type': 'hypre',
-                                        'sub_1_ksp_pc_hypre_type': "Euclid",
-                                        'sub_1_ksp_ksp_monitor': None,
-                                        'sub_1_ksp_ksp_max_it': 120,
+                                        "sub_1_ksp_ksp_pc_side": "right",
+                                        "sub_1_ksp_ksp_rtol": 1e-2,
+                                        "sub_1_ksp_pc_type": "hypre",
+                                        "sub_1_ksp_pc_hypre_type": "Euclid",
+                                        "sub_1_ksp_ksp_monitor": None,
+                                        "sub_1_ksp_ksp_max_it": 120,
                                     },
                                 ),
                             ),
@@ -500,7 +502,7 @@ class THMSolver(IterativeHMSolver):
                     ),
                 ),
             )
-        
+
         elif solver_type == 5:
             contact = [0]
             intf = [1, 2]
@@ -508,7 +510,9 @@ class THMSolver(IterativeHMSolver):
             flow = [5, 6, 7]
             temp = [8, 9, 10]
             return LinearTransformedScheme(
-                right_transformations=[lambda bmat: self.Qright(contact_group=0, u_intf_group=4)],
+                right_transformations=[
+                    lambda bmat: self.Qright(contact_group=0, u_intf_group=4)
+                ],
                 inner=PetscKSPScheme(
                     petsc_options={
                         # "ksp_type": "fgmres",
@@ -545,8 +549,7 @@ class THMSolver(IterativeHMSolver):
                                         "pc_hypre_boomeramg_smooth_type": "Euclid",
                                     }
                                 ),
-                                tmp_options={
-                                },
+                                tmp_options={},
                                 block_size=self.nd,
                                 invert=lambda bmat: csr_to_petsc(
                                     make_fs_analytical_slow_new(
@@ -585,4 +588,296 @@ class THMSolver(IterativeHMSolver):
                 ),
             )
 
+        elif solver_type == 6:
+            contact = [0]
+            intf = [1, 2]
+            mech = [3, 4]
+            flow = [5, 6, 7]
+            temp = [8, 9, 10]
+            return LinearTransformedScheme(
+                right_transformations=[
+                    lambda bmat: self.Qright(contact_group=0, u_intf_group=4)
+                ],
+                inner=PetscKSPScheme(
+                    petsc_options={
+                        # "ksp_type": "fgmres",
+                        "ksp_monitor": None,
+                    },
+                    compute_eigenvalues=True,
+                    preconditioner=PetscFieldSplitScheme(
+                        groups=contact,
+                        block_size=self.nd,
+                        fieldsplit_options={
+                            "pc_fieldsplit_schur_precondition": "selfp",
+                        },
+                        subsolver_options={
+                            "pc_type": "pbjacobi",
+                        },
+                        tmp_options={
+                            "mat_schur_complement_ainv_type": "blockdiag",
+                        },
+                        complement=PetscFieldSplitScheme(
+                            groups=intf,
+                            subsolver_options={
+                                "pc_type": "ilu",
+                            },
+                            fieldsplit_options={
+                                "pc_fieldsplit_schur_precondition": "selfp",
+                            },
+                            complement=PetscFieldSplitScheme(
+                                groups=mech,
+                                subsolver_options=(
+                                    {
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                        "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                    }
+                                ),
+                                tmp_options={},
+                                block_size=self.nd,
+                                invert=lambda bmat: csr_to_petsc(
+                                    make_fs_analytical_slow_new(
+                                        self,
+                                        bmat,
+                                        p_mat_group=5,
+                                        p_frac_group=6,
+                                        groups=flow + temp,
+                                    ).mat,
+                                    bsize=1,
+                                ),
+                                complement=PetscCompositeScheme(
+                                    groups=flow + temp,
+                                    solvers=[
+                                        PetscFieldSplitScheme(
+                                            groups=flow,
+                                            fieldsplit_options={
+                                                "pc_fieldsplit_type": "additive",
+                                            },
+                                            subsolver_options={
+                                                "pc_type": "hypre",
+                                                "pc_hypre_type": "boomeramg",
+                                                "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                                "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                            },
+                                            complement=PetscFieldSplitScheme(
+                                                groups=temp,
+                                                subsolver_options={
+                                                    "pc_type": "none",
+                                                },
+                                            ),
+                                        ),
+                                        PetscFieldSplitScheme(
+                                            groups=flow + temp,
+                                            python_pc=lambda bmat: PcPythonPermutation(
+                                                make_pt_permutation(bmat), block_size=2
+                                            ),
+                                            subsolver_options={
+                                                "python_pc_type": "hypre",
+                                                "python_pc_hypre_type": "euclid",
+                                                "python_pc_hypre_euclid_bj": True,
+                                            },
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+        elif solver_type == 7:
+            contact = [0]
+            intf = [1, 2]
+            mech = [3, 4]
+            flow = [5, 6, 7]
+            temp = [8, 9, 10]
+            return LinearTransformedScheme(
+                right_transformations=[
+                    lambda bmat: self.Qright(contact_group=0, u_intf_group=4)
+                ],
+                inner=PetscKSPScheme(
+                    petsc_options={
+                        # "ksp_type": "fgmres",
+                        "ksp_monitor": None,
+                    },
+                    compute_eigenvalues=True,
+                    preconditioner=PetscFieldSplitScheme(
+                        groups=contact,
+                        block_size=self.nd,
+                        fieldsplit_options={
+                            "pc_fieldsplit_schur_precondition": "selfp",
+                        },
+                        subsolver_options={
+                            "pc_type": "pbjacobi",
+                        },
+                        tmp_options={
+                            "mat_schur_complement_ainv_type": "blockdiag",
+                        },
+                        complement=PetscFieldSplitScheme(
+                            groups=intf,
+                            subsolver_options={
+                                "pc_type": "ilu",
+                            },
+                            fieldsplit_options={
+                                "pc_fieldsplit_schur_precondition": "selfp",
+                            },
+                            complement=PetscFieldSplitScheme(
+                                groups=mech,
+                                subsolver_options=(
+                                    {
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                        "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                    }
+                                ),
+                                tmp_options={},
+                                block_size=self.nd,
+                                invert=lambda bmat: csr_to_petsc(
+                                    make_fs_analytical_slow_new(
+                                        self,
+                                        bmat,
+                                        p_mat_group=5,
+                                        p_frac_group=6,
+                                        groups=flow + temp,
+                                    ).mat,
+                                    bsize=1,
+                                ),
+                                complement=PetscCompositeScheme(
+                                    groups=flow + temp,
+                                    solvers=[
+                                        PetscFieldSplitScheme(
+                                            groups=flow,
+                                            fieldsplit_options={
+                                                "pc_fieldsplit_type": "additive",
+                                            },
+                                            subsolver_options={
+                                                "pc_type": "hypre",
+                                                "pc_hypre_type": "boomeramg",
+                                                "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                                "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                            },
+                                            complement=PetscFieldSplitScheme(
+                                                groups=temp,
+                                                subsolver_options={
+                                                    "pc_type": "none",
+                                                },
+                                            ),
+                                        ),
+                                        PetscFieldSplitScheme(
+                                            groups=flow + temp,
+                                            # python_pc=lambda bmat: PcPythonPermutation(
+                                            #     make_pt_permutation(bmat), block_size=2
+                                            # ),
+                                            subsolver_options={
+                                                "pc_type": "hypre",
+                                                "pc_hypre_type": "euclid",
+                                                "pc_hypre_euclid_bj": True,
+                                            },
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        elif solver_type == 8:
+            contact = [0]
+            intf = [1, 2]
+            mech = [3, 4]
+            flow = [5, 6, 7]
+            temp = [8, 9, 10]
+            return LinearTransformedScheme(
+                right_transformations=[
+                    lambda bmat: self.Qright(contact_group=0, u_intf_group=4)
+                ],
+                inner=PetscKSPScheme(
+                    petsc_options={
+                        # "ksp_type": "fgmres",
+                        "ksp_monitor": None,
+                    },
+                    compute_eigenvalues=True,
+                    preconditioner=PetscFieldSplitScheme(
+                        groups=contact,
+                        block_size=self.nd,
+                        fieldsplit_options={
+                            "pc_fieldsplit_schur_precondition": "selfp",
+                        },
+                        subsolver_options={
+                            "pc_type": "pbjacobi",
+                        },
+                        tmp_options={
+                            "mat_schur_complement_ainv_type": "blockdiag",
+                        },
+                        complement=PetscFieldSplitScheme(
+                            groups=intf,
+                            subsolver_options={
+                                "pc_type": "ilu",
+                            },
+                            fieldsplit_options={
+                                "pc_fieldsplit_schur_precondition": "selfp",
+                            },
+                            complement=PetscFieldSplitScheme(
+                                groups=mech,
+                                subsolver_options=(
+                                    {
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                        "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                    }
+                                ),
+                                tmp_options={},
+                                block_size=self.nd,
+                                invert=lambda bmat: csr_to_petsc(
+                                    make_fs_analytical_slow_new(
+                                        self,
+                                        bmat,
+                                        p_mat_group=5,
+                                        p_frac_group=6,
+                                        groups=flow + temp,
+                                    ).mat,
+                                    bsize=1,
+                                ),
+                                complement=PetscFieldSplitScheme(
+                                    groups=flow + temp,
+                                    python_pc=lambda bmat: PcPythonPermutation(
+                                        make_pt_permutation(bmat), block_size=2
+                                    ),
+                                    subsolver_options={
+                                        "python_pc_type": "hypre",
+                                        "python_pc_hypre_type": "boomeramg",
+                                        "python_pc_hypre_boomeramg_nodal_coarsen": 1,
+                                        "python_pc_hypre_boomeramg_vec_interp_variant": 1,
+                                        "python_pc_hypre_boomeramg_strong_threshold": 0.7,
+                                        "python_pc_hypre_boomeramg_smooth_type": "Euclid",
+                                    },
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
         raise ValueError(f"{solver_type}")
+
+
+def get_dofs_of_groups(
+    groups_to_block: list[list[int]], dofs: list[np.ndarray], groups: list[int]
+) -> np.ndarray:
+    blocks = [blk for g in groups for blk in groups_to_block[g]]
+    return np.array([dofs[blk] for blk in blocks])
+
+
+def make_pt_permutation(J: BlockMatrixStorage):
+    t_groups = [8, 9, 10]
+    p_groups = [5, 6, 7]
+    J = J[p_groups + t_groups]
+    t_dofs = get_dofs_of_groups(
+        groups_to_block=J.groups_to_blocks_row, dofs=J.local_dofs_row, groups=t_groups
+    )
+    p_dofs = get_dofs_of_groups(
+        groups_to_block=J.groups_to_blocks_row, dofs=J.local_dofs_row, groups=p_groups
+    )
+    return np.row_stack([p_dofs, t_dofs]).ravel("F")

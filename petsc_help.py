@@ -5,7 +5,8 @@ import numpy as np
 
 
 # args = '-help'
-args = '-pc_type hypre -pc_hypre_type euclid -help'
+# args = '-pc_type hypre -pc_hypre_type pilut -help'
+args = '-ksp_view -pc_type hypre -pc_hypre_type boomeramg'
 # args = '-pc_type bjacobi -sub_pc_type ilu -sub_pc_factor_levels 0 -sub_ksp_type preonly'
 # args = '-pc_type gamg -pc_gamg_threshold 0.01 -mg_levels_ksp_max_it 5 -pc_gamg_agg_nsmooths 1'
 
@@ -30,4 +31,4 @@ petsc_mat = PETSc.Mat().createAIJ(
 ksp.setFromOptions()
 ksp.setOperators(petsc_mat)
 ksp.setUp()
-# ksp.view()
+ksp.view()

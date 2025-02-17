@@ -214,11 +214,11 @@ if __name__ == "__main__":
             2,
             5,
             25,
-            33,
-            40,
+            # 33,
+            # 40,
         ]
     ):
-        for s in [5]:
+        for s in [8]:
             print("Running steady state")
             params = {
                 "grid_refinement": g,

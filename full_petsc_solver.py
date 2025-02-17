@@ -74,10 +74,10 @@ class PetscFieldSplitScheme:
             )
 
             if self.python_pc is not None:
-                options[f'{prefix}pc_type'] = 'python'
+                options[f"{prefix}pc_type"] = "python"
                 python_pc = self.python_pc(bmat)
-                python_pc.petsc_pc.setOptionsPrefix(f'{prefix}python_')
-                petsc_pc.setType('python')
+                python_pc.petsc_pc.setOptionsPrefix(f"{prefix}python_")
+                petsc_pc.setType("python")
                 petsc_pc.setPythonContext(python_pc)
 
             insert_petsc_options(options)
@@ -92,7 +92,6 @@ class PetscFieldSplitScheme:
         petsc_is_keep = construct_is(empty_bmat, keep)
         petsc_is_elim = construct_is(empty_bmat, elim)
         petsc_is_elim.setBlockSize(self.block_size)
-
 
         if self.invert is not None:
             fieldsplit_options["pc_fieldsplit_schur_precondition"] = "user"
@@ -114,7 +113,6 @@ class PetscFieldSplitScheme:
             | {f"{prefix}fieldsplit_{keep_tag}_{k}": v for k, v in tmp_options.items()}
             | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
         )
-
 
         insert_petsc_options(options)
         petsc_pc.setFromOptions()
@@ -338,6 +336,39 @@ class PetscCPRScheme:
 
         petsc_pc.setUp()
         fieldsplit.setUp()
+        return options
+
+
+@dataclass
+class PetscCompositeScheme:
+    groups: list[int]
+    solvers: list[PetscFieldSplitScheme]
+    petsc_options: dict = None
+
+    def get_groups(self) -> list[int]:
+        return self.groups
+
+    def configure(
+        self, bmat: BlockMatrixStorage, petsc_pc: PETSc.PC, prefix: str = ""
+    ) -> dict:
+        options = {
+            f"{prefix}{k}": v
+            for k, v in ({
+                "pc_type": "composite",
+                "pc_composite_type": "multiplicative",
+                "pc_composite_pcs": ",".join(["none"] * len(self.solvers)),
+            } | (self.petsc_options or {})).items()
+        }
+        insert_petsc_options(options)
+        petsc_pc.setFromOptions()
+        petsc_pc.setUp()
+        for i, solver in enumerate(self.solvers):
+            sub_pc = petsc_pc.getCompositePC(i)
+            sub_options = solver.configure(
+                bmat=bmat, petsc_pc=sub_pc, prefix=f"{prefix}sub_{i}_"
+            )
+            options |= sub_options
+
         return options
 
 
