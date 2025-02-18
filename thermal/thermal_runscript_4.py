@@ -246,29 +246,38 @@ if __name__ == "__main__":
 
     common_params = {
         "geometry": "4h_steady",
-        "solver": 5,
         "save_matrix": False,
     }
-    for g in [
-        1,
-        2,
-        5,
+    for g in reversed([
+        # 1,
+        # 2,
+        # 5,
         25,
         33,
         40,
-    ]:
-        print("Running steady state")
-        params = {
-            "grid_refinement": g,
-            "steady_state": True,
-        } | common_params
-        run_model(params)
-        end_state_filename = params["end_state_filename"]
+    ]):
+        for s in reversed([
+            "CPR",
+            "SAMG",
+            "SAMG+ILU",
+            "S4_diag+ILU",
+            "AAMG+ILU",
+            "S4_diag",
+        ]):
+            print("Running steady state")
+            params = {
+                "grid_refinement": g,
+                "steady_state": True,
+                "solver": s,
+            } | common_params
+            run_model(params)
+            end_state_filename = params["end_state_filename"]
 
-        print("Running injection")
-        params = {
-            "grid_refinement": g,
-            "steady_state": False,
-            "initial_state": end_state_filename,
-        } | common_params
-        run_model(params)
+            print("Running injection")
+            params = {
+                "grid_refinement": g,
+                "steady_state": False,
+                "initial_state": end_state_filename,
+                "solver": s,
+            } | common_params
+            run_model(params)

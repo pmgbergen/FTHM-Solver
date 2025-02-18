@@ -384,10 +384,10 @@ class IterativeHMSolver(IterativeLinearSolver):
                         fieldsplit_options={
                             "pc_fieldsplit_schur_precondition": "selfp",
                         },
-                        subsolver_options={
+                        elim_options={
                             "pc_type": "pbjacobi",
                         },
-                        tmp_options={
+                        keep_options={
                             "mat_schur_complement_ainv_type": "blockdiag",
                         },
                         complement=PetscFieldSplitScheme(
@@ -395,7 +395,7 @@ class IterativeHMSolver(IterativeLinearSolver):
                             fieldsplit_options={
                                 "pc_fieldsplit_schur_precondition": "selfp",
                             },
-                            subsolver_options={
+                            elim_options={
                                 "pc_type": "ilu",
                             },
                             complement=PetscFieldSplitScheme(
@@ -410,14 +410,14 @@ class IterativeHMSolver(IterativeLinearSolver):
                                 # fieldsplit_options={
                                 #     "pc_fieldsplit_schur_precondition": "selfp",
                                 # },
-                                subsolver_options={
+                                elim_options={
                                     "pc_type": "hypre",
                                     "pc_hypre_type": "boomeramg",
                                     "pc_hypre_boomeramg_strong_threshold": 0.7,
                                 },
                                 complement=PetscFieldSplitScheme(
                                     groups=[4, 5],
-                                    subsolver_options={
+                                    elim_options={
                                         "pc_type": "hypre",
                                         "pc_hypre_type": "boomeramg",
                                         'pc_hypre_boomeramg_truncfactor': 0.3,

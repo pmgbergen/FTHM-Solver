@@ -253,8 +253,9 @@ def make_model(setup: dict):
         "time_manager": pp.TimeManager(
             dt_init=dt_init * DAY,
             schedule=[0, end_time * DAY],
-            iter_max=30,
+            iter_max=10,
             constant_dt=False,
+            recomp_max=0,
         ),
         "units": pp.Units(kg=1e10),
         "meshing_arguments": {
@@ -280,7 +281,7 @@ def run_model(setup: dict):
             "nl_convergence_tol": float("inf"),
             "nl_convergence_tol_res": 1e-7,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 30,
+            "max_iterations": 10,
             # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
             "Global_line_search": 0,  # Set to 1 to use turn on a residual-based line search
@@ -296,29 +297,31 @@ if __name__ == "__main__":
 
     common_params = {
         "geometry": "5",
-        "solver": 3,
         "save_matrix": False,
     }
     for g in reversed(
         [
-            1,
-            2,
-            5,
+            # 1,
+            # 2,
+            # 5,
             10,
         ]
     ):
-        print("Running steady state")
-        params = {
-            "grid_refinement": g,
-            "steady_state": True,
-        } | common_params
-        run_model(params)
-        end_state_filename = params["end_state_filename"]
+        for s in ["CPR", "SAMG", "S4_diag", "SAMG+ILU", "S4_diag+ILU", "AAMG+ILU"]:
+            print("Running steady state")
+            params = {
+                "grid_refinement": g,
+                "steady_state": True,
+                "solver": s,
+            } | common_params
+            run_model(params)
+            end_state_filename = params["end_state_filename"]
 
-        print("Running injection")
-        params = {
-            "grid_refinement": g,
-            "steady_state": False,
-            "initial_state": end_state_filename,
-        } | common_params
-        run_model(params)
+            print("Running injection")
+            params = {
+                "grid_refinement": g,
+                "steady_state": False,
+                "initial_state": end_state_filename,
+                "solver": s,
+            } | common_params
+            run_model(params)

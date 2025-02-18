@@ -38,13 +38,14 @@ def insert_petsc_options(options):
 class PetscFieldSplitScheme:
     groups: list[int]
     complement: Optional["PetscFieldSplitScheme"] = None
-    subsolver_options: dict = None
+    elim_options: dict = None
     fieldsplit_options: dict = None
-    tmp_options: dict = None
+    keep_options: dict = None
     block_size: int = 1
     invert: Callable[[PETSc.Mat], PETSc.Mat] = None
-    # experimental
     python_pc: PETSc.PC = None
+    # experimental
+    near_null_space: list[np.ndarray] = None
 
     def get_groups(self) -> list[int]:
         groups = [g for g in self.groups]
@@ -58,9 +59,9 @@ class PetscFieldSplitScheme:
         petsc_pc: PETSc.PC,
         prefix: str = "",
     ):
-        subsolver_options = self.subsolver_options or {}
+        elim_options = self.elim_options or {}
         fieldsplit_options = self.fieldsplit_options or {}
-        tmp_options = self.tmp_options or {}
+        keep_options = self.keep_options or {}
 
         elim = self.groups
         if self.complement is None:
@@ -69,7 +70,7 @@ class PetscFieldSplitScheme:
                     f"{prefix}ksp_type": "preonly",
                     f"{prefix}pc_type": "lu",
                 }
-                | {f"{prefix}{k}": v for k, v in subsolver_options.items()}
+                | {f"{prefix}{k}": v for k, v in elim_options.items()}
                 | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
             )
 
@@ -106,11 +107,8 @@ class PetscFieldSplitScheme:
                 f"{prefix}fieldsplit_{elim_tag}_pc_type": "lu",
                 f"{prefix}fieldsplit_{keep_tag}_ksp_type": "preonly",
             }
-            | {
-                f"{prefix}fieldsplit_{elim_tag}_{k}": v
-                for k, v in subsolver_options.items()
-            }
-            | {f"{prefix}fieldsplit_{keep_tag}_{k}": v for k, v in tmp_options.items()}
+            | {f"{prefix}fieldsplit_{elim_tag}_{k}": v for k, v in elim_options.items()}
+            | {f"{prefix}fieldsplit_{keep_tag}_{k}": v for k, v in keep_options.items()}
             | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
         )
 
@@ -129,6 +127,20 @@ class PetscFieldSplitScheme:
 
         petsc_ksp_keep = petsc_pc.getFieldSplitSubKSP()[1]
         petsc_pc_keep = petsc_ksp_keep.getPC()
+        petsc_ksp_elim = petsc_pc.getFieldSplitSubKSP()[0]
+        petsc_pc_elim = petsc_ksp_elim.getPC()
+
+        if self.near_null_space is not None:
+            null_space_vectors = []
+            for b in self.near_null_space:
+                null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
+                null_space_vec_petsc.setSizes(b.shape[0], self.block_size)
+                null_space_vec_petsc.setUp()
+                null_space_vec_petsc.setArray(b)
+                null_space_vectors.append(null_space_vec_petsc)
+             # possibly mem leak
+            null_space_petsc = PETSc.NullSpace().create(True, null_space_vectors)
+            petsc_pc_elim.getOperators()[1].setNearNullSpace(null_space_petsc)
 
         options |= self.complement.configure(
             bmat,
@@ -353,11 +365,14 @@ class PetscCompositeScheme:
     ) -> dict:
         options = {
             f"{prefix}{k}": v
-            for k, v in ({
-                "pc_type": "composite",
-                "pc_composite_type": "multiplicative",
-                "pc_composite_pcs": ",".join(["none"] * len(self.solvers)),
-            } | (self.petsc_options or {})).items()
+            for k, v in (
+                {
+                    "pc_type": "composite",
+                    "pc_composite_type": "multiplicative",
+                    "pc_composite_pcs": ",".join(["none"] * len(self.solvers)),
+                }
+                | (self.petsc_options or {})
+            ).items()
         }
         insert_petsc_options(options)
         petsc_pc.setFromOptions()

@@ -208,17 +208,22 @@ if __name__ == "__main__":
         "geometry": "nofrac",
         "save_matrix": False,
     }
-    for g in reversed(
-        [
-            1,
-            2,
-            5,
-            25,
-            # 33,
-            # 40,
-        ]
-    ):
-        for s in [8]:
+    for g in [
+        # 1,
+        # 2,
+        # 5,
+        # 25,
+        33,
+        40,
+    ]:
+        for s in [
+            "CPR",
+            "SAMG",
+            "S4_diag",
+            "SAMG+ILU",
+            "S4_diag+ILU",
+            "AAMG+ILU",
+        ]:
             print("Running steady state")
             params = {
                 "grid_refinement": g,
