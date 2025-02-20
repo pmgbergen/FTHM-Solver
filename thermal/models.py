@@ -63,7 +63,7 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
                 )
         else:
             initial_state = self.params["setup"]["initial_state"]
-            if initial_state != 'ignore':
+            if initial_state != "ignore":
                 vals = np.load(initial_state)
                 self.equation_system.set_variable_values(vals, time_step_index=0)
                 self.equation_system.set_variable_values(vals, iterate_index=0)
@@ -83,16 +83,10 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
             / self.fluid.reference_component.viscosity
         )
 
-    def compute_peclet(self):
-        enthalpy = self.__enthalpy.value(self.equation_system)
-        fourier = self.__fourier.value(self.equation_system)
-        fourier_zero = abs(fourier) < 1e-10
-        fourier[fourier_zero] = 1
-        peclet = enthalpy / fourier
-        peclet[fourier_zero] = 0
-        peclet_max = abs(peclet).max()
-        peclet_mean = abs(peclet).mean()
-        return peclet_max, peclet_mean
+    def compute_convection_diffusion_transport(self):
+        enthalpy = abs(self.__enthalpy.value(self.equation_system))
+        fourier = abs(self.__fourier.value(self.equation_system))
+        return enthalpy.max(), enthalpy.mean(), fourier.max(), fourier.mean()
 
     def compute_cfl(self):
         flux = abs(self.cfl_flux.value(self.equation_system)).max()
@@ -111,9 +105,13 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
         print(f"Temperature: {tmin:.2f}, {tmax:.2f}")
 
         cfl = self.compute_cfl()
-        peclet_max, peclet_mean = self.compute_peclet()
-        print(f"Peclet: {peclet_max:.1e}, CFL: {cfl:.1e}")
+        enthalpy_max, enthalpy_mean, fourier_max, fourier_mean = (
+            self.compute_convection_diffusion_transport()
+        )
+        print(f"Peclet: {enthalpy_max/fourier_max:.1e}, CFL: {cfl:.1e}")
         self._linear_solve_stats.cfl = cfl
-        self._linear_solve_stats.peclet_max = peclet_max
-        self._linear_solve_stats.peclet_mean = peclet_mean
+        self._linear_solve_stats.enthalpy_max = enthalpy_max
+        self._linear_solve_stats.enthalpy_mean = enthalpy_mean
+        self._linear_solve_stats.fourier_max = fourier_max
+        self._linear_solve_stats.fourier_mean = fourier_mean
         super().before_nonlinear_iteration()

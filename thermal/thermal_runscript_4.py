@@ -251,18 +251,18 @@ if __name__ == "__main__":
     for g in reversed([
         # 1,
         # 2,
-        # 5,
-        25,
-        33,
-        40,
+        5,
+        # 25,
+        # 33,
+        # 40,
     ]):
         for s in reversed([
-            "CPR",
-            "SAMG",
+            # "CPR",
+            # "SAMG",
             "SAMG+ILU",
-            "S4_diag+ILU",
-            "AAMG+ILU",
-            "S4_diag",
+            # "S4_diag+ILU",
+            # "AAMG+ILU",
+            # "S4_diag",
         ]):
             print("Running steady state")
             params = {
@@ -273,11 +273,11 @@ if __name__ == "__main__":
             run_model(params)
             end_state_filename = params["end_state_filename"]
 
-            print("Running injection")
-            params = {
-                "grid_refinement": g,
-                "steady_state": False,
-                "initial_state": end_state_filename,
-                "solver": s,
-            } | common_params
-            run_model(params)
+            # print("Running injection")
+            # params = {
+            #     "grid_refinement": g,
+            #     "steady_state": False,
+            #     "initial_state": end_state_filename,
+            #     "solver": s,
+            # } | common_params
+            # run_model(params)

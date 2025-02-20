@@ -35,6 +35,11 @@ class LinearSolveStats:
     temp_min: float = -1
     temp_max: float = -1
     cfl: float = -1
+    enthalpy_max: float = -1
+    enthalpy_mean: float = -1
+    fourier_max: float = -1
+    fourier_mean: float = -1
+    # TO BE REMOVED:
     peclet_max: float = -1
     peclet_mean: float = -1
 

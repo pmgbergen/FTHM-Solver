@@ -209,12 +209,12 @@ if __name__ == "__main__":
         "save_matrix": False,
     }
     for g in [
-        # 1,
-        # 2,
-        # 5,
-        # 25,
+        25,
+        5,
+        2,
+        1,
         33,
-        40,
+        # 40,
     ]:
         for s in [
             "CPR",
