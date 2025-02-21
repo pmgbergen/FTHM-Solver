@@ -408,12 +408,20 @@ def get_cfl(x: Sequence[TimeStepStats]) -> list[float]:
     return [ls.cfl for ts in x for ls in ts.linear_solves]
 
 
+def get_enthalpy_max(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.enthalpy_max for ts in x for ls in ts.linear_solves]
+
+
+def get_fourier_max(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.fourier_max for ts in x for ls in ts.linear_solves]
+
+
 def get_peclet_max(x: Sequence[TimeStepStats]) -> list[float]:
-    return [ls.peclet_max for ts in x for ls in ts.linear_solves]
+    return [ls.enthalpy_max / ls.fourier_max for ts in x for ls in ts.linear_solves]
 
 
 def get_peclet_mean(x: Sequence[TimeStepStats]) -> list[float]:
-    return [ls.peclet_mean for ts in x for ls in ts.linear_solves]
+    return [ls.enthalpy_mean / ls.fourier_mean for ts in x for ls in ts.linear_solves]
 
 
 def group_intervals(arr):

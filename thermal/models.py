@@ -26,7 +26,32 @@ SETUP_REFERENCE = {
 }
 
 
+from functools import cache
+
+
+def cache_ad_tree(func):
+    func = cache(func)
+
+    def inner(subdomains):
+        return func(tuple(subdomains))
+
+    return inner
+
+
 class Physics(CubicLawPermeability, Thermoporomechanics):
+
+    def prepare_simulation(self):
+        # This speeds up Porepy by caching the once-built AD trees.
+        self.aperture = cache_ad_tree(self.aperture)
+        self.specific_volume = cache_ad_tree(self.specific_volume)
+        self.cubic_law_permeability = cache_ad_tree(self.cubic_law_permeability)
+        self.combine_boundary_operators_darcy_flux = cache_ad_tree(
+            self.combine_boundary_operators_darcy_flux
+        )
+        self.porosity = cache_ad_tree(self.porosity)
+        self.opening_indicator = cache_ad_tree(self.opening_indicator)
+        self.sliding_indicator = cache_ad_tree(self.sliding_indicator)
+        super().prepare_simulation()
 
     def initial_condition(self) -> None:
         super().initial_condition()

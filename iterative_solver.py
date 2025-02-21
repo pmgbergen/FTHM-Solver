@@ -22,7 +22,7 @@ from mat_utils import (
 from stats import LinearSolveStats
 
 
-class IterativeLinearSolver(pp.SolutionStrategy):
+class IterativeLinearSolver(pp.PorePyModel):
 
     _linear_solve_stats = LinearSolveStats()
     """A placeholder to statistics. The solver mixin only writes in it, not reads."""
@@ -179,8 +179,9 @@ def get_variables_group_ids(
     for md_var_group in md_variables_groups:
         group_idx = []
         for md_var in md_var_group:
-            group_idx.extend([variable_to_idx[var] for var in md_var.sub_vars])
+            group_idx.extend([variable_to_idx.pop(var) for var in md_var.sub_vars])
         indices.append(group_idx)
+    assert len(variable_to_idx) == 0, 'Some variables are not used.'
     return indices
 
 
@@ -213,6 +214,7 @@ def get_equations_group_ids(
         for eq_name, domains in group:
             for domain in domains:
                 if (eq_name, domain) in equation_to_idx:
-                    group_idx.append(equation_to_idx[(eq_name, domain)])
+                    group_idx.append(equation_to_idx.pop((eq_name, domain)))
         indices.append(group_idx)
+    assert len(equation_to_idx) == 0, "Some equations are not used."
     return indices

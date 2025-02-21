@@ -215,11 +215,6 @@ class IterativeHMSolver(IterativeLinearSolver):
 
         Qright.mat = csr_ones(Qright.shape[0])
 
-        st, sl, op = self.sticking_sliding_open()
-        st = np.repeat(st, self.nd)
-        sl = np.repeat(sl, self.nd)
-        op = np.repeat(op, self.nd)
-
         J54 = J[u_intf_group, contact_group].mat
 
         tmp = -J55_inv @ J54

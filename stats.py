@@ -74,7 +74,7 @@ def dump_json(name, data):
         file.write(json_data)
 
 
-class StatisticsSavingMixin(ContactIndicators, SolutionStrategy):
+class StatisticsSavingMixin(ContactIndicators):
     _linear_solve_stats: LinearSolveStats
     _time_step_stats: TimeStepStats
 
