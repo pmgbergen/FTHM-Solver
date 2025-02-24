@@ -7,49 +7,11 @@ from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
 from porepy.applications.md_grids.fracture_sets import benchmark_2d_case_3
 
-XMAX = 1000
-YMAX = 1000
+XMAX = 2000
+YMAX = 2000
 
 
-class Geometry(pp.SolutionStrategy):
-    def initial_condition(self) -> None:
-        super().initial_condition()
-        if self.params["setup"]["steady_state"]:
-            num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
-            val = self.reference_variable_values.pressure * np.ones(num_cells)
-            for time_step_index in self.time_step_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.pressure_variable],
-                    time_step_index=time_step_index,
-                )
-
-            for iterate_index in self.iterate_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.pressure_variable],
-                    iterate_index=iterate_index,
-                )
-
-            val = self.reference_variable_values.temperature * np.ones(num_cells)
-            for time_step_index in self.time_step_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.temperature_variable],
-                    time_step_index=time_step_index,
-                )
-
-            for iterate_index in self.iterate_indices:
-                self.equation_system.set_variable_values(
-                    val,
-                    variables=[self.temperature_variable],
-                    iterate_index=iterate_index,
-                )
-        else:
-            # vals = np.load("stats_thermal_geo4hx2_sol3_bb2_fr1_endstate_1737646072866.npy")
-            vals = np.load(self.params["setup"]["initial_state"])
-            self.equation_system.set_variable_values(vals, time_step_index=0)
-            self.equation_system.set_variable_values(vals, iterate_index=0)
+class Geometry(pp.PorePyModel):
 
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
@@ -76,7 +38,7 @@ class Geometry(pp.SolutionStrategy):
         return bc_values.ravel("F")
 
     def locate_source(self, subdomains):
-        source_loc_x = XMAX * 0.9
+        source_loc_x = XMAX * 0.5
         source_loc_y = YMAX * 0.5
         ambient = [sd for sd in subdomains if sd.dim == self.nd]
         fractures = [sd for sd in subdomains if sd.dim == self.nd - 1]
@@ -117,15 +79,34 @@ class Geometry(pp.SolutionStrategy):
     def set_domain(self) -> None:
         self._domain = pp.Domain(
             {
-                "xmin": -0.1 * XMAX,
-                "xmax": 1.1 * XMAX,
-                "ymin": -0.1 * YMAX,
-                "ymax": 1.1 * YMAX,
+                "xmin": 0,
+                "xmax": XMAX,
+                "ymin": 0,
+                "ymax": YMAX,
             }
         )
 
     def set_fractures(self) -> None:
-        self._fractures = benchmark_2d_case_3(size=XMAX)
+        # self._fractures = benchmark_2d_case_3(size=XMAX)
+        points = np.array(
+            [
+                [[0.0500, 0.2200], [0.4160, 0.0624]],
+                [[0.0500, 0.2500], [0.2750, 0.1350]],
+                [[0.1500, 0.4500], [0.6300, 0.0900]],
+                [[0.1500, 0.4000], [0.9167, 0.5000]],
+                [[0.6500, 0.849723], [0.8333, 0.167625]],
+                [[0.7000, 0.849723], [0.2350, 0.167625]],
+                [[0.6000, 0.8500], [0.3800, 0.2675]],
+                [[0.3500, 0.8000], [0.9714, 0.7143]],
+                [[0.7500, 0.9500], [0.9574, 0.8155]],
+                [[0.1500, 0.4000], [0.8363, 0.9727]],
+            ]
+        )
+        xscale = XMAX / 2
+        yscale = YMAX / 2
+        points[:, 0] = xscale / 2 + points[:, 0] * xscale
+        points[:, 1] = yscale / 2 + points[:, 1] * yscale
+        self._fractures = [pp.LineFracture(pts) for pts in points]
 
     def after_simulation(self):
         super().after_simulation()
@@ -204,8 +185,11 @@ def make_model(setup: dict):
         "time_manager": pp.TimeManager(
             dt_init=dt_init * DAY,
             schedule=[0, end_time * DAY],
-            iter_max=30,
+            # iter_max=6,
+            # iter_optimal_range=(4, 5),
             constant_dt=False,
+            # recomp_factor=0.1,
+            # iter_relax_factors=(0.1, 1.3),
         ),
         "units": pp.Units(kg=1e10),
         "meshing_arguments": {
@@ -230,11 +214,11 @@ def run_model(setup: dict):
             "nl_convergence_tol": float("inf"),
             "nl_convergence_tol_res": 1e-7,
             "nl_divergence_tol": 1e8,
-            "max_iterations": 30,
+            "max_iterations": 10,
             # experimental
             "nonlinear_solver": ConstraintLineSearchNonlinearSolver,
-            "Global_line_search": 0,  # Set to 1 to use turn on a residual-based line search
-            "Local_line_search": 1,  # Set to 0 to use turn off the tailored line search
+            "Global_line_search": 1,  # Set to 1 to use turn on a residual-based line search
+            "Local_line_search": 0,  # Set to 0 to use turn off the tailored line search
         },
     )
 
@@ -248,22 +232,26 @@ if __name__ == "__main__":
         "geometry": "4h_steady",
         "save_matrix": False,
     }
-    for g in reversed([
-        # 1,
-        # 2,
-        5,
-        # 25,
-        # 33,
-        # 40,
-    ]):
-        for s in reversed([
-            # "CPR",
-            # "SAMG",
-            "SAMG+ILU",
-            # "S4_diag+ILU",
-            # "AAMG+ILU",
-            # "S4_diag",
-        ]):
+    for g in (
+        [
+            # 1,
+            2,
+            5,
+            25,
+            # 33,
+            # 40,
+        ]
+    ):
+        for s in (
+            [
+                "SAMG",
+                "CPR",
+                # "SAMG+ILU",
+                # "S4_diag+ILU",
+                # "AAMG+ILU",
+                # "S4_diag",
+            ]
+        ):
             print("Running steady state")
             params = {
                 "grid_refinement": g,
@@ -273,11 +261,11 @@ if __name__ == "__main__":
             run_model(params)
             end_state_filename = params["end_state_filename"]
 
-            # print("Running injection")
-            # params = {
-            #     "grid_refinement": g,
-            #     "steady_state": False,
-            #     "initial_state": end_state_filename,
-            #     "solver": s,
-            # } | common_params
-            # run_model(params)
+            print("Running injection")
+            params = {
+                "grid_refinement": g,
+                "steady_state": False,
+                "initial_state": end_state_filename,
+                "solver": s,
+            } | common_params
+            run_model(params)

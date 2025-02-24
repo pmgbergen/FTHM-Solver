@@ -1,4 +1,6 @@
 from functools import cached_property
+
+import scipy.sparse
 from block_matrix import (
     BlockMatrixStorage,
     FieldSplitScheme,
@@ -46,6 +48,8 @@ class THMSolver(IterativeHMSolver):
         setup = self.params["setup"]
         name = f'{name}_geo{setup["geometry"]}x{setup["grid_refinement"]}'
         name = f'{name}_sol{setup["solver"]}'
+        if (bc := setup.get("thermal_diffusion_bc")) not in ("dir", None):
+            name = f"{name}_bc{bc}"
         return name
 
     CONTACT_GROUP = 0
@@ -167,6 +171,16 @@ class THMSolver(IterativeHMSolver):
             contact_group=self.CONTACT_GROUP,
         )
 
+    def scale_energy_balance(self, bmat: BlockMatrixStorage):
+        res = bmat.empty_container()
+        subdomains = [
+            sd for d in reversed(range(self.nd)) for sd in self.mdg.subdomains(dim=d)
+        ]
+        diag = 1 / self.specific_volume(subdomains).value(self.equation_system)
+        res.mat = scipy.sparse.eye(res.shape[0], format="csr")
+        res[[9, 10]] = scipy.sparse.diags(diag)
+        return res
+
     def make_solver_scheme(self) -> FieldSplitScheme:
         solver_type: str = self.params["setup"]["solver"]
 
@@ -206,8 +220,9 @@ class THMSolver(IterativeHMSolver):
                             block_size=2,
                         ),
                         elim_options={
-                            "python_pc_type": "hypre",
-                            "python_pc_hypre_type": "Euclid",
+                            "python_pc_type": "ilu",
+                            # "python_pc_type": "hypre",
+                            # "python_pc_hypre_type": "Euclid",
                         },
                     ),
                 ],
@@ -222,10 +237,15 @@ class THMSolver(IterativeHMSolver):
             elim_options={
                 "python_pc_type": "hypre",
                 "python_pc_hypre_type": "boomeramg",
-                # "python_pc_hypre_boomeramg_nodal_coarsen": 1,
-                # "python_pc_hypre_boomeramg_vec_interp_variant": 1,
                 "python_pc_hypre_boomeramg_strong_threshold": 0.7,
-                # "python_pc_hypre_boomeramg_smooth_type": "Euclid",
+                "python_pc_hypre_boomeramg_P_max": 16,
+                # "python_pc_type": "hmg",
+                # "python_hmg_inner_pc_type": "hypre",
+                # "python_hmg_inner_pc_hypre_type": "boomeramg",
+                # "python_hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
+                # # "python_pc_hypre_boomeramg_P_max": 16,
+                # "python_mg_levels_ksp_type": "richardson",
+                # "python_mg_levels_ksp_max_it": 1,
             },
         )
 
@@ -296,10 +316,14 @@ class THMSolver(IterativeHMSolver):
             right_transformations=[
                 lambda bmat: self.Qright(contact_group=0, u_intf_group=4)
             ],
+            left_transformations=[
+                lambda bmat: self.scale_energy_balance(bmat),
+            ],
             inner=PetscKSPScheme(
                 petsc_options={
                     # "ksp_type": "fgmres",
                     "ksp_monitor": None,
+                    "ksp_rtol": 1e-12,
                 },
                 compute_eigenvalues=False,
                 preconditioner=PetscFieldSplitScheme(
@@ -326,10 +350,18 @@ class THMSolver(IterativeHMSolver):
                             groups=mech,
                             elim_options=(
                                 {
-                                    "pc_type": "hypre",
-                                    "pc_hypre_type": "boomeramg",
-                                    "pc_hypre_boomeramg_strong_threshold": 0.7,
-                                    "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                    # "pc_type": "hypre",
+                                    # "pc_hypre_type": "boomeramg",
+                                    # "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    # #
+                                    # 'pc_hypre_boomeramg_max_row_sum': 1.0,
+                                    # # "pc_hypre_boomeramg_smooth_type": "Euclid",
+                                    "pc_type": "hmg",
+                                    "hmg_inner_pc_type": "hypre",
+                                    "hmg_inner_pc_hypre_type": "boomeramg",
+                                    "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    "mg_levels_ksp_type": "richardson",
+                                    "mg_levels_ksp_max_it": 2,
                                 }
                             ),
                             keep_options={},

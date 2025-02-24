@@ -357,7 +357,7 @@ def get_ls_indices(x: Sequence[TimeStepStats]) -> list[int]:
     for i, ts in enumerate(x):
         for _ in ts.linear_solves:
             result.append(i)
-    return result
+    return np.array(result, dtype=int)
 
 
 def get_jacobian_cond(data: Sequence[TimeStepStats]):
@@ -379,9 +379,9 @@ def get_petsc_converged_reason(x: Sequence[TimeStepStats]) -> list[int]:
 def get_num_sticking_sliding_open(
     x: Sequence[TimeStepStats],
 ) -> tuple[list[int], list[int], list[int]]:
-    num_sticking = [ls.num_sticking for ts in x for ls in ts.linear_solves]
-    num_sliding = [ls.num_sliding for ts in x for ls in ts.linear_solves]
-    num_open = [ls.num_open for ts in x for ls in ts.linear_solves]
+    num_sticking = np.array([ls.num_sticking for ts in x for ls in ts.linear_solves])
+    num_sliding = np.array([ls.num_sliding for ts in x for ls in ts.linear_solves])
+    num_open = np.array([ls.num_open for ts in x for ls in ts.linear_solves])
     return num_sticking, num_sliding, num_open
 
 

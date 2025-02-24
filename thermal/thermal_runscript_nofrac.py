@@ -6,8 +6,8 @@ from thermal.thm_solver import THMSolver
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
 
-XMAX = 1000
-YMAX = 1000
+XMAX = 2000
+YMAX = 2000
 
 
 class Geometry(pp.SolutionStrategy):
@@ -34,6 +34,12 @@ class Geometry(pp.SolutionStrategy):
         bc_values[0, sides.east] = -val * boundary_grid.cell_volumes[sides.east] * 1.2
 
         return bc_values.ravel("F")
+
+    def bc_type_fourier_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
+        boundary_faces = self.domain_boundary_sides(sd).all_bf
+        if self.params["setup"].get("thermal_diffusion_bc") == "noflux":
+            return pp.BoundaryCondition(sd, boundary_faces, "neu")
+        return pp.BoundaryCondition(sd, boundary_faces, "dir")
 
     def locate_source(self, subdomains):
         source_loc_x = XMAX * 0.5
@@ -77,10 +83,10 @@ class Geometry(pp.SolutionStrategy):
     def set_domain(self) -> None:
         self._domain = pp.Domain(
             {
-                "xmin": -0.1 * XMAX,
-                "xmax": 1.1 * XMAX,
-                "ymin": -0.1 * YMAX,
-                "ymax": 1.1 * YMAX,
+                "xmin": 0,
+                "xmax": XMAX,
+                "ymin": 0,
+                "ymax": YMAX,
             }
         )
 
@@ -204,40 +210,44 @@ def run_model(setup: dict):
 
 if __name__ == "__main__":
 
-    common_params = {
-        "geometry": "nofrac",
-        "save_matrix": False,
-    }
     for g in [
-        25,
-        5,
-        2,
         1,
-        33,
+        2,
+        5,
+        25,
+        # 33,
         # 40,
     ]:
         for s in [
             "CPR",
-            "SAMG",
-            "S4_diag",
-            "SAMG+ILU",
-            "S4_diag+ILU",
-            "AAMG+ILU",
+            # "SAMG",
+            # "S4_diag",
+            # "SAMG+ILU",
+            # "S4_diag+ILU",
+            # "AAMG+ILU",
         ]:
-            print("Running steady state")
-            params = {
-                "grid_refinement": g,
-                "steady_state": True,
-                "solver": s,
-            } | common_params
-            run_model(params)
-            end_state_filename = params["end_state_filename"]
+            for bc in [
+                "noflux",
+                # "dir",
+            ]:
+                common_params = {
+                    "geometry": "nofrac",
+                    "save_matrix": False,
+                    "solver": s,
+                    "thermal_diffusion_bc": bc,
+                }
+                print("Running steady state")
+                params = {
+                    "grid_refinement": g,
+                    "steady_state": True,
+                } | common_params
+                run_model(params)
+                end_state_filename = params["end_state_filename"]
 
-            print("Running injection")
-            params = {
-                "grid_refinement": g,
-                "steady_state": False,
-                "initial_state": end_state_filename,
-                "solver": s,
-            } | common_params
-            run_model(params)
+                print("Running injection")
+                params = {
+                    "grid_refinement": g,
+                    "steady_state": False,
+                    "initial_state": end_state_filename,
+                } | common_params
+                run_model(params)
