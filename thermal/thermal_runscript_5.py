@@ -6,8 +6,11 @@ from thermal.thm_solver import THMSolver
 from plot_utils import write_dofs_info
 from stats import StatisticsSavingMixin
 
+XMAX = 1000
+YMAX = 2000
+ZMAX = 1000
 
-class Geometry(pp.SolutionStrategy):
+class Geometry(pp.PorePyModel):
     def bc_type_fluid_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
         sides = self.domain_boundary_sides(sd)
         bc = pp.BoundaryCondition(sd, sides.all_bf, "dir")
@@ -18,6 +21,14 @@ class Geometry(pp.SolutionStrategy):
         bc = pp.BoundaryConditionVectorial(sd, sides.north, "dir")
         bc.internal_to_dirichlet(sd)
         return bc
+
+    def bc_type_enthalpy_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
+        domain_sides = self.domain_boundary_sides(sd)
+        return pp.BoundaryCondition(sd, domain_sides.all_bf, "dir")
+
+    def bc_type_fourier_flux(self, sd: pp.Grid) -> pp.BoundaryCondition:
+        domain_sides = self.domain_boundary_sides(sd)
+        return pp.BoundaryCondition(sd, domain_sides.all_bf, "dir")
 
     def bc_values_stress(self, boundary_grid: pp.BoundaryGrid) -> np.ndarray:
         sides = self.domain_boundary_sides(boundary_grid)
@@ -83,17 +94,17 @@ class Geometry(pp.SolutionStrategy):
         #     self._domain = pp.Domain(
         #         {"xmin": 0, "xmax": 1000, "ymin": 0, "ymax": 1000, "zmin": 0, "zmax": 1000}
         #     )
-        self._domain = pp.Domain(
-            {"xmin": 0, "xmax": 1000, "ymin": 0, "ymax": 2250, "zmin": 0, "zmax": 1000}
-        )
+        # self._domain = pp.Domain(
+        #     {"xmin": 0, "xmax": 1000, "ymin": 0, "ymax": 2250, "zmin": 0, "zmax": 1000}
+        # )
         self._domain = pp.Domain(
             {
-                "xmin": -0.1 * self._domain.bounding_box["xmax"],
-                "ymin": -0.1 * self._domain.bounding_box["ymax"],
-                "zmin": -0.1 * self._domain.bounding_box["zmax"],
-                "xmax": 1.1 * self._domain.bounding_box["xmax"],
-                "ymax": 1.1 * self._domain.bounding_box["ymax"],
-                "zmax": 1.1 * self._domain.bounding_box["zmax"],
+                "xmin": 0,
+                "ymin": 0,
+                "zmin": 0,
+                "xmax": XMAX,
+                "ymax": YMAX,
+                "zmax": ZMAX,
             }
         )
 
@@ -151,7 +162,16 @@ class Geometry(pp.SolutionStrategy):
                 ],
             ]
         )
-        fracs *= 1000
+        xscale = XMAX / 2
+        yscale = YMAX / 2
+        zscale = ZMAX / 2
+        fracs[:, 0] /= fracs[:, 0].max()
+        fracs[:, 1] /= fracs[:, 1].max()
+        fracs[:, 2] /= fracs[:, 2].max()
+        fracs[:, 0] = xscale / 2 + fracs[:, 0] * xscale
+        fracs[:, 1] = yscale / 2 + fracs[:, 1] * yscale
+        fracs[:, 2] = zscale / 2 + fracs[:, 2] * zscale
+        # fracs *= 1000
         self._fractures = [
             pp.PlaneFracture(frac, check_convexity=True) for frac in fracs
         ]
@@ -205,7 +225,7 @@ def make_model(setup: dict):
         end_time = 1e1
     else:
         biot = 0.47
-        dt_init = 1e-4
+        dt_init = 1e-3
         end_time = 2e3
     porosity = 1.3e-2  # probably on the low side
 
@@ -299,15 +319,20 @@ if __name__ == "__main__":
         "geometry": "5",
         "save_matrix": False,
     }
-    for g in reversed(
-        [
-            # 1,
-            # 2,
-            # 5,
-            10,
-        ]
-    ):
-        for s in ["CPR", "SAMG", "S4_diag", "SAMG+ILU", "S4_diag+ILU", "AAMG+ILU"]:
+    for g in [
+        # 1,
+        2,
+        5,
+        10,
+    ]:
+        for s in [
+            "CPR",
+            "SAMG",
+            # "S4_diag",
+            # "SAMG+ILU",
+            # "S4_diag+ILU",
+            # "AAMG+ILU",
+        ]:
             print("Running steady state")
             params = {
                 "grid_refinement": g,

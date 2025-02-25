@@ -137,7 +137,7 @@ def make_model(setup: dict):
         biot = 0.47
         dt_init = 1e-3
         if setup["grid_refinement"] >= 33:
-            dt_init = 1e-4
+            dt_init = 1e-4  # Is this necessary?
         end_time = 5e2
     porosity = 1.3e-2  # probably on the low side
 
@@ -235,11 +235,11 @@ if __name__ == "__main__":
     for g in (
         [
             # 1,
-            2,
-            5,
-            25,
-            # 33,
-            # 40,
+            # 2,
+            # 5,
+            # 25,
+            33,
+            40,
         ]
     ):
         for s in (

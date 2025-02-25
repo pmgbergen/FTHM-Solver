@@ -139,4 +139,9 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
         self._linear_solve_stats.enthalpy_mean = enthalpy_mean
         self._linear_solve_stats.fourier_max = fourier_max
         self._linear_solve_stats.fourier_mean = fourier_mean
+        if len(self.nonlinear_solver_statistics.nonlinear_increment_norms) == 0:
+            return
+        incr_norm = self.nonlinear_solver_statistics.nonlinear_increment_norms[-1]
+        res_norm = self.nonlinear_solver_statistics.residual_norms[-1]
+        print(f"Increment: {incr_norm:.1e}, residual: {res_norm:.1e}")
         super().before_nonlinear_iteration()

@@ -178,12 +178,15 @@ class THMSolver(IterativeHMSolver):
         ]
         diag = 1 / self.specific_volume(subdomains).value(self.equation_system)
         res.mat = scipy.sparse.eye(res.shape[0], format="csr")
+        if len(subdomains) == 0:
+            return res
         res[[9, 10]] = scipy.sparse.diags(diag)
         return res
 
     def make_solver_scheme(self) -> FieldSplitScheme:
         solver_type: str = self.params["setup"]["solver"]
 
+        nd = self.nd
         contact = [0]
         intf = [1, 2]
         mech = [3, 4]
@@ -362,6 +365,8 @@ class THMSolver(IterativeHMSolver):
                                     "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
                                     "mg_levels_ksp_type": "richardson",
                                     "mg_levels_ksp_max_it": 2,
+                                    # 3D model has bad grid
+                                    'mg_levels_pc_type': 'ilu' if nd == 3 else 'sor',
                                 }
                             ),
                             keep_options={},
