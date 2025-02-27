@@ -1,6 +1,6 @@
 import sys
 from functools import cached_property
-from typing import Sequence
+from typing import Sequence, Callable
 import time
 
 import scipy.sparse as sps
@@ -23,12 +23,16 @@ from .mat_utils import (
 from .stats import LinearSolveStats
 
 
-class IterativeLinearSolver:
+class IterativeLinearSolver(pp.PorePyModel):
+    """Mixin for iterative linear solvers."""
+
     nd: int
     mdg: pp.MixedDimensionalGrid
     params: dict
     equation_system: pp.ad.EquationSystem
     linear_system: tuple[sps.spmatrix, np.ndarray]
+
+    save_matrix_state: Callable[..., None]
 
     _linear_solve_stats = LinearSolveStats()
     """A placeholder to statistics. The solver mixin only writes in it, not reads."""
@@ -101,7 +105,7 @@ class IterativeLinearSolver:
         """Assemble the linear system. Also build a block matrix representation of the
         matrix.
         """
-        super().assemble_linear_system()
+        super().assemble_linear_system()  # type: ignore[misc]
 
         bmat = BlockMatrixStorage(
             mat=self.linear_system[0],
@@ -190,7 +194,7 @@ class IterativeLinearSolver:
 
 
 def get_variables_group_ids(
-    model: SolutionStrategy,
+    model: pp.PorePyModel,
     md_variables_groups: Sequence[
         Sequence[pp.ad.MixedDimensionalVariable | pp.ad.Variable]
     ],
@@ -218,13 +222,16 @@ def get_variables_group_ids(
     for md_var_group in md_variables_groups:
         group_idx = []
         for md_var in md_var_group:
+            # If we ever get a variable in here, we need to handle it directly, and not
+            # call sub_vars.
+            assert isinstance(md_var, pp.ad.MixedDimensionalVariable)
             group_idx.extend([variable_to_idx[var] for var in md_var.sub_vars])
         indices.append(group_idx)
     return indices
 
 
 def get_equations_group_ids(
-    model: SolutionStrategy,
+    model: pp.PorePyModel,
     equations_group_order: Sequence[Sequence[tuple[str, pp.GridLikeSequence]]],
 ) -> list[list[int]]:
     """Used to assemble the index that will later help accessing the submatrix
@@ -262,8 +269,8 @@ def get_equations_group_ids(
         # Items in the group will contain a single equation defined on one or more
         # domains (subdomains or interfaces). Loop over equations an over all their
         # domains to add the indices to the group.
-        for eq_name, domains in group:
-            for domain in domains:
+        for eq_name, domains_of_eq in group:
+            for domain in domains_of_eq:
                 if (eq_name, domain) in equation_to_idx:
                     group_idx.append(equation_to_idx[(eq_name, domain)])
         indices.append(group_idx)
