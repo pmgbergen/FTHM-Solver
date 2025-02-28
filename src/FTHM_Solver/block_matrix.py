@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Optional, Sequence
 import itertools
@@ -17,6 +18,7 @@ from .mat_utils import (
     cond,
     PetscGMRES,
     PetscRichardson,
+    PetscKrylovSolver,
 )
 from .plot_utils import plot_mat, spy
 
@@ -35,7 +37,6 @@ def color_spy(
     hatch=True,
     alpha=0.3,
 ):
-
     if draw_marker:
         spy(mat, show=False, aspect=aspect, marker=marker)
     else:
@@ -63,7 +64,7 @@ def color_spy(
     for i in range(len(row_names)):
         ystart, yend = row_sep[i : i + 2]
         row_label_pos.append(ystart + (yend - ystart) / 2)
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         if color:
             kwargs["facecolor"] = f"C{i}"
         else:
@@ -135,8 +136,8 @@ class BlockMatrixStorage:
         local_dofs_col: Optional[list[np.ndarray]] = None,
         active_groups_row: Optional[list[int]] = None,
         active_groups_col: Optional[list[int]] = None,
-        group_names_row: list[str] = None,
-        group_names_col: list[str] = None,
+        group_names_row: Optional[list[str]] = None,
+        group_names_col: Optional[list[str]] = None,
     ):
         self.mat: spmatrix = mat
         self.groups_to_blocks_row: list[list[int]] = groups_to_blocks_row
@@ -232,9 +233,9 @@ class BlockMatrixStorage:
             offset = 0
             for group in take_groups:
                 for dof_idx in all_groups[group]:
-                    assert (
-                        input_dofs_idx[dof_idx] is not None
-                    ), f"Taking inactive row {group}"
+                    assert input_dofs_idx[dof_idx] is not None, (
+                        f"Taking inactive row {group}"
+                    )
                     dofs_global_idx.append(input_dofs_idx[dof_idx])
                     dofs_local_idx[dof_idx] = (
                         np.arange(len(input_dofs_idx[dof_idx])) + offset
@@ -262,8 +263,8 @@ class BlockMatrixStorage:
             global_dofs_col=self.global_dofs_col,
             groups_to_blocks_col=self.groups_to_blocks_col,
             groups_to_blocks_row=self.groups_to_blocks_row,
-            active_groups_row=tuple(groups_i),
-            active_groups_col=tuple(groups_j),
+            active_groups_row=groups_i,
+            active_groups_col=groups_j,
             group_names_col=self.group_names_col,
             group_names_row=self.group_names_row,
         )
@@ -278,9 +279,9 @@ class BlockMatrixStorage:
             dofs_idx = []
             for group in take_groups:
                 for dof_idx in all_groups[group]:
-                    assert (
-                        input_dofs_idx[dof_idx] is not None
-                    ), f"Taking inactive row {group}"
+                    assert input_dofs_idx[dof_idx] is not None, (
+                        f"Taking inactive row {group}"
+                    )
                     dofs_idx.append(input_dofs_idx[dof_idx])
             return np.concatenate(dofs_idx)
 
@@ -364,15 +365,18 @@ class BlockMatrixStorage:
 
         nonzero_idx = get_nonzero_indices(
             A=self.mat,
-            row_indices=np.concatenate([all_rows[groups_row.index(i)] for i in group_row_idx]),
-            col_indices=np.concatenate([all_cols[groups_col.index(i)] for i in group_col_idx]),
+            row_indices=np.concatenate(
+                [all_rows[groups_row.index(i)] for i in group_row_idx]
+            ),
+            col_indices=np.concatenate(
+                [all_cols[groups_col.index(i)] for i in group_col_idx]
+            ),
         )
         self.mat.data[nonzero_idx] = 0
 
     # Visualization
 
     def get_active_local_dofs(self, grouped=False):
-
         def inner(idx, groups, active_groups):
             data = []
             for active_group in active_groups:
@@ -529,7 +533,7 @@ class BlockMatrixStorage:
             row_label_pos.append(ystart + (yend - ystart) / 2)
             kwargs = {}
             kwargs["facecolor"] = f"C{i}"
-            plt.axvspan(ystart - 0.5, yend - 0.5, alpha=alpha, **kwargs)
+            plt.axvspan(ystart - 0.5, yend - 0.5, alpha=alpha, kwargs=kwargs)
         ax.xaxis.set_ticks(row_label_pos)
         ax.set_xticklabels(row_names, rotation=45)
         if log:
@@ -539,11 +543,12 @@ class BlockMatrixStorage:
         plt.plot(local_rhs, label=label)
 
 
-class PreconditionerScheme:
-
+class PreconditionerScheme(ABC):
+    @abstractmethod
     def make_solver(self, mat_orig: BlockMatrixStorage):
         pass
 
+    @abstractmethod
     def get_groups(self) -> list[int]:
         pass
 
@@ -551,8 +556,8 @@ class PreconditionerScheme:
 @dataclass
 class FieldSplitScheme(PreconditionerScheme):
     groups: list[int]
-    solve: callable | Literal["direct", "use_invertor"] = "direct"
-    invertor: callable | Literal["use_solve", "direct"] = "use_solve"
+    solve: Callable | Literal["direct", "use_invertor"] = "direct"
+    invertor: Callable | Literal["use_solve", "direct"] = "use_solve"
     invertor_type: Literal["physical", "algebraic", "operator", "test_vector"] = (
         "algebraic"
     )
@@ -587,7 +592,10 @@ class FieldSplitScheme(PreconditionerScheme):
         submat_00 = mat_orig[groups_0, groups_0]
         if submat_00.shape[0] == 0 or submat_00.shape[1] == 0:
             if len(groups_1) == 0:
-                raise ValueError
+                raise ValueError("Both submatrices cannot be empty.")
+            if self.complement is None:
+                raise ValueError("Cannot make a solver from an empty complement")
+
             submat_11 = mat_orig[groups_1, groups_1]
             return self.complement.make_solver(submat_11)
 
@@ -598,14 +606,17 @@ class FieldSplitScheme(PreconditionerScheme):
             print(
                 f"Blocks: {submat_00.active_groups[0]} cond: {cond(submat_00.mat):.2e}"
             )
+
+        # TODO: Cleanup the dual meaning of solve and invertor
         solve = self.solve
         invertor = self.invertor
-        if solve == "use_invertor":
+        if isinstance(solve, str) and solve == "use_invertor":
             solve = self.invertor
             invertor = "use_solve"
         if solve == "direct":
             submat_00_solve = inv(submat_00.mat)
         else:
+            assert callable(solve)
             submat_00_solve = solve(mat_orig)
 
         if len(groups_1) == 0:
@@ -616,9 +627,11 @@ class FieldSplitScheme(PreconditionerScheme):
         submat_11 = mat_orig[groups_1, groups_1]
 
         if self.invertor_type == "physical":
+            assert callable(invertor)
             submat_11.mat += invertor(mat_orig)
 
         elif self.invertor_type == "operator":
+            assert callable(invertor)
             submat_11.mat = invertor(mat_orig)
 
         elif self.invertor_type == "algebraic":
@@ -646,6 +659,7 @@ class FieldSplitScheme(PreconditionerScheme):
         else:
             raise ValueError(f"{self.invertor_type=}")
 
+        assert self.complement is not None
         complement_mat, complement_solve = self.complement.make_solver(submat_11)
         if self.only_complement:
             print("Returning only Schur complement based on", groups_1)
@@ -690,7 +704,6 @@ class MultiStageScheme(PreconditionerScheme):
 
 
 class LinearSolverWithTransformations:
-
     def __init__(
         self,
         inner,
@@ -766,7 +779,7 @@ class KSPScheme:
     ] = None
     pc_side: Literal["left", "right", "auto"] = "auto"
 
-    petsc_options: dict[str, str] = None
+    petsc_options: dict[str, str] = {}
 
     def make_solver(self, mat_orig: BlockMatrixStorage):
         groups = self.get_groups()
@@ -777,16 +790,16 @@ class KSPScheme:
             Qleft = None
         else:
             Qleft = self.left_transformations[0](bmat)[groups]
-            for tmp in self.left_transformations[1:]:
-                tmp = tmp(bmat)[groups]
+            for transformation in self.left_transformations[1:]:
+                tmp = transformation(bmat)[groups]
                 Qleft.mat @= tmp.mat
 
         if self.right_transformations is None or len(self.right_transformations) == 0:
             Qright = None
         else:
             Qright = self.right_transformations[0](bmat)[groups]
-            for tmp in self.right_transformations[1:]:
-                tmp = tmp(bmat)[groups]
+            for transformation in self.right_transformations[1:]:
+                tmp = transformation(bmat)[groups]
                 Qright.mat @= tmp.mat
 
         bmat_Q = bmat
@@ -804,11 +817,21 @@ class KSPScheme:
                 print("Ignoring dtol")
             if self.atol is None:
                 self.atol = 1e-15
-            solver = PetscGMRES(bmat_Q.mat, pc=prec, tol=self.rtol, atol=self.atol, pc_side=pc_side, petsc_options=self.petsc_options)
+            solver: PetscKrylovSolver = PetscGMRES(
+                bmat_Q.mat,
+                pc=prec,
+                tol=self.rtol,
+                atol=self.atol,
+                pc_side=pc_side,
+                petsc_options=self.petsc_options,
+            )
         elif self.ksp == "richardson":
             pc_side = "left" if self.pc_side == "auto" else self.pc_side
             if self.dtol is not None:
                 print("Ignoring dtol!")
+
+            # Right transform is not supported for Richardson
+            assert pc_side == "left"
             solver = PetscRichardson(
                 bmat_Q.mat, pc=prec, tol=self.rtol, atol=self.atol, pc_side=pc_side
             )
@@ -816,11 +839,12 @@ class KSPScheme:
             raise ValueError(self.ksp)
 
         if Qleft is not None or Qright is not None:
-            solver = LinearSolverWithTransformations(
+            outer_solver = LinearSolverWithTransformations(
                 inner=solver, Qright=Qright, Qleft=Qleft
             )
-
-        return solver
+            return outer_solver
+        else:
+            return solver
 
     def get_groups(self) -> list[int]:
         return self.preconditioner.get_groups()
