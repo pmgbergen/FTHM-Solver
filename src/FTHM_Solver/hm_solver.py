@@ -1,3 +1,5 @@
+from typing import Callable
+
 from functools import cached_property
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 from .fixed_stress import make_fs_analytical, make_fs_analytical_slow
@@ -9,6 +11,7 @@ from .iterative_solver import (
 
 import numpy as np
 import scipy.sparse
+import porepy as pp
 from .mat_utils import (
     PetscAMGFlow,
     PetscAMGMechanics,
@@ -20,6 +23,16 @@ from .mat_utils import (
 
 
 class IterativeHMSolver(IterativeLinearSolver):
+    """Iterative solver mixin for coupled hydro-mechanical problems.
+
+    The solver is intended used for problems with hydromechanics.
+    """
+
+    contact_traction: Callable[[list[pp.Grid]], pp.ad.Variable]
+    interface_darcy_flux: Callable[[list[pp.MortarGrid]], pp.ad.Variable]
+    displacement: Callable[[list[pp.Grid]], pp.ad.Variable]
+    interface_displacement: Callable[[list[pp.MortarGrid]], pp.ad.Variable]
+    pressure: Callable[[list[pp.Grid]], pp.ad.Variable]
 
     CONTACT_GROUP: int = 0
 
@@ -97,13 +110,13 @@ class IterativeHMSolver(IterativeLinearSolver):
         `J[5, x]` - lower-dim mass balance equation;
 
         This index is not equivalen to PorePy model natural ordering. Constructed when
-        first accessed. Encorporates the permutation `contact_permutation` which 
+        first accessed. Encorporates the permutation `contact_permutation` which
         rearranges the conctact conditions into a cell-wise block structure.
 
         Returns:
             List of lists of integers. Each list contains the indices (in terms of the
                 blocks defined above) of the equations in the group, as defined by the
-                EquationSystem of the PorePy model. 
+                EquationSystem of the PorePy model.
 
         """
         dim_max = self.mdg.dim_max()
@@ -139,12 +152,12 @@ class IterativeHMSolver(IterativeLinearSolver):
         The PorePy arrangement is:
 
             `[[C0_norm], [C1_norm], [C0_tang], [C1_tang]]`,
-        
+
         where `C0` and `C1` correspond to the contact equation on fractures 0 and 1.
         We permute it to:
-        
+
             `[[f0_norm, f0_tang], [f1_norm, f1_tang]]`
-        
+
         Returns:
 
 
@@ -152,7 +165,7 @@ class IterativeHMSolver(IterativeLinearSolver):
         return make_reorder_contact(self, contact_group=self.CONTACT_GROUP)
 
     @cached_property
-    def eq_dofs(self) -> list[np.ndarray]:
+    def eq_dofs(self) -> list[np.ndarray | None]:
         """Equation indices (rows of the Jacobian) in the order defined by the PorePy
         EquationSystem.
 
@@ -172,7 +185,7 @@ class IterativeHMSolver(IterativeLinearSolver):
 
     def _correct_contact_eq_dofs(
         self, unpermuted_eq_dofs: list[np.ndarray], contact_group: int
-    ) -> list[np.ndarray]:
+    ) -> list[np.ndarray | None]:
         """Rearrange the unknowns (row indices) so that the contact equations are in a
         cell-wise block structure.
 
@@ -190,7 +203,9 @@ class IterativeHMSolver(IterativeLinearSolver):
         """
         # Short cut if no contact mechanics, hence no reordering.
         if len(self.equation_groups[contact_group]) == 0:
-            return unpermuted_eq_dofs
+            # Ignore mypy error, list[np.ndarray] is a subset of list[np.ndarray |
+            # None].
+            return unpermuted_eq_dofs  # type: ignore[return-value]
 
         # We assume that normal equations go first. TODO: Can we make this more robust,
         # or else put an assert here.
@@ -203,7 +218,7 @@ class IterativeHMSolver(IterativeLinearSolver):
             nb + i * num_fracs for i in range(2) for nb in normal_blocks
         ]
 
-        eq_dofs_corrected: list[np.ndarray] = []
+        eq_dofs_corrected: list[np.ndarray | None] = []
         # Add all equations that are not contact equations without any changes.
         for i, x in enumerate(unpermuted_eq_dofs):
             if i not in all_contact_blocks:
@@ -251,7 +266,7 @@ class IterativeHMSolver(IterativeLinearSolver):
 
         num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
         # Index of the first block after the contact group. This and all subsequent
-        # indexes will be reduced by the number of fractures (e.g., the number of 
+        # indexes will be reduced by the number of fractures (e.g., the number of
         # block equations that have been removed).
         block_after_contact = max(equation_groups[contact_group]) + 1
 
@@ -316,7 +331,7 @@ class IterativeHMSolver(IterativeLinearSolver):
             -J[contact_group, u_intf_group].mat @ J55_inv
         )
         return Qleft
-    
+
     def sticking_sliding_open(self):
         fractures = self.mdg.subdomains(dim=self.nd - 1)
         opening = self.opening_indicator(fractures).value(self.equation_system) < 0
@@ -326,7 +341,7 @@ class IterativeHMSolver(IterativeLinearSolver):
         )
         sticking = np.logical_not(opening | sliding)
 
-        return sticking, sliding, opening    
+        return sticking, sliding, opening
 
     def assemble_linear_system(self) -> None:
         super().assemble_linear_system()
@@ -455,14 +470,14 @@ class IterativeHMSolver(IterativeLinearSolver):
 
 def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.ndarray:
     """Permutate the contact mechanics equations to a cell-wise block structure.
-     
+
      The PorePy arrangement is:
-    
+
         [C_n^0, C_n^1, ..., C_n^K, C_y^0, C_z^0, C_y^1, C_z^1, ..., C_z^K, C_z^k],
-    
+
     where `C_n` is a normal component, `C_y` and `C_z` are two tangential
     components. The superscript corresponds to cell index. We permute it to
-    
+
         `[C_n^0, C_y^0, C_z^0, ..., C_n^K, C_y^K, C_z^K]`.
 
     Parameters:
@@ -518,14 +533,14 @@ def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.nda
 def build_mechanics_near_null_space(
     model: IterativeHMSolver, include_sd=True, include_intf=True
 ):
-    cell_centers = []
+    cell_center_array = []
     if include_sd:
-        cell_centers.append(model.mdg.subdomains(dim=model.nd)[0].cell_centers)
+        cell_center_array.append(model.mdg.subdomains(dim=model.nd)[0].cell_centers)
     if include_intf:
-        cell_centers.extend(
+        cell_center_array.extend(
             [intf.cell_centers for intf in model.mdg.interfaces(dim=model.nd - 1)]
         )
-    cell_centers = np.concatenate(cell_centers, axis=1)
+    cell_centers = np.concatenate(cell_center_array, axis=1)
 
     x, y, z = cell_centers
     num_dofs = cell_centers.shape[1]
