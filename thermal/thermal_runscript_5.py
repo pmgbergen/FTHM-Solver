@@ -275,7 +275,7 @@ def make_model(setup: dict):
             schedule=[0, end_time * DAY],
             iter_max=10,
             constant_dt=False,
-            recomp_max=0,
+            recomp_max=1,
         ),
         "units": pp.Units(kg=1e10),
         "meshing_arguments": {
@@ -321,13 +321,16 @@ if __name__ == "__main__":
     }
     for g in [
         # 1,
-        2,
-        5,
-        10,
+        # 2,
+        # 5,
+        # 10,
+        15,
+        20
     ]:
         for s in [
-            "CPR",
-            "SAMG",
+            'FGMRES',
+            # "CPR",
+            # "SAMG",
             # "S4_diag",
             # "SAMG+ILU",
             # "S4_diag+ILU",

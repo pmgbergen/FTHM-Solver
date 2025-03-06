@@ -46,6 +46,7 @@ class PetscFieldSplitScheme:
     python_pc: PETSc.PC = None
     # experimental
     near_null_space: list[np.ndarray] = None
+    ksp_keep_use_pmat: bool = False
 
     def get_groups(self) -> list[int]:
         groups = [g for g in self.groups]
@@ -129,6 +130,10 @@ class PetscFieldSplitScheme:
         petsc_pc_keep = petsc_ksp_keep.getPC()
         petsc_ksp_elim = petsc_pc.getFieldSplitSubKSP()[0]
         petsc_pc_elim = petsc_ksp_elim.getPC()
+
+        if self.ksp_keep_use_pmat:
+            amat, pmat = petsc_ksp_keep.getOperators()
+            petsc_ksp_keep.setOperators(pmat, pmat)
 
         if self.near_null_space is not None:
             null_space_vectors = []

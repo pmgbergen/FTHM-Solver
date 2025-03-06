@@ -69,8 +69,12 @@ class Geometry(pp.PorePyModel):
         src = self.locate_source(subdomains)
         src *= self.fluid_source_mass_rate()
         cv = self.fluid.components[0].specific_heat_capacity
+        t_inj = 40
+        if self.params["setup"].get("isothermal", False):
+            t_inj = self.reference_variable_values.temperature - 273
+
         t_inj = (
-            self.units.convert_units(273 + 40, "K")
+            self.units.convert_units(273 + t_inj, "K")
             - self.reference_variable_values.temperature
         )
         src *= cv * t_inj
@@ -118,7 +122,16 @@ class Geometry(pp.PorePyModel):
 
 
 class Setup(Geometry, THMSolver, StatisticsSavingMixin, Physics):
-    pass
+
+    def simulation_name(self):
+        name = super().simulation_name()
+        if self.params["setup"].get("isothermal", False):
+            name = f"{name}_isothermal"
+        if (x := self.params["setup"].get("thermal_conductivity_multiplier", 1)) != 1:
+            name = f"{name}_diffusion={x}"
+        if (x := self.params['setup'].get('friction_coef', None)):
+            name = f"{name}_friction={x}"
+        return name
 
 
 def make_model(setup: dict):
@@ -141,6 +154,9 @@ def make_model(setup: dict):
         end_time = 5e2
     porosity = 1.3e-2  # probably on the low side
 
+    thermal_conductivity_multiplier = setup.get("thermal_conductivity_multiplier", 1)
+    friction_coef = setup.get('friction_coef', 0.577)
+
     params = {
         "setup": setup,
         "folder_name": "visualization_2d",
@@ -158,10 +174,11 @@ def make_model(setup: dict):
                 biot_coefficient=biot,  # [-]
                 density=2683.0,  # [kg * m^-3]
                 porosity=porosity,  # [-]
-                friction_coefficient=0.577,  # [-]
+                friction_coefficient=friction_coef,  # [-]
                 # Thermal
                 specific_heat_capacity=720.7,
-                thermal_conductivity=0.1,  # Diffusion coefficient
+                thermal_conductivity=0.1
+                * thermal_conductivity_multiplier,  # Diffusion coefficient
                 thermal_expansion=9.66e-6,
             ),
             "fluid": pp.FluidComponent(
@@ -228,30 +245,34 @@ def run_model(setup: dict):
 
 if __name__ == "__main__":
 
+    # for friction_coef in [0.1, 0.9]:
+        # for thermal_conductivity_multiplier in [0.01, 100]:
+
     common_params = {
         "geometry": "4h_steady",
         "save_matrix": False,
+    # "isothermal": False,
+        # "friction_coef": friction_coef,
+        # 'thermal_conductivity_multiplier': thermal_conductivity_multiplier,
     }
-    for g in (
-        [
-            # 1,
-            # 2,
-            # 5,
-            # 25,
-            33,
-            40,
-        ]
-    ):
-        for s in (
-            [
-                "SAMG",
-                "CPR",
-                # "SAMG+ILU",
-                # "S4_diag+ILU",
-                # "AAMG+ILU",
-                # "S4_diag",
-            ]
-        ):
+
+    for g in [
+        1,
+        2,
+        5,
+        # 25,
+        # 33,
+        # 40,
+    ]:
+        for s in [
+            'FGMRES',
+            # "SAMG",
+            # "CPR",
+            # "SAMG+ILU",
+            # "S4_diag+ILU",
+            # "AAMG+ILU",
+            # "S4_diag",
+        ]:
             print("Running steady state")
             params = {
                 "grid_refinement": g,
