@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, Callable, Literal, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Callable, Literal, Optional, Sequence, Union
 import itertools
 
 import scipy.linalg
@@ -779,7 +779,7 @@ class KSPScheme:
     ] = None
     pc_side: Literal["left", "right", "auto"] = "auto"
 
-    petsc_options: dict[str, str] = {}
+    petsc_options: dict[str, str] = field(default_factory=dict)
 
     def make_solver(self, mat_orig: BlockMatrixStorage):
         groups = self.get_groups()

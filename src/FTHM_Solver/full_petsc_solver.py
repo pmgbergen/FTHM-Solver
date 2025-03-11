@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Callable, Optional
 import numpy as np
-from block_matrix import BlockMatrixStorage
-from mat_utils import csr_to_petsc, make_сlear_petsc_options, petsc_to_csr
+from .block_matrix import BlockMatrixStorage
+from .mat_utils import csr_to_petsc, make_сlear_petsc_options, petsc_to_csr
 from petsc4py import PETSc
 
 
@@ -143,7 +143,7 @@ class PetscFieldSplitScheme:
                 null_space_vec_petsc.setUp()
                 null_space_vec_petsc.setArray(b)
                 null_space_vectors.append(null_space_vec_petsc)
-             # possibly mem leak
+            # possibly mem leak
             null_space_petsc = PETSc.NullSpace().create(True, null_space_vectors)
             petsc_pc_elim.getOperators()[1].setNearNullSpace(null_space_petsc)
 
@@ -197,7 +197,6 @@ class PetscKSPScheme:
 
 @dataclass
 class LinearTransformedScheme:
-
     left_transformations: Optional[
         list[Callable[[BlockMatrixStorage], BlockMatrixStorage]]
     ] = None
@@ -247,7 +246,6 @@ class LinearTransformedScheme:
 
 
 class LinearSolverWithTransformations:
-
     def __init__(
         self,
         inner,
@@ -278,7 +276,6 @@ class LinearSolverWithTransformations:
 
 
 class PetscKrylovSolver:
-
     def __init__(
         self,
         ksp,
@@ -393,7 +390,6 @@ class PetscCompositeScheme:
 
 
 class PcPythonPermutation:
-
     def __init__(self, perm: np.ndarray, block_size: int):
         self.petsc_pc = PETSc.PC().create()
         self.petsc_is_perm = PETSc.IS().createGeneral(perm.astype(np.int32))
