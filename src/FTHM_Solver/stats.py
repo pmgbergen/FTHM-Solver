@@ -31,6 +31,17 @@ class LinearSolveStats:
     rhs_id: str = ""
     state_id: str = ""
     iterate_id: str = ""
+    # Thermal
+    temp_min: float = -1
+    temp_max: float = -1
+    cfl: float = -1
+    enthalpy_max: float = -1
+    enthalpy_mean: float = -1
+    fourier_max: float = -1
+    fourier_mean: float = -1
+    # TO BE REMOVED:
+    peclet_max: float = -1
+    peclet_mean: float = -1
 
 
 @dataclass
@@ -63,7 +74,7 @@ def dump_json(name, data):
         file.write(json_data)
 
 
-class StatisticsSavingMixin(ContactIndicators, SolutionStrategy):
+class StatisticsSavingMixin(ContactIndicators):
     _linear_solve_stats: LinearSolveStats
     _time_step_stats: TimeStepStats
 
@@ -86,7 +97,7 @@ class StatisticsSavingMixin(ContactIndicators, SolutionStrategy):
         self.statistics.append(self._time_step_stats)
         print()
         DAY = 24 * 60 * 60
-        print(f"Sim time: {self.time_manager.time / DAY}, Dt: {self.time_manager.dt / DAY :.2f} (days)")
+        print(f"Sim time: {self.time_manager.time / DAY :.2e}, Dt: {self.time_manager.dt / DAY :.2e} (days)")
         super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(self) -> None:

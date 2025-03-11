@@ -3,6 +3,11 @@ from typing import Callable
 from functools import cached_property
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 from .fixed_stress import make_fs_analytical, make_fs_analytical_slow
+from .full_petsc_solver import (
+    LinearTransformedScheme,
+    PetscFieldSplitScheme,
+    PetscKSPScheme,
+)
 from .iterative_solver import (
     IterativeLinearSolver,
     get_equations_group_ids,
@@ -17,6 +22,7 @@ from .mat_utils import (
     PetscAMGMechanics,
     PetscILU,
     csr_ones,
+    csr_to_petsc,
     extract_diag_inv,
     inv_block_diag,
 )
@@ -300,11 +306,6 @@ class IterativeHMSolver(IterativeLinearSolver):
 
         Qright.mat = csr_ones(Qright.shape[0])
 
-        st, sl, op = self.sticking_sliding_open()
-        st = np.repeat(st, self.nd)
-        sl = np.repeat(sl, self.nd)
-        op = np.repeat(op, self.nd)
-
         J54 = J[u_intf_group, contact_group].mat
 
         tmp = -J55_inv @ J54
@@ -458,6 +459,70 @@ class IterativeHMSolver(IterativeLinearSolver):
                             ).mat,
                             complement=FieldSplitScheme(
                                 groups=[4, 5],
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+        elif solver_type == 3:
+            return LinearTransformedScheme(
+                right_transformations=[
+                    lambda bmat: self.Qright(contact_group=0, u_intf_group=3)
+                ],
+                inner=PetscKSPScheme(
+                    petsc_options={
+                        "ksp_rtol": 1e-10,
+                        "ksp_atol": 1e-15,
+                        "ksp_max_it": 90,
+                        "ksp_gmres_restart": 30,
+                    },
+                    preconditioner=PetscFieldSplitScheme(
+                        groups=[0],
+                        block_size=self.nd,
+                        fieldsplit_options={
+                            "pc_fieldsplit_schur_precondition": "selfp",
+                        },
+                        elim_options={
+                            "pc_type": "pbjacobi",
+                        },
+                        keep_options={
+                            "mat_schur_complement_ainv_type": "blockdiag",
+                        },
+                        complement=PetscFieldSplitScheme(
+                            groups=[1],
+                            fieldsplit_options={
+                                "pc_fieldsplit_schur_precondition": "selfp",
+                            },
+                            elim_options={
+                                "pc_type": "ilu",
+                            },
+                            complement=PetscFieldSplitScheme(
+                                groups=[2, 3],
+                                block_size=self.nd,
+                                invert=lambda bmat: csr_to_petsc(
+                                    make_fs_analytical(
+                                        self, bmat, p_mat_group=4, p_frac_group=5
+                                    ).mat,
+                                    bsize=1,
+                                ),
+                                # fieldsplit_options={
+                                #     "pc_fieldsplit_schur_precondition": "selfp",
+                                # },
+                                elim_options={
+                                    "pc_type": "hypre",
+                                    "pc_hypre_type": "boomeramg",
+                                    "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                },
+                                complement=PetscFieldSplitScheme(
+                                    groups=[4, 5],
+                                    elim_options={
+                                        "pc_type": "hypre",
+                                        "pc_hypre_type": "boomeramg",
+                                        "pc_hypre_boomeramg_truncfactor": 0.3,
+                                        # "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    },
+                                ),
                             ),
                         ),
                     ),

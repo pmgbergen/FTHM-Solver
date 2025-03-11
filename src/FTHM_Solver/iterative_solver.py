@@ -225,8 +225,9 @@ def get_variables_group_ids(
             # If we ever get a variable in here, we need to handle it directly, and not
             # call sub_vars.
             assert isinstance(md_var, pp.ad.MixedDimensionalVariable)
-            group_idx.extend([variable_to_idx[var] for var in md_var.sub_vars])
+            group_idx.extend([variable_to_idx.pop(var) for var in md_var.sub_vars])
         indices.append(group_idx)
+    assert len(variable_to_idx) == 0, "Some variables are not used."
     return indices
 
 
@@ -272,11 +273,12 @@ def get_equations_group_ids(
         for eq_name, domains_of_eq in group:
             for domain in domains_of_eq:
                 if (eq_name, domain) in equation_to_idx:
-                    group_idx.append(equation_to_idx[(eq_name, domain)])
+                    group_idx.append(equation_to_idx.pop((eq_name, domain)))
         indices.append(group_idx)
 
     # TODO EK: Added this assert just to verify that my understanding of the function
     # is correct. Delete it later.
     assert len(indices) == len(equations_group_order)
+    assert len(equation_to_idx) == 0, "Some equations are not used."
 
     return indices

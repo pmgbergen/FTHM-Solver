@@ -352,6 +352,14 @@ def get_time_steps(x: Sequence[TimeStepStats]) -> list[float]:
     return result
 
 
+def get_ls_indices(x: Sequence[TimeStepStats]) -> list[int]:
+    result = []
+    for i, ts in enumerate(x):
+        for _ in ts.linear_solves:
+            result.append(i)
+    return np.array(result, dtype=int)
+
+
 def get_jacobian_cond(data: Sequence[TimeStepStats]):
     res = []
     for i in range(sum(len(x.linear_solves) for x in data)):
@@ -371,9 +379,9 @@ def get_petsc_converged_reason(x: Sequence[TimeStepStats]) -> list[int]:
 def get_num_sticking_sliding_open(
     x: Sequence[TimeStepStats],
 ) -> tuple[list[int], list[int], list[int]]:
-    num_sticking = [ls.num_sticking for ts in x for ls in ts.linear_solves]
-    num_sliding = [ls.num_sliding for ts in x for ls in ts.linear_solves]
-    num_open = [ls.num_open for ts in x for ls in ts.linear_solves]
+    num_sticking = np.array([ls.num_sticking for ts in x for ls in ts.linear_solves])
+    num_sliding = np.array([ls.num_sliding for ts in x for ls in ts.linear_solves])
+    num_open = np.array([ls.num_open for ts in x for ls in ts.linear_solves])
     return num_sticking, num_sliding, num_open
 
 
@@ -394,6 +402,26 @@ def get_open(x: Sequence[TimeStepStats], idx: int):
 
 def get_sticking_sliding_open(x: Sequence[TimeStepStats], idx: int):
     return get_sticking(x, idx), get_sliding(x, idx), get_open(x, idx)
+
+
+def get_cfl(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.cfl for ts in x for ls in ts.linear_solves]
+
+
+def get_enthalpy_max(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.enthalpy_max for ts in x for ls in ts.linear_solves]
+
+
+def get_fourier_max(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.fourier_max for ts in x for ls in ts.linear_solves]
+
+
+def get_peclet_max(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.enthalpy_max / ls.fourier_max for ts in x for ls in ts.linear_solves]
+
+
+def get_peclet_mean(x: Sequence[TimeStepStats]) -> list[float]:
+    return [ls.enthalpy_mean / ls.fourier_mean for ts in x for ls in ts.linear_solves]
 
 
 def group_intervals(arr):
@@ -460,6 +488,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         -3: "C3",
         -4: "C4",
         -100: "black",
+        -11: "black",
     }
 
     reasons_explained = {
@@ -469,6 +498,7 @@ def color_converged_reason(data: Sequence[TimeStepStats], legend=True, grid=True
         2: "Converged reltol",
         3: "Converged abstol",
         -100: "No data",
+        -11: "PC failed",
         -4: "Diverged dtol",
     }
 
@@ -835,10 +865,11 @@ def write_dofs_info(model):
     for i in bmat.active_groups[0]:
         data[f"block {i}"] = bmat[0, i].shape[1]
     data["total dofs"] = bmat.shape[0]
-    cell_volumes = np.concatenate(
-        [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]
-    ).tolist()
-    data["cell_volumes"] = cell_volumes
+
+    frac_volume = [frac.cell_volumes for frac in model.mdg.subdomains(dim=model.nd - 1)]
+    if len(frac_volume) != 0:
+        cell_volumes = np.concatenate(frac_volume).tolist()
+        data["cell_volumes"] = cell_volumes
     dump_json(filename, data)
 
 
@@ -864,7 +895,8 @@ def solve_petsc_3(
     logx_eigs=False,
     normalize_residual=False,
     ksp_view: bool = False,
-    return_data: bool = False
+    options_view: bool = False,
+    return_data: bool = False,
 ):
     if rhs_global is None:
         rhs_global = np.ones(bmat.shape[0])
@@ -872,19 +904,18 @@ def solve_petsc_3(
 
     t0 = time.time()
     krylov = ksp_scheme.make_solver(bmat)
+    if options_view:
+        for k, v in ksp_scheme.options.items():
+            print(k, v)
     print("Construction took:", round(time.time() - t0, 2))
 
     rhs_local = bmat.project_rhs_to_local(rhs_global)
-
-    if ksp_view:
-        krylov.ksp.view()
 
     t0 = time.time()
     sol_local = krylov.solve(rhs_local)
     print("Solve", label, "took:", round(time.time() - t0, 2))
     residuals = krylov.get_residuals()
     info = krylov.ksp.getConvergedReason()
-    eigs = krylov.ksp.computeEigenvalues()
 
     print(
         "True residual:",
@@ -892,11 +923,17 @@ def solve_petsc_3(
     )
 
     print("PETSc Converged Reason:", info)
+
     linestyle = "-"
-    if info <= 0:
-        linestyle = "--"
-        if len(eigs) > 0:
-            print("lambda min:", min(abs(eigs)))
+    try:
+        eigs = krylov.ksp.computeEigenvalues()
+    except:
+        eigs = None
+    else:
+        if info <= 0:
+            linestyle = "--"
+            if len(eigs) > 0:
+                print("lambda min:", min(abs(eigs)))
 
     plt.gcf().set_size_inches(14, 4)
 
@@ -920,17 +957,23 @@ def solve_petsc_3(
     ax.set_title("Krylov Convergence")
 
     ax = plt.subplot(1, 2, 2)
-    if logx_eigs:
+    if eigs is not None and logx_eigs:
         eigs.real = abs(eigs.real)
-    ax.scatter(eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS))
-    ax.set_xlabel(r"Re($\lambda)$")
-    ax.set_ylabel(r"Im($\lambda$)")
-    ax.grid(True)
+    if eigs is not None:
+        ax.scatter(
+            eigs.real, eigs.imag, label=label, alpha=1, s=300, marker=next(MARKERS)
+        )
+        ax.set_xlabel(r"Re($\lambda)$")
+        ax.set_ylabel(r"Im($\lambda$)")
+        ax.grid(True)
+        if logx_eigs:
+            plt.xscale("log")
+        ax.set_title("Eigenvalues estimate")
     if label != "":
         ax.legend()
-    if logx_eigs:
-        plt.xscale("log")
-    ax.set_title("Eigenvalues estimate")
+
+    if ksp_view:
+        krylov.ksp.view()
 
     if return_data:
         return krylov

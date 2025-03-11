@@ -176,22 +176,22 @@ def run_model(setup: dict):
 
 
 if __name__ == "__main__":
-    solver = 21
-    for g in [0.25, 0.5]:
-        run_model(
-            {
-                "physics": 1,
-                "geometry": 0.3,
-                "barton_bandis_stiffness_type": 2,
-                "friction_type": 1,
-                "grid_refinement": g,
-                "solver": solver,
-                "permeability": 0,
-            }
-        )
+    # solver = 21
+    # for g in [0.25, 0.5]:
+    #     run_model(
+    #         {
+    #             "physics": 1,
+    #             "geometry": 0.3,
+    #             "barton_bandis_stiffness_type": 2,
+    #             "friction_type": 1,
+    #             "grid_refinement": g,
+    #             "solver": solver,
+    #             "permeability": 0,
+    #         }
+    #     )
 
-    solver = 2
-    for g in [0.25, 0.5, 1, 2, 3, 3.6]:
+    solver = 3
+    for g in [0.25, 0.5, 1, 2, 3, 3.6, 4]:
         run_model(
             {
                 "physics": 1,
