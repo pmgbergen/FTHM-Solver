@@ -1,3 +1,4 @@
+from __future__ import annotations
 import sys
 from typing import Literal, TYPE_CHECKING
 
@@ -7,13 +8,12 @@ import petsc4py
 import scipy.linalg
 import scipy.sparse
 import scipy.sparse.linalg
+from petsc4py import PETSc
 
 if TYPE_CHECKING:
     from block_matrix import BlockMatrixStorage, FieldSplitScheme
 
 petsc4py.init(sys.argv)
-
-from petsc4py import PETSc
 
 
 def assert_finite(vals, groups):
@@ -77,8 +77,7 @@ class FieldSplit:
 
 
 class RestrictedOperator:
-
-    def __init__(self, mat: "BlockMatrixStorage", solve_scheme: "FieldSplitScheme"):
+    def __init__(self, mat: BlockMatrixStorage, solve_scheme: FieldSplitScheme):
         to_groups = solve_scheme.get_groups()
         self.R = self.make_restriction_matrix(mat, to_groups).mat
         _, self.prec = solve_scheme.make_solver(mat[to_groups])
@@ -107,7 +106,6 @@ class RestrictedOperator:
 
 
 class TwoStagePreconditioner:
-
     def __init__(self, mat: "BlockMatrixStorage", stages: list):
         assert len(stages) == 2
         self.mat: "BlockMatrixStorage" = mat
@@ -363,7 +361,6 @@ class PetscHypreILU(PetscPC):
 
 
 class PetscPythonPC:
-
     def __init__(self, pc):
         self.pc = pc
 
@@ -374,7 +371,6 @@ class PetscPythonPC:
 
 
 class PetscKrylovSolver:
-
     def __init__(
         self,
         mat,
@@ -432,7 +428,6 @@ class PetscKrylovSolver:
 
 
 class PetscGMRES(PetscKrylovSolver):
-
     def __init__(
         self,
         mat,
@@ -473,7 +468,6 @@ class PetscGMRES(PetscKrylovSolver):
 
 
 class PetscRichardson(PetscKrylovSolver):
-
     def __init__(
         self,
         mat,
@@ -696,7 +690,6 @@ def make_scaling_1(
 
 
 class RearrangeAOS:
-
     def __init__(
         self, bmat: "BlockMatrixStorage", solve, together: list[list[int]] = None
     ):
@@ -749,7 +742,6 @@ class RearrangeAOS:
 
 
 class BJacobiILU:
-
     def __init__(self, bmat: "BlockMatrixStorage"):
         self.bmat: "BlockMatrixStorage" = bmat
         self.shape = bmat.shape
