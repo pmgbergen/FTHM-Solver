@@ -1,15 +1,15 @@
 from functools import cached_property
 
 import scipy.sparse
-from block_matrix import (
+from .block_matrix import (
     BlockMatrixStorage,
     FieldSplitScheme,
     KSPScheme,
     MultiStageScheme,
 )
 import numpy as np
-from fixed_stress import make_fs_analytical_slow_new, make_fs_thermal
-from full_petsc_solver import (
+from .fixed_stress import make_fs_analytical_slow_new, make_fs_thermal
+from .full_petsc_solver import (
     LinearTransformedScheme,
     PcPythonPermutation,
     PetscCPRScheme,
@@ -17,7 +17,7 @@ from full_petsc_solver import (
     PetscFieldSplitScheme,
     PetscKSPScheme,
 )
-from mat_utils import (
+from .mat_utils import (
     BJacobiILU,
     PetscHypreILU,
     PetscSOR,
@@ -31,23 +31,22 @@ from mat_utils import (
     make_scaling,
     make_scaling_1,
 )
-from hm_solver import (
+from .hm_solver import (
     IterativeHMSolver,
     build_mechanics_near_null_space,
 )
-from iterative_solver import (
+from .iterative_solver import (
     get_equations_group_ids,
     get_variables_group_ids,
 )
 
 
 class THMSolver(IterativeHMSolver):
-
     def simulation_name(self) -> str:
         name = "stats_thermal"
         setup = self.params["setup"]
-        name = f'{name}_geo{setup["geometry"]}x{setup["grid_refinement"]}'
-        name = f'{name}_sol{setup["solver"]}'
+        name = f"{name}_geo{setup['geometry']}x{setup['grid_refinement']}"
+        name = f"{name}_sol{setup['solver']}"
         if (bc := setup.get("thermal_diffusion_bc")) not in ("dir", None):
             name = f"{name}_bc{bc}"
         return name
