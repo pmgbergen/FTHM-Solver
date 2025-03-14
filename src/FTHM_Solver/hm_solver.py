@@ -333,7 +333,7 @@ class IterativeHMSolver(IterativeLinearSolver):
         )
         return Qleft
 
-    def sticking_sliding_open(self):
+    def sticking_sliding_open(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         fractures = self.mdg.subdomains(dim=self.nd - 1)
         opening = self.opening_indicator(fractures).value(self.equation_system) < 0
         closed = np.logical_not(opening)

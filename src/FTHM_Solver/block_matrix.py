@@ -1,3 +1,4 @@
+from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Optional, Sequence, Union
@@ -24,19 +25,19 @@ from .plot_utils import plot_mat, spy
 
 
 def color_spy(
-    mat,
-    row_idx,
-    col_idx,
-    row_names=None,
-    col_names=None,
+    mat: spmatrix,
+    row_idx: list[list[int]],
+    col_idx: list[list[int]],
+    row_names: Optional[list[str]] = None,
+    col_names: Optional[list[str]] = None,
     aspect: Literal["equal", "auto"] = "equal",
     show: bool = False,
-    marker=None,
-    draw_marker=True,
-    color=True,
-    hatch=True,
-    alpha=0.3,
-):
+    marker: Optional[str] = None,
+    draw_marker: bool = True,
+    color: bool = True,
+    hatch: bool = True,
+    alpha: float = 0.3,
+) -> None:
     if draw_marker:
         spy(mat, show=False, aspect=aspect, marker=marker)
     else:
@@ -290,12 +291,12 @@ class BlockMatrixStorage:
         I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
         self.mat[I, J] = value
 
-    def copy(self) -> "BlockMatrixStorage":
+    def copy(self) -> BlockMatrixStorage:
         res = self.empty_container()
         res.mat = self.mat.copy()
         return res
 
-    def empty_container(self) -> "BlockMatrixStorage":
+    def empty_container(self) -> BlockMatrixStorage:
         return BlockMatrixStorage(
             mat=scipy.sparse.csr_matrix(self.mat.shape),
             local_dofs_row=self.local_dofs_row,

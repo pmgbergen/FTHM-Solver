@@ -2,7 +2,8 @@ import itertools
 import json
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Sequence
+from typing import TYPE_CHECKING, Literal, Sequence, Optional
+from scipy.sparse import spmatrix
 
 import matplotlib as mpl
 import numpy as np
@@ -36,7 +37,12 @@ def trim_label(label: str) -> str:
     return label[:trim] + "..."
 
 
-def spy(mat, show=True, aspect: Literal["equal", "auto"] = "equal", marker=None):
+def spy(
+    mat: spmatrix,
+    show: bool = True,
+    aspect: Literal["equal", "auto"] = "equal",
+    marker: Optional[str] = None,
+) -> None:
     if marker is None:
         marker = "+"
         if max(*mat.shape) > 300:
@@ -99,12 +105,12 @@ def plot_jacobian(model, equations=None):
 
 
 def plot_mat(
-    mat,
-    log=True,
-    show=True,
-    threshold=1e-30,
+    mat: spmatrix,
+    log: bool = True,
+    show: bool = True,
+    threshold: float = 1e-30,
     aspect: Literal["equal", "auto"] = "equal",
-):
+) -> None:
     mat = mat.copy()
     try:
         mat = mat.toarray()

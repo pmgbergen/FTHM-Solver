@@ -1,9 +1,10 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import cached_property
 import json
 from pathlib import Path
 from dataclasses import asdict
-import time 
+import time
 import scipy.sparse
 import numpy as np
 import porepy as pp
@@ -50,7 +51,7 @@ class TimeStepStats:
     nonlinear_convergence_status: int = 1  # 1 converged -1 diverged
 
     @classmethod
-    def from_json(cls, json: str):
+    def from_json(cls, json: str) -> TimeStepStats:
         data = cls(**json)
         tmp = []
         for x in data.linear_solves:
@@ -62,7 +63,7 @@ class TimeStepStats:
         return data
 
 
-def dump_json(name, data):
+def dump_json(name: str, data: list[TimeStepStats]) -> None:
     save_path = Path("./stats")
     save_path.mkdir(exist_ok=True)
     try:
@@ -85,11 +86,11 @@ class StatisticsSavingMixin(ContactIndicators):
     def simulation_name(self) -> str:
         name = "stats"
         setup = self.params["setup"]
-        name = f'{name}_geo{setup["geometry"]}x{setup["grid_refinement"]}'
-        name = f'{name}_sol{setup["solver"]}'
-        name = f'{name}_ph{setup["physics"]}'
-        name = f'{name}_bb{setup["barton_bandis_stiffness_type"]}'
-        name = f'{name}_fr{setup["friction_type"]}'
+        name = f"{name}_geo{setup['geometry']}x{setup['grid_refinement']}"
+        name = f"{name}_sol{setup['solver']}"
+        name = f"{name}_ph{setup['physics']}"
+        name = f"{name}_bb{setup['barton_bandis_stiffness_type']}"
+        name = f"{name}_fr{setup['friction_type']}"
         return name
 
     def before_nonlinear_loop(self) -> None:
@@ -97,7 +98,9 @@ class StatisticsSavingMixin(ContactIndicators):
         self.statistics.append(self._time_step_stats)
         print()
         DAY = 24 * 60 * 60
-        print(f"Sim time: {self.time_manager.time / DAY :.2e}, Dt: {self.time_manager.dt / DAY :.2e} (days)")
+        print(
+            f"Sim time: {self.time_manager.time / DAY:.2e}, Dt: {self.time_manager.dt / DAY:.2e} (days)"
+        )
         super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(self) -> None:
@@ -129,6 +132,7 @@ class StatisticsSavingMixin(ContactIndicators):
         #     self.save_matrix_state()
         dump_json(self.simulation_name() + ".json", self.statistics)
         from plot_utils import write_dofs_info
+
         write_dofs_info(self)
         super().after_nonlinear_iteration(solution_vector)
 
@@ -219,7 +223,7 @@ class StatisticsSavingMixin(ContactIndicators):
         save_path.mkdir(exist_ok=True)
         mat, rhs = self.linear_system
         name = f"{self.simulation_name()}_{int(time.time() * 1000)}"
-        print('Saving matrix', name)
+        print("Saving matrix", name)
         mat_id = f"{name}.npz"
         rhs_id = f"{name}_rhs.npy"
         state_id = f"{name}_state.npy"

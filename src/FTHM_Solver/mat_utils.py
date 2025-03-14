@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 petsc4py.init(sys.argv)
 
 
-def assert_finite(vals, groups):
+def assert_finite(vals: np.ndarray, groups: list[int]) -> None:
     pass
     # if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):
     #     print("Divergence", groups)
@@ -763,6 +763,7 @@ def csr_to_petsc(mat: scipy.sparse.csr_matrix, bsize: int = 1) -> PETSc.Mat:
         csr=(mat.indptr, mat.indices, mat.data),
         bsize=bsize,
     )
+
 
 def petsc_to_csr(petsc_mat: PETSc.Mat) -> scipy.sparse.csr_matrix:
     indptr, indices, data = petsc_mat.getValuesCSR()

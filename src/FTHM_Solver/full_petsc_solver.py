@@ -6,7 +6,7 @@ from .mat_utils import csr_to_petsc, make_сlear_petsc_options, petsc_to_csr
 from petsc4py import PETSc
 
 
-def construct_is(bmat, groups) -> PETSc.IS:
+def construct_is(bmat: BlockMatrixStorage, groups: list[int]) -> PETSc.IS:
     empty_mat = bmat.empty_container()
     dofs = [
         empty_mat.local_dofs_row[x]
@@ -24,7 +24,7 @@ def construct_is(bmat, groups) -> PETSc.IS:
         return PETSc.IS().createGeneral(np.array([], dtype=np.int32))
 
 
-def build_tag(groups):
+def build_tag(groups: list[int]) -> str:
     return "-".join([str(x) for x in groups])
 
 

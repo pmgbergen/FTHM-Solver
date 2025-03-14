@@ -77,7 +77,9 @@ from .block_matrix import BlockMatrixStorage
 #     return -bmat[base, [1, 5]].mat @ J15_inv @ bmat[[1, 5], base].mat
 
 
-def get_fixed_stress_stabilization(model, l_factor: float = 0.6):
+def get_fixed_stress_stabilization(
+    model, l_factor: float = 0.6
+) -> scipy.sparse.spmatrix:
     mu_lame = model.solid.shear_modulus
     lambda_lame = model.solid.lame_lambda
     alpha_biot = model.solid.biot_coefficient
@@ -189,7 +191,9 @@ def get_fs_fractures_analytical(model):
     return scipy.sparse.diags(val)
 
 
-def make_fs_analytical(model, J, p_mat_group: int, p_frac_group: int):
+def make_fs_analytical(
+    model, J: BlockMatrixStorage, p_mat_group: int, p_frac_group: int
+) -> BlockMatrixStorage:
     groups = [p_mat_group, p_frac_group]
     diag = [
         get_fixed_stress_stabilization(model),
