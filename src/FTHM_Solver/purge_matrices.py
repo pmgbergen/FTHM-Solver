@@ -5,8 +5,8 @@ from stats import TimeStepStats
 
 known_data = set()
 
-stats_dir = Path('./stats')
-data_dir = Path('./matrices')
+stats_dir = Path("./stats")
+data_dir = Path("./matrices")
 
 for stats_file in os.listdir(stats_dir):
     stats = load_data(stats_dir / stats_file)
@@ -19,7 +19,7 @@ for stats_file in os.listdir(stats_dir):
         skip = not isinstance(stats[0], TimeStepStats)
 
     if skip:
-        print('Skipping', stats_file)
+        print("Skipping", stats_file)
         continue
     for ts in stats:
         for ls in ts.linear_solves:
@@ -40,4 +40,4 @@ for mat_file in os.listdir(data_dir):
         print("Removed:", mat_file)
 
 
-print(f'Removed {not_found} / {found + not_found}')
+print(f"Removed {not_found} / {found + not_found}")

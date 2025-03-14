@@ -4,36 +4,21 @@ import scipy.sparse
 from .block_matrix import (
     BlockMatrixStorage,
     FieldSplitScheme,
-    KSPScheme,
-    MultiStageScheme,
 )
 import numpy as np
-from .fixed_stress import make_fs_analytical_slow_new, make_fs_thermal
+from .fixed_stress import make_fs_analytical_slow_new
 from .full_petsc_solver import (
     LinearTransformedScheme,
     PcPythonPermutation,
-    PetscCPRScheme,
     PetscCompositeScheme,
     PetscFieldSplitScheme,
     PetscKSPScheme,
 )
 from .mat_utils import (
-    BJacobiILU,
-    PetscHypreILU,
-    PetscSOR,
-    RestrictedOperator,
     csr_to_petsc,
-    extract_diag_inv,
-    inv_block_diag,
-    PetscAMGFlow,
-    PetscAMGMechanics,
-    PetscILU,
-    make_scaling,
-    make_scaling_1,
 )
 from .hm_solver import (
     IterativeHMSolver,
-    build_mechanics_near_null_space,
 )
 from .iterative_solver import (
     get_equations_group_ids,

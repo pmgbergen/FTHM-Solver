@@ -6,20 +6,9 @@ import time
 import scipy.sparse as sps
 import numpy as np
 import porepy as pp
-from porepy.models.solution_strategy import SolutionStrategy
 
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme
 
-from .mat_utils import (
-    PetscAMGFlow,
-    PetscAMGMechanics,
-    PetscGMRES,
-    PetscILU,
-    PetscRichardson,
-    csr_ones,
-    extract_diag_inv,
-    inv_block_diag,
-)
 from .stats import LinearSolveStats
 
 

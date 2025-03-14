@@ -8,7 +8,7 @@ import time
 import scipy.sparse
 import numpy as np
 import porepy as pp
-from porepy.models.solution_strategy import SolutionStrategy, ContactIndicators
+from porepy.models.solution_strategy import ContactIndicators
 
 
 @dataclass

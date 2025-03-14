@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 import numpy as np
 from .block_matrix import BlockMatrixStorage
-from .mat_utils import csr_to_petsc, make_сlear_petsc_options, petsc_to_csr
+from .mat_utils import csr_to_petsc, make_сlear_petsc_options
 from petsc4py import PETSc
 
 

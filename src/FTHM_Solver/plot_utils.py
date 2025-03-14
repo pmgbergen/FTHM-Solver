@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Sequence, Optional
 from scipy.sparse import spmatrix
 
-import matplotlib as mpl
 import numpy as np
 import porepy as pp
 import scipy
