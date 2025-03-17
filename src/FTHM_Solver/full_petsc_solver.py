@@ -1,12 +1,25 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
 import numpy as np
 from .block_matrix import BlockMatrixStorage
-from .mat_utils import csr_to_petsc, make_сlear_petsc_options
+from .mat_utils import csr_to_petsc, сlear_petsc_options
 from petsc4py import PETSc
 
 
 def construct_is(bmat: BlockMatrixStorage, groups: list[int]) -> PETSc.IS:
+    """Construct a PETSc IS (index set) from a list of groups.
+
+    Parameters:
+        bmat: The block matrix storage.
+        groups: The groups to construct the IS from.
+
+    Returns:
+        The PETSc IS object representing the groups.
+
+    """
+    # TODO: Why is it necessary to create an empty container here, and not just work
+    # with information from the bmat object?
     empty_mat = bmat.empty_container()
     dofs = [
         empty_mat.local_dofs_row[x]
@@ -17,14 +30,16 @@ def construct_is(bmat: BlockMatrixStorage, groups: list[int]) -> PETSc.IS:
         return PETSc.IS().createGeneral(
             np.concatenate(
                 dofs,
-                dtype=np.int32,
+                dtype=np.int32,  # TODO: What if the size is too large for int32?
             )
         )
     else:
+        # Return an empty IS if the group is empty.
         return PETSc.IS().createGeneral(np.array([], dtype=np.int32))
 
 
 def build_tag(groups: list[int]) -> str:
+    """Build a tag from a list of groups."""
     return "-".join([str(x) for x in groups])
 
 
@@ -36,16 +51,76 @@ def insert_petsc_options(options):
 
 @dataclass
 class PetscFieldSplitScheme:
+    """WARNING: This documentation is incomplete and may be incorrect.
+
+    Dataclass to define the setup of a PETSc field split preconditioner.
+
+    The preconditioner deals linear systems of the form Ax = b, where A is a 2 x 2 block
+    matrix
+
+        A = [[A00, A01],
+             [A10, A11]]
+
+    where A00 and A11 are diagonal blocks, and A01 and A10 are off-diagonal blocks. The
+    preconditioner is constructed by eliminating A_00, and solving the Schur complement
+    system
+
+        S = A_11 - A_10 A_00^{-1} A_01,
+
+    though in practice, an approximation of both A_00^{-1} and S is most often used.
+
+    The details of how the preconditioner operates depend on the specific options set in
+    the `elim_options`, `fieldsplit_options`, and `keep_options`.
+
+    See https://petsc.org/release/manualpages/PC/PCFIELDSPLIT/ for more information.
+
+
+
+    """
+
     groups: list[int]
-    complement: Optional["PetscFieldSplitScheme"] = None
-    elim_options: dict = None
+    """The groups that should be eliminated by the preconditioner."""
+
+    complement: Optional[PetscFieldSplitScheme] = None
+    """The preconditioner for the complement of the groups."""
+
+    elim_options: dict[str, str] | None = None
+    """Options for the block that is eliminated in this preconditioner. Can be of the
+    form {"pctype": "ilu"}, for example.
+    
+    """
+
     fieldsplit_options: dict = None
-    keep_options: dict = None
+    """Options for the field split preconditioner. 
+    
+    One key parameter is `pc_fieldsplit_schur_precondition`, which determines the
+    type of approximation used for the Schur complement. See 
+    https://petsc.org/release/manualpages/PC/PCFieldSplitSetSchurPre/ for more
+    information. 
+
+    Other options may also be possible, but are unknown to EK at the time of writing.
+
+    """
+
+    keep_options: dict[str, str] | None = None
+    """Options for the block that is kept in the preconditioner. 
+
+    Possible options are::
+      - key 'mat_schur_complement_ainv_type', for more information see
+      https://petsc.org/release/manualpages/KSP/MatSchurComplementSetAinvType/
+      - Set up a KSP solver for the Schur complement.
+
+    """
+
     block_size: int = 1
     invert: Callable[[PETSc.Mat], PETSc.Mat] = None
+    """If not None, a function that inverts the A_00 block (or A_11)???"""
+
     python_pc: PETSc.PC = None
     # experimental
     near_null_space: list[np.ndarray] = None
+    """A list of near null space vectors to be used in the preconditioner."""
+
     ksp_keep_use_pmat: bool = False
 
     def get_groups(self) -> list[int]:
@@ -59,13 +134,15 @@ class PetscFieldSplitScheme:
         bmat: BlockMatrixStorage,
         petsc_pc: PETSc.PC,
         prefix: str = "",
-    ):
+    ) -> tuple:
+        """Configure a PETSc PC object with the given block matrix and options."""
         elim_options = self.elim_options or {}
         fieldsplit_options = self.fieldsplit_options or {}
         keep_options = self.keep_options or {}
 
         elim = self.groups
         if self.complement is None:
+            # If there is no complement, we can use a simpler preconditioner.
             options = (
                 {
                     f"{prefix}ksp_type": "preonly",
@@ -76,6 +153,8 @@ class PetscFieldSplitScheme:
             )
 
             if self.python_pc is not None:
+                # EK believes this allows us to define a preconditioner in terms of
+                # Python code.
                 options[f"{prefix}pc_type"] = "python"
                 python_pc = self.python_pc(bmat)
                 python_pc.petsc_pc.setOptionsPrefix(f"{prefix}python_")
@@ -87,15 +166,23 @@ class PetscFieldSplitScheme:
             petsc_pc.setUp()
             return options
 
+        # If there is a complement, we need to construct a fieldsplit preconditioner.
         keep = self.complement.get_groups()
+
+        # Create tags for the groups to be eliminated and kept. This defines unique
+        # identifiers that can be used in the PETSc options.
         elim_tag = build_tag(elim)
         keep_tag = build_tag(keep)
         empty_bmat = bmat.empty_container()[elim + keep]
+
+        # Construct the PETSc IS objects for the groups to be eliminated and kept.
         petsc_is_keep = construct_is(empty_bmat, keep)
         petsc_is_elim = construct_is(empty_bmat, elim)
         petsc_is_elim.setBlockSize(self.block_size)
 
         if self.invert is not None:
+            # The user is obliged to provide a function that inverts the A_00 block used
+            # to construct the Schur complement.
             fieldsplit_options["pc_fieldsplit_schur_precondition"] = "user"
 
         options = (
@@ -113,8 +200,12 @@ class PetscFieldSplitScheme:
             | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
         )
 
+        # Insert the new options into the PETSc options singleton.
         insert_petsc_options(options)
+        # Set the options for the PETSc PC object.
         petsc_pc.setFromOptions()
+
+        # Set the IS objects for the fieldsplit.
         petsc_pc.setFieldSplitIS((elim_tag, petsc_is_elim), (keep_tag, petsc_is_keep))
 
         if self.invert is not None:
@@ -126,13 +217,15 @@ class PetscFieldSplitScheme:
 
         petsc_pc.setUp()
 
-        petsc_ksp_keep = petsc_pc.getFieldSplitSubKSP()[1]
-        petsc_pc_keep = petsc_ksp_keep.getPC()
         petsc_ksp_elim = petsc_pc.getFieldSplitSubKSP()[0]
         petsc_pc_elim = petsc_ksp_elim.getPC()
 
+        petsc_ksp_keep = petsc_pc.getFieldSplitSubKSP()[1]
+        petsc_pc_keep = petsc_ksp_keep.getPC()
+
         if self.ksp_keep_use_pmat:
-            amat, pmat = petsc_ksp_keep.getOperators()
+            _, pmat = petsc_ksp_keep.getOperators()
+            # TODO: Is it correct to use the same matrix for both arguments?
             petsc_ksp_keep.setOperators(pmat, pmat)
 
         if self.near_null_space is not None:
@@ -159,16 +252,28 @@ class PetscFieldSplitScheme:
 @dataclass
 class PetscKSPScheme:
     preconditioner: Optional[PetscFieldSplitScheme] = None
+    """The preconditioner to be used."""
+
     petsc_options: Optional[dict] = None
+    """Additional options to be passed to PETSc."""
+
     compute_eigenvalues: bool = False
+    """Whether to compute the eigenvalues of the matrix."""
 
     def get_groups(self) -> list[int]:
+        """Return the groups of the preconditioner."""
         return self.preconditioner.get_groups()
 
     def make_solver(self, mat_orig: BlockMatrixStorage):
+        # Construct a PETSc matrix from the scipy matrix.
+        # TODO: Can we at this point delete the scipy matrix to save memory?
         petsc_mat = csr_to_petsc(mat_orig.mat)
 
-        make_сlear_petsc_options()
+        # Clear the PETSc options from a previous solve.
+        сlear_petsc_options()
+
+        # Hard coded options for the KSP solver. TODO: Figure out how this can be
+        # configured from the outside.
         options = {
             # "ksp_monitor": None,
             "ksp_type": "gmres",
@@ -176,9 +281,13 @@ class PetscKSPScheme:
             "ksp_rtol": 1e-10,
             "ksp_max_it": 120,
             "ksp_gmres_cgs_refinement_type": "refine_ifneeded",
-            "ksp_gmres_classicalgramschmidt": True,
+            "ksp_gmres_classicalgramschmidt": True,  # Not givens rotations??
         } | (self.petsc_options or {})
+
+        # Insert the above options into the PETSc options singleton.
         insert_petsc_options(options)
+
+        # Create the PETSc KSP object, set matrix and preconditioner.
         petsc_ksp = PETSc.KSP().create()
         petsc_ksp.setOperators(petsc_mat)
         petsc_ksp.setFromOptions()
@@ -190,6 +299,7 @@ class PetscKSPScheme:
             )
         if self.compute_eigenvalues:
             petsc_ksp.setComputeEigenvalues(True)
+
         petsc_ksp.setUp()
         self.options = options
         return PetscKrylovSolver(petsc_ksp)
@@ -203,7 +313,11 @@ class LinearTransformedScheme:
     right_transformations: Optional[
         list[Callable[[BlockMatrixStorage], BlockMatrixStorage]]
     ] = None
-    inner: Optional = None
+    inner: Optional[PetscKSPScheme] = None
+    """The actual solver, to be applied after the transformations.
+    
+    TODO: Should the typing allow for a more general solver?
+    """
 
     def get_groups(self) -> list[int]:
         return self.inner.get_groups()
@@ -276,23 +390,43 @@ class LinearSolverWithTransformations:
 
 
 class PetscKrylovSolver:
+    """Shallow wrapper around a PETSc KSP object."""
+
     def __init__(
         self,
         ksp,
     ) -> None:
+        """Initialize the solver with a PETSc KSP object.
+
+        Parameters:
+            ksp: A PETSc KSP object.
+
+        """
         self.ksp = ksp
         petsc_mat = ksp.getOperators()[0]
+
+        # TODO: Why left here?
         self.petsc_x = petsc_mat.createVecLeft()
         self.petsc_b = petsc_mat.createVecLeft()
         # self.ksp.setComputeEigenvalues(True)
         self.ksp.setConvergenceHistory()
 
-    def __del__(self):
+    def __del__(self) -> None:
+        """Destroy the PETSc objects."""
         self.ksp.destroy()
         self.petsc_x.destroy()
         self.petsc_b.destroy()
 
-    def solve(self, b):
+    def solve(self, b: np.ndarray) -> np.ndarray:
+        """Solve the linear system with the given right-hand side.
+
+        Parameters:
+            b: The right-hand side of the linear system.
+
+        Returns:
+            The solution of the linear system.
+
+        """
         self.petsc_b.setArray(b)
         self.petsc_x.set(0.0)
         self.ksp.solve(self.petsc_b, self.petsc_x)
@@ -355,6 +489,8 @@ class PetscCPRScheme:
 
 @dataclass
 class PetscCompositeScheme:
+    """Scheme for a composite (2-stage??)  preconditioner."""
+
     groups: list[int]
     solvers: list[PetscFieldSplitScheme]
     petsc_options: dict = None
