@@ -98,14 +98,16 @@ def color_spy(
         plt.show()
 
 
-def get_nonzero_indices(A, row_indices, col_indices):
+def get_nonzero_indices(
+    A: csr_matrix, row_indices: list[np.ndarray], col_indices: list[np.ndarray]
+) -> list[int]:
     """
     Get the indices of A.data that correspond to the specified subset of rows and columns.
 
     Parameters:
-    A (csr_matrix): The input sparse matrix.
-    row_indices (list or array): The list of row indices to consider.
-    col_indices (list or array): The list of column indices to consider.
+        A: The input sparse matrix.
+        row_indices (list or array): The list of row indices to consider.
+        col_indices (list or array): The list of column indices to consider.
 
     Returns:
     list: Indices in A.data corresponding to non-zero elements in the specified subset.
@@ -126,6 +128,20 @@ def get_nonzero_indices(A, row_indices, col_indices):
 
 
 class BlockMatrixStorage:
+    """Storage class for block matrices with utility functions for indexing.
+
+    The block matrix bridges three different levels of indexing:
+    - The global indexes. These run over all rows and columns of the global matrix.
+    - The block indices. Each of these represents an equation (row) or variable (column)
+        defined on a geometric entity (e.g., a subdomain or an interface).
+    - Groups of blocks. These are collections of blocks that are treated together in the
+        solution process. For instance, a group can be all the blocks corresponding to
+        fracture contact mechanics (on all fracture subdomains), or the mass
+        conservation equation stated on all subdomains. Similar examples can be given
+        for variables.
+
+    """
+
     def __init__(
         self,
         mat: spmatrix,
@@ -141,21 +157,39 @@ class BlockMatrixStorage:
         group_names_col: Optional[list[str]] = None,
     ):
         self.mat: spmatrix = mat
+        """The matrix itself."""
+
         self.groups_to_blocks_row: list[list[int]] = groups_to_blocks_row
+        """The outer list is the different equation groups specified for the matrix.
+        The inner list is the blocks that belong to each equation group."""
+
         self.groups_to_blocks_col: list[list[int]] = groups_to_blocks_col
+        """The outer list is the different variable groups specified for the matrix.
+        The inner list is the blocks that belong to each variable group."""
+
         self.group_names_row: Optional[list[str]] = group_names_row
+        """List of group names for the rows."""
+
         self.group_names_col: Optional[list[str]] = group_names_col
+        """List of group names for the columns."""
 
         def init_global_dofs(global_dofs: list[np.ndarray]):
             # Cast dofs to numpy arrays.
             return [np.atleast_1d(x) for x in global_dofs]
 
         self.global_dofs_row: list[np.ndarray] = init_global_dofs(global_dofs_row)
+        """List of global dofs for the rows. One list item per equation group (EK
+        believes)."""
+
         self.global_dofs_col: list[np.ndarray] = init_global_dofs(global_dofs_col)
+        """List of global dofs for the columns. One list item per variable group (EK
+        believes)."""
 
         def init_local_dofs(
             local_dofs: list[np.ndarray] | None, global_dofs: list[np.ndarray]
         ):
+            # Cast the local dofs to 1d numpy arrays, unless the list item is None,
+            # in which case it is left as None.
             if local_dofs is None:
                 local_dofs = global_dofs
             return [np.atleast_1d(x) if x is not None else x for x in local_dofs]
@@ -163,9 +197,17 @@ class BlockMatrixStorage:
         self.local_dofs_row: list[np.ndarray] = init_local_dofs(
             local_dofs_row, self.global_dofs_row
         )
+        """List of local dofs for the rows. One list item per equation group. A list
+        item None corresponds to a group of the global matrix that is not active in this
+        local matrix."""
+
         self.local_dofs_col: list[np.ndarray] = init_local_dofs(
             local_dofs_col, self.global_dofs_col
         )
+
+        """List of local dofs for the columns. One list item per variable group. A list
+        item None corresponds to a group of the global matrix that is not active in this
+        local matrix."""
 
         def init_active_groups(
             groups_to_blocks: list[list[int]], active_groups: list[int] | None
@@ -179,6 +221,7 @@ class BlockMatrixStorage:
             # Filter empty groups, e.g., when no fractures are present.
             return [group_idx for group_idx in tmp if len(groups_to_blocks[group_idx])]
 
+        # TODO: What is an active group?
         self.active_groups: tuple[list[int], list[int]] = (
             init_active_groups(groups_to_blocks_row, active_groups_row),
             init_active_groups(groups_to_blocks_col, active_groups_col),
@@ -186,6 +229,7 @@ class BlockMatrixStorage:
 
     @property
     def shape(self) -> tuple[int, int]:
+        """Get the shape of the matrix."""
         return self.mat.shape
 
     def __repr__(self) -> str:
@@ -195,40 +239,90 @@ class BlockMatrixStorage:
             "active groups"
         )
 
-    def _correct_getitem_key(self, key) -> tuple[list[int], list[int]]:
+    def _correct_getitem_key(
+        self, key: list | slice | tuple
+    ) -> tuple[list[int], list[int]]:
         """User can index the matrix: `J[1, 2]`, `J[[1, 2]]`, `J[[1, 2], [3, 4]]`,
         `J[:, [1, 2]]`, `J[[1, 2], :]`. This returns the key in the format
         `J[[1, 2], [1, 2]]`.
 
         """
+        # Since the key is defined as a single argument (see __getitem__), passing
+        # multiple arguments (e.g., both row and column indices) will be interpreted as
+        # a tuple. If the key is a list or a slice, we will assign the same key to the
+        # row and column indices.
         if isinstance(key, list):
             key = key, key
         if isinstance(key, slice):
             key = key, key
+
+        # By now, we should have a tuple with two elements, corresponding to the row and
+        # column block indices to be extracted.
         assert isinstance(key, tuple)
         assert len(key) == 2
 
-        def correct_key(k, total):
-            if isinstance(k, slice):
-                start = k.start or 0
-                stop = k.stop or total
-                step = k.step or 1
-                k = list(range(start, stop, step))
+        def correct_key(key_: slice | int, total: int):
+            # Convert slice or int to list of indices. Total is the maximum upper bound
+            # of a slice, in case it is given on the form `1:` or similar.
+            if isinstance(key_, slice):
+                start = key_.start or 0
+                stop = key_.stop or total
+                step = key_.step or 1
+                key_ = list(range(start, stop, step))
             try:
-                iter(k)
+                # Try to iterate over the key. If not successful (which means this is an
+                # int?), convert to a list.
+                iter(key_)
             except TypeError:
-                k = [k]
-            return k
+                key_ = [key_]
+            return key_
 
         groups_i, groups_j = key
+        # Convert the key to a list of indices.
         groups_i = correct_key(groups_i, total=len(self.groups_to_blocks_row))
         groups_j = correct_key(groups_j, total=len(self.groups_to_blocks_col))
         return groups_i, groups_j
 
-    def __getitem__(self, key) -> "BlockMatrixStorage":
+    def __getitem__(self, key: list | slice | tuple) -> BlockMatrixStorage:
+        """Get a subset of blocks from the matrix. The block indexing is defined
+        according to the groups
+
+
+        The following indexing is supported:
+
+        - `1, 2`: Get the block corresponding to row block index 1 and column block
+           index 2. Results in submatrix [J_12].
+        - `1, 2]`: Get the blocks corresponding row block indices 1 and 2 and column
+           block indices 1 and 2. Results in the submatrix [[J_11, J_12], [J_21, J_22]].
+        - `([1, 2], [3, 4])`: Get the blocks corresponding to row block indices 1 and 2
+           and column block indices 3 and 4. Results in the submatrix
+           [[J_13, J_14], [J_23, J_24]].
+        - `:, [1, 2]: Get all row blocks and column blocks 1 and 2. Results in the
+           submatrix [[J_11, J_12], [J_21, J_22], ..., [J_m1, J_m2]], where m is the
+           maximum row block index.
+        - `[1, 2], :`: Get row blocks 1 and 2 and all column blocks. Results in the
+           submatrix [[J_11, J_12, ..., J_1n], [J_21, J_22, ..., J_2n]], where n is the
+           maximum column block index.
+        - `[1, 2], 1:4`: Get row blocks 1 and 2 and column blocks 1 to 3. Results in
+           the submatrix [[J_11, J_12, J_13], [J_21, J_22, J_23]].
+
+        Indices can be given by tuples as well as lists. The indexing is 0-based.
+
+        """
+        # Process input arguments to get lists of row and column indices.
         groups_i, groups_j = self._correct_getitem_key(key)
 
-        def inner(input_dofs_idx, take_groups, all_groups):
+        def inner(
+            input_dofs_idx: list[np.ndarray],
+            take_groups: list[int],
+            all_groups: list[list[int]],
+        ):
+            """Convert the key to a list of indices.
+
+            Parameters:
+                input_dofs_idx: For each
+
+            """
             dofs_global_idx = []
             dofs_local_idx = [None] * len(input_dofs_idx)
             offset = 0
@@ -270,7 +364,9 @@ class BlockMatrixStorage:
             group_names_row=self.group_names_row,
         )
 
-    def __setitem__(self, key, value):
+    def __setitem__(
+        self, key: list | slice | tuple, value: BlockMatrixStorage | spmatrix
+    ):
         groups_i, groups_j = self._correct_getitem_key(key)
 
         if isinstance(value, BlockMatrixStorage):
@@ -297,6 +393,10 @@ class BlockMatrixStorage:
         return res
 
     def empty_container(self) -> BlockMatrixStorage:
+        """Create container with the same structure as the current one, but with an
+        empty matrix.
+        """
+
         return BlockMatrixStorage(
             mat=scipy.sparse.csr_matrix(self.mat.shape),
             local_dofs_row=self.local_dofs_row,
@@ -314,7 +414,16 @@ class BlockMatrixStorage:
     def project_rhs_to_local(self, global_rhs: np.ndarray) -> np.ndarray:
         """Global rhs is the rhs arranged in the porepy model manner. This method
         permutes and restricts the global rhs to make it match the current matrix
-        arrangement."""
+        arrangement.
+
+        Parameters:
+            global_rhs: The global right hand side.
+
+        Returns:
+            np.ndarray: The part of the rhs corresponding to the local dofs, as
+                specified by the active groups.
+
+        """
         row_idx = [
             self.global_dofs_row[j]
             for i in self.active_groups[0]
@@ -326,7 +435,16 @@ class BlockMatrixStorage:
     def project_rhs_to_global(self, local_rhs: np.ndarray) -> np.ndarray:
         """Local rhs is the rhs arranged to match the current matrix. This method
         permutes and prolongates with zeros the local rhs to restore the global
-        arrangement."""
+        arrangement.
+
+        Parameters:
+            local_rhs: The local right hand side.
+
+        Returns:
+            np.ndarray: The global right hand side, with zeros in the items that are
+                not part of the active groups.
+
+        """
         row_idx = np.concatenate(
             [
                 self.global_dofs_row[j]
@@ -341,15 +459,32 @@ class BlockMatrixStorage:
 
     def project_solution_to_global(self, x: np.ndarray) -> np.ndarray:
         """The same as `project_rhs_to_global, but in the solution space."""
-        col_idx = [
-            self.global_dofs_col[j]
-            for i in self.active_groups[1]
-            for j in self.groups_to_blocks_col[i]
-        ]
-        col_idx = np.concatenate(col_idx)
+        col_idx = np.concatenate(
+            [
+                self.global_dofs_col[j]
+                for i in self.active_groups[1]
+                for j in self.groups_to_blocks_col[i]
+            ]
+        )
         total_size = sum(x.size for x in self.global_dofs_col)
         result = np.zeros(total_size)
         result[col_idx] = x
+        return result
+
+    def _project_to_global(self, vec: np.ndarray, row: bool) -> np.ndarray:
+        # TODO: Replace the two above methods with calls to this one.
+        if row:
+            idx = self.global_dofs_row
+            blocks = self.groups_to_blocks_row
+        else:
+            idx = self.global_dofs_col
+            blocks = self.groups_to_blocks_col
+        all_idx = np.concatenate(
+            [idx[j] for i in self.active_groups[0] for j in blocks[i]]
+        )
+        total_size = sum(x.size for x in self.global_dofs_col)
+        result = np.zeros(total_size, dtype=vec.dtype)
+        result[all_idx] = vec
         return result
 
     def set_zeros(
