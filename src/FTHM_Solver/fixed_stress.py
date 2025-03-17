@@ -151,8 +151,8 @@ def get_fs_fractures_analytical(model: pp.PorePyModel) -> sps.spmatrix:
 
     nd_vec_to_normal = model.normal_component(fractures)
     # The normal component of the contact traction and the displacement jump.
-    u_n = nd_vec_to_normal @ model.displacement_jump(fractures)
-    u_n = u_n.value(model.equation_system)
+    u_n_operator = nd_vec_to_normal @ model.displacement_jump(fractures)
+    u_n = u_n_operator.value(model.equation_system)
 
     # alpha^2 / (lambda * (1 / (C_f * M) + phi_0))
     # val = alpha_biot**2 / (lame_lambda * (1 / (compressibility * M) + porosity))

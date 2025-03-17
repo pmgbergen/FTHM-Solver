@@ -369,7 +369,7 @@ class IterativeHMSolver(IterativeLinearSolver):
         else:
             return super().solve_linear_system()
 
-    def make_solver_scheme(self) -> FieldSplitScheme:
+    def make_solver_scheme(self) -> KSPScheme | LinearTransformedScheme:
         solver_type = self.params["setup"]["solver"]
 
         if solver_type == 2:  # GMRES + AMG

@@ -7,7 +7,7 @@ import scipy.sparse as sps
 import numpy as np
 import porepy as pp
 
-from .block_matrix import BlockMatrixStorage, FieldSplitScheme
+from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 
 from .stats import LinearSolveStats
 
@@ -101,7 +101,7 @@ class IterativeLinearSolver(pp.PorePyModel):
         """
         return None
 
-    def make_solver_scheme(self) -> FieldSplitScheme:
+    def make_solver_scheme(self) -> FieldSplitScheme | KSPScheme:
         # TOOD: Should this be an abstract method?
         raise NotImplementedError("This method should be implemented in the subclass.")
 

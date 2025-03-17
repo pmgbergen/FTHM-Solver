@@ -54,9 +54,9 @@ def color_spy(
     col_sep = sorted(col_sep)
 
     if row_names is None:
-        row_names = list(range(len(row_sep) - 1))
+        row_names = [str(i) for i in range(len(row_sep) - 1)]
     if col_names is None:
-        col_names = list(range(len(col_sep) - 1))
+        col_names = [str(i) for i in range(len(col_sep) - 1)]
 
     hatch_types = itertools.cycle(["/", "\\"])
 

@@ -84,7 +84,7 @@ class PetscFieldSplitScheme:
     complement: Optional[PetscFieldSplitScheme] = None
     """The preconditioner for the complement of the groups."""
 
-    elim_options: dict[str, str] | None = None
+    elim_options: dict[str, str | float | int] | None = None
     """Options for the block that is eliminated in this preconditioner. Can be of the
     form {"pctype": "ilu"}, for example.
     
@@ -113,12 +113,12 @@ class PetscFieldSplitScheme:
     """
 
     block_size: int = 1
-    invert: Callable[[PETSc.Mat], PETSc.Mat] = None
+    invert: Callable[[PETSc.Mat], PETSc.Mat] | None = None
     """If not None, a function that inverts the A_00 block (or A_11)???"""
 
     python_pc: PETSc.PC = None
     # experimental
-    near_null_space: list[np.ndarray] = None
+    near_null_space: list[np.ndarray] | None = None
     """A list of near null space vectors to be used in the preconditioner."""
 
     ksp_keep_use_pmat: bool = False
@@ -322,7 +322,9 @@ class LinearTransformedScheme:
     def get_groups(self) -> list[int]:
         return self.inner.get_groups()
 
-    def make_solver(self, mat_orig: BlockMatrixStorage):
+    def make_solver(
+        self, mat_orig: BlockMatrixStorage
+    ) -> PetscKrylovSolver | LinearSolverWithTransformations:
         groups = self.get_groups()
         bmat = mat_orig[groups]
 
@@ -348,7 +350,10 @@ class LinearTransformedScheme:
         if Qright is not None:
             bmat_Q.mat = bmat_Q.mat @ Qright.mat
 
-        solver = self.inner.make_solver(bmat_Q)
+        if self.inner is None:
+            raise ValueError("No inner solver provided.")
+
+        solver: PetscKrylovSolver = self.inner.make_solver(bmat_Q)
         self.options = self.inner.options
 
         if Qleft is not None or Qright is not None:
@@ -362,16 +367,20 @@ class LinearTransformedScheme:
 class LinearSolverWithTransformations:
     def __init__(
         self,
-        inner,
+        inner: PetscKrylovSolver,
         Qleft: Optional[BlockMatrixStorage] = None,
         Qright: Optional[BlockMatrixStorage] = None,
     ):
         self.Qleft: BlockMatrixStorage | None = Qleft
         self.Qright: BlockMatrixStorage | None = Qright
-        self.inner = inner
+        self.inner: PetscKrylovSolver = inner
         self.ksp = inner.ksp
 
-    def solve(self, rhs):
+    def solve(self, rhs: np.ndarray) -> np.ndarray:
+        """Transform the right-hand side, solve the linear system, and transform the
+        solution back.
+
+        """
         rhs_Q = rhs
         if self.Qleft is not None:
             rhs_Q = self.Qleft.mat @ rhs_Q
