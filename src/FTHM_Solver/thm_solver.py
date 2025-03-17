@@ -1,5 +1,7 @@
 from functools import cached_property
 
+from typing import Union, Callable
+
 import scipy.sparse
 from .block_matrix import (
     BlockMatrixStorage,
@@ -25,8 +27,22 @@ from .iterative_solver import (
     get_variables_group_ids,
 )
 
+import porepy as pp
+
 
 class THMSolver(IterativeHMSolver):
+    temperature: Callable[[pp.SubdomainsOrBoundaries], pp.ad.MixedDimensionalVariable]
+
+    interface_fourier_flux: Callable[
+        [list[pp.MortarGrid]], pp.ad.MixedDimensionalVariable
+    ]
+
+    interface_enthalpy_flux: Callable[
+        [list[pp.MortarGrid]], pp.ad.MixedDimensionalVariable
+    ]
+
+    well_enthalpy_flux: Callable[[list[pp.MortarGrid]], pp.ad.MixedDimensionalVariable]
+
     def simulation_name(self) -> str:
         name = "stats_thermal"
         setup = self.params["setup"]
@@ -174,11 +190,13 @@ class THMSolver(IterativeHMSolver):
             return self.make_solver_scheme_fgmres()
 
         nd = self.nd
-        contact = [0]
-        intf = [1, 2]
-        mech = [3, 4]
-        flow = [5, 6, 7]
-        temp = [8, 9, 10]
+
+        # Groups of equations. See `equation_groups` property.
+        contact = [0]  # Fracture deformation equations
+        intf = [1, 2]  # Interface equations (Darcy flux, energy balance)
+        mech = [3, 4]  # Momentum balance, interface force balance
+        flow = [5, 6, 7]  # Mass balance in ambient, fracture, intersections
+        temp = [8, 9, 10]  # Energy balance in ambient, fracture, intersections
 
         pt_solver_cpr_global = PetscFieldSplitScheme(
             groups=flow,
@@ -309,6 +327,7 @@ class THMSolver(IterativeHMSolver):
             left_transformations=[
                 lambda bmat: self.scale_energy_balance(bmat),
             ],
+            # The inner solver is a KSP solver with a nested preconditioner.
             inner=PetscKSPScheme(
                 petsc_options={
                     # "ksp_type": "fgmres",
@@ -316,9 +335,15 @@ class THMSolver(IterativeHMSolver):
                     "ksp_rtol": 1e-12,
                 },
                 compute_eigenvalues=False,
+                # Nested field split preconditioner. The outermost layer treats the contact
+                # equations.
                 preconditioner=PetscFieldSplitScheme(
+                    # The contact mechanics equations.
                     groups=contact,
                     block_size=self.nd,
+                    # Use a diagonal approximation when constructing the Schur
+                    # complement, e.g. S_A = D - C diag(A)^-1 B. See the PETSc manual
+                    # for details.
                     fieldsplit_options={
                         "pc_fieldsplit_schur_precondition": "selfp",
                     },
@@ -329,6 +354,7 @@ class THMSolver(IterativeHMSolver):
                         "mat_schur_complement_ainv_type": "blockdiag",
                     },
                     complement=PetscFieldSplitScheme(
+                        # Eliminate flow and transport interface equations.
                         groups=intf,
                         elim_options={
                             "pc_type": "ilu",
@@ -336,7 +362,10 @@ class THMSolver(IterativeHMSolver):
                         fieldsplit_options={
                             "pc_fieldsplit_schur_precondition": "selfp",
                         },
+                        # Nested field split preconditioner.
                         complement=PetscFieldSplitScheme(
+                            # Eliminate the mechanics equations (momentum balance and interface
+                            # force balance) with a hmg preconditioner based on hypre.
                             groups=mech,
                             elim_options=(
                                 {
@@ -519,4 +548,4 @@ def make_pt_permutation(
     p_dofs = get_dofs_of_groups(
         groups_to_block=J.groups_to_blocks_row, dofs=J.local_dofs_row, groups=p_groups
     )
-    return np.row_stack([p_dofs, t_dofs]).ravel("F")
+    return np.vstack([p_dofs, t_dofs]).ravel("F")
