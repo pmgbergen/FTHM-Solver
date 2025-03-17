@@ -82,12 +82,27 @@ class IterativeLinearSolver(pp.PorePyModel):
         raise NotImplementedError("This method should be implemented in the subclass.")
 
     def group_row_names(self) -> list[str] | None:
+        """Return the names of the equation groups. Used for visualization purposes.
+        See subclasses for examples.
+
+        Returns:
+            List of strings. Each string is the name of the group of equations.
+
+        """
         return None
 
     def group_col_names(self) -> list[str] | None:
+        """Return the names of the column groups. Used for visualization purposes. See
+        subclasses for examples.
+
+        Returns:
+            List of strings. Each string is the name of a group of variables.
+
+        """
         return None
 
     def make_solver_scheme(self) -> FieldSplitScheme:
+        # TOOD: Should this be an abstract method?
         raise NotImplementedError("This method should be implemented in the subclass.")
 
     def assemble_linear_system(self) -> None:

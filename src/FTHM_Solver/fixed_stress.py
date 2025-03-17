@@ -1,8 +1,8 @@
 import numpy as np
-import scipy.sparse
-import scipy.sparse.linalg
+import scipy.sparse as sps
+import scipy.sparse.linalg as spla
 from .block_matrix import BlockMatrixStorage
-
+import porepy as pp
 
 # def assemble_localization_matrices_mechanics(
 #     bmat: BlockMatrixStorage,
@@ -76,9 +76,9 @@ from .block_matrix import BlockMatrixStorage
 #     return -bmat[base, [1, 5]].mat @ J15_inv @ bmat[[1, 5], base].mat
 
 
-def get_fixed_stress_stabilization(
-    model, l_factor: float = 0.6
-) -> scipy.sparse.spmatrix:
+def get_fixed_stress_stabilization(model, l_factor: float = 0.6) -> sps.spmatrix:
+    """Define the fixed stress stabilization matrix."""
+
     mu_lame = model.solid.shear_modulus
     lambda_lame = model.solid.lame_lambda
     alpha_biot = model.solid.biot_coefficient
@@ -87,11 +87,14 @@ def get_fixed_stress_stabilization(
     subdomains = model.mdg.subdomains(dim=dim)
     cell_volumes = subdomains[0].cell_volumes
     if alpha_biot == 0:
-        return scipy.sparse.diags(0 * cell_volumes)
+        return sps.diags(0 * cell_volumes)
 
+    # Stabilization value determined by physical reasoning.
     l_phys = alpha_biot**2 / (2 * mu_lame / dim + lambda_lame)
+    # Stabilization value determined by theoretical reasoning.
     l_min = alpha_biot**2 / (4 * mu_lame + 2 * lambda_lame)
 
+    # TODO: Where does this formula come from?
     val = l_min * (l_phys / l_min) ** l_factor
 
     diagonal_approx = val
@@ -103,10 +106,12 @@ def get_fixed_stress_stabilization(
     dt = model.time_manager.dt
     diagonal_approx /= dt
 
-    return scipy.sparse.diags(diagonal_approx)
+    return sps.diags(diagonal_approx)
 
 
-def get_fixed_stress_stabilization_nd(model, l_factor: float = 0.6):
+def get_fixed_stress_stabilization_nd(
+    model: pp.PorePyModel, l_factor: float = 0.6
+) -> sps.spmatrix:
     mat_nd = get_fixed_stress_stabilization(model=model, l_factor=l_factor)
 
     sd_lower = [
@@ -114,8 +119,8 @@ def get_fixed_stress_stabilization_nd(model, l_factor: float = 0.6):
     ]
     num_cells = sum(sd.num_cells for sd in sd_lower)
 
-    zero_lower = scipy.sparse.csr_matrix((num_cells, num_cells))
-    return scipy.sparse.block_diag([mat_nd, zero_lower]).tocsr()
+    zero_lower = sps.csr_matrix((num_cells, num_cells))
+    return sps.block_diag([mat_nd, zero_lower]).tocsr()
 
 
 # def make_fs(model, J: BlockMatrixStorage):
@@ -128,7 +133,7 @@ def get_fixed_stress_stabilization_nd(model, l_factor: float = 0.6):
 #     return result
 
 
-def get_fs_fractures_analytical(model):
+def get_fs_fractures_analytical(model: pp.PorePyModel) -> sps.spmatrix:
     alpha_biot = model.solid.biot_coefficient  # [-]
     lame_lambda = model.solid.lame_lambda  # [Pa]
     M = 1 / model.solid.specific_storage  # [Pa]
@@ -167,7 +172,7 @@ def get_fs_fractures_analytical(model):
     )
 
     if len(fractures) == 0:
-        return scipy.sparse.csr_matrix((0, 0))
+        return sps.csr_matrix((0, 0))
 
     cell_volumes = np.concatenate([f.cell_volumes for f in fractures])
     val *= cell_volumes
@@ -187,7 +192,7 @@ def get_fs_fractures_analytical(model):
     intersect_zeros = np.zeros(sum(f.num_cells for f in intersections))
     val = np.concatenate([val, intersect_zeros])
 
-    return scipy.sparse.diags(val)
+    return sps.diags(val)
 
 
 def make_fs_analytical(
@@ -199,17 +204,17 @@ def make_fs_analytical(
         get_fs_fractures_analytical(model),
     ]
     result = J.empty_container()[groups]
-    result.mat = scipy.sparse.block_diag(diag, format="csr")
-    # result[groups] = scipy.sparse.block_diag(diag, format="csr")
+    result.mat = sps.block_diag(diag, format="csr")
+    # result[groups] = sps.block_diag(diag, format="csr")
     return result
 
 
 def make_fs_analytical_slow(model, J, p_mat_group: int, p_frac_group: int, groups):
     result = J.empty_container()[groups]
-    result[[p_mat_group]] = scipy.sparse.block_diag(
+    result[[p_mat_group]] = sps.block_diag(
         [get_fixed_stress_stabilization(model)], format="csr"
     )
-    result[[p_frac_group]] = scipy.sparse.block_diag(
+    result[[p_frac_group]] = sps.block_diag(
         [get_fs_fractures_analytical(model)], format="csr"
     )
     return result
@@ -217,19 +222,17 @@ def make_fs_analytical_slow(model, J, p_mat_group: int, p_frac_group: int, group
 
 def make_fs_analytical_slow_new(
     model, J: BlockMatrixStorage, p_mat_group: int, p_frac_group: int, groups: list[int]
-):
+) -> BlockMatrixStorage:
     index = J[groups].empty_container()
-    # assert p_mat_group in groups
-    # assert p_frac_group in groups
     diagonals = []
     for group in groups:
         if group == p_mat_group:
             diagonals.append(get_fixed_stress_stabilization(model))
-        elif groups == p_frac_group:
+        elif group == p_frac_group:
             diagonals.append(get_fs_fractures_analytical(model))
         else:
             diagonals.append(index[[group]].mat)
-    index.mat = scipy.sparse.block_diag(diagonals, format="csr")
+    index.mat = sps.block_diag(diagonals, format="csr")
     return index
 
 
@@ -241,7 +244,7 @@ def make_fs_thermal(
     t_mat_group: int,
     t_frac_group: int,
     groups: list[int],
-):
+) -> BlockMatrixStorage:
     index = J[groups].empty_container()
     # assert p_mat_group in groups
     # assert p_frac_group in groups
@@ -257,7 +260,7 @@ def make_fs_thermal(
             diagonals.append(get_fs_fractures_energy(model))
         else:
             diagonals.append(index[[group]].mat)
-    index.mat = scipy.sparse.block_diag(diagonals, format="csr")
+    index.mat = sps.block_diag(diagonals, format="csr")
     return index
 
 
@@ -283,7 +286,7 @@ def get_fixed_stress_stabilization_energy(model, l_factor: float = 0.6):
     dt = model.time_manager.dt
     diagonal_approx /= dt
 
-    return scipy.sparse.diags(diagonal_approx)
+    return sps.diags(diagonal_approx)
 
 
 def get_fs_fractures_energy(model):
@@ -312,7 +315,7 @@ def get_fs_fractures_energy(model):
     )
 
     if len(fractures) == 0:
-        return scipy.sparse.csr_matrix((0, 0))
+        return sps.csr_matrix((0, 0))
 
     cell_volumes = np.concatenate([f.cell_volumes for f in fractures])
     val *= cell_volumes
@@ -330,4 +333,4 @@ def get_fs_fractures_energy(model):
     # intersect_zeros = np.zeros(sum(f.num_cells for f in intersections))
     # val = np.concatenate([val, intersect_zeros])
 
-    return scipy.sparse.diags(val)
+    return sps.diags(val)
