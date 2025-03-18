@@ -242,9 +242,8 @@ class BlockMatrixStorage:
     def _correct_getitem_key(
         self, key: list | slice | tuple
     ) -> tuple[list[int], list[int]]:
-        """User can index the matrix: `J[1, 2]`, `J[[1, 2]]`, `J[[1, 2], [3, 4]]`,
-        `J[:, [1, 2]]`, `J[[1, 2], :]`. This returns the key in the format
-        `J[[1, 2], [1, 2]]`.
+        """Helper function to process the key for __getitem__ and __setitem__. See the
+        former method for permissible formats.
 
         """
         # Since the key is defined as a single argument (see __getitem__), passing
@@ -277,11 +276,11 @@ class BlockMatrixStorage:
                 key_ = [key_]
             return key_
 
-        groups_i, groups_j = key
+        groups_row, groups_col = key
         # Convert the key to a list of indices.
-        groups_i = correct_key(groups_i, total=len(self.groups_to_blocks_row))
-        groups_j = correct_key(groups_j, total=len(self.groups_to_blocks_col))
-        return groups_i, groups_j
+        groups_row = correct_key(groups_row, total=len(self.groups_to_blocks_row))
+        groups_col = correct_key(groups_col, total=len(self.groups_to_blocks_col))
+        return groups_row, groups_col
 
     def __getitem__(self, key: list | slice | tuple) -> BlockMatrixStorage:
         """Get a subset of blocks from the matrix. The block indexing is defined
@@ -308,30 +307,54 @@ class BlockMatrixStorage:
 
         Indices can be given by tuples as well as lists. The indexing is 0-based.
 
+        Only active groups can be taken. That is, under nested indexing, a group that is
+        not selected in the outer index cannot be selected in the inner index.
+
+        Parameters:
+            key: The key to index the matrix. See above for permissible formats.
+
+        Raises:
+            ValueError: If an inactive group is selected.
+
+        Returns:
+            A block matrix storage object containing the selected blocks.
+
         """
         # Process input arguments to get lists of row and column indices.
-        groups_i, groups_j = self._correct_getitem_key(key)
+        groups_row, groups_col = self._correct_getitem_key(key)
 
         def inner(
             input_dofs_idx: list[np.ndarray],
             take_groups: list[int],
             all_groups: list[list[int]],
         ):
-            """Convert the key to a list of indices.
+            """Expand indices from groups to matrix indices.
 
             Parameters:
-                input_dofs_idx: For each
+                input_dofs_idx: The local indices for the row or column to be expanded.
+                take_groups: The groups to be taken.
+                all_groups: All groups available.
 
             """
             dofs_global_idx = []
+            # Initialize the local indices to None. Groups that remain active after this
+            # take operation will have their local indices set to the corresponding
+            # matrix indices.
             dofs_local_idx = [None] * len(input_dofs_idx)
             offset = 0
+            # Loop over the groups that are to be taken.
             for group in take_groups:
+                # Loop over all available groups.
                 for dof_idx in all_groups[group]:
-                    assert input_dofs_idx[dof_idx] is not None, (
-                        f"Taking inactive row {group}"
-                    )
+                    # An inactive group will have a None entry in the local dofs,
+                    # instead of matrix indices. This is checked here, and an error is
+                    # raised if an inactive group is selected.
+                    if input_dofs_idx[dof_idx] is None:
+                        raise ValueError(f"Taking inactive row {group}")
+
+                    # Append the global indices for the selected group.
                     dofs_global_idx.append(input_dofs_idx[dof_idx])
+                    # Append the local indices for the selected group.
                     dofs_local_idx[dof_idx] = (
                         np.arange(len(input_dofs_idx[dof_idx])) + offset
                     )
@@ -342,14 +365,20 @@ class BlockMatrixStorage:
                 return np.array([], dtype=int), dofs_local_idx
 
         row_idx, local_row_idx = inner(
-            self.local_dofs_row, groups_i, self.groups_to_blocks_row
+            self.local_dofs_row, groups_row, self.groups_to_blocks_row
         )
         col_idx, local_col_idx = inner(
-            self.local_dofs_col, groups_j, self.groups_to_blocks_col
+            self.local_dofs_col, groups_col, self.groups_to_blocks_col
         )
 
-        I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
-        submat = self.mat[I, J]
+        rows_expanded, cols_expanded = np.meshgrid(
+            row_idx, col_idx, sparse=True, indexing="ij", copy=False
+        )
+        submat = self.mat[rows_expanded, cols_expanded]
+
+        # Return a new block matrix storage object with the selected blocks. Compared to
+        # the current object, the new object potentially has a subset of active groups,
+        # with a corresponding subset of local indices.
         return BlockMatrixStorage(
             mat=submat,
             local_dofs_row=local_row_idx,
@@ -358,15 +387,27 @@ class BlockMatrixStorage:
             global_dofs_col=self.global_dofs_col,
             groups_to_blocks_col=self.groups_to_blocks_col,
             groups_to_blocks_row=self.groups_to_blocks_row,
-            active_groups_row=groups_i,
-            active_groups_col=groups_j,
+            active_groups_row=groups_row,
+            active_groups_col=groups_col,
             group_names_col=self.group_names_col,
             group_names_row=self.group_names_row,
         )
 
     def __setitem__(
         self, key: list | slice | tuple, value: BlockMatrixStorage | spmatrix
-    ):
+    ) -> None:
+        """Set method for a BlockMatrixStorage object.
+
+        See __getitem__ for permissible formats of the key.
+
+        Parameters:
+            key: The key to index the matrix. See above for permissible formats.
+            value: The value to set. This can be a BlockMatrixStorage object, or a
+                sparse matrix.
+
+        Raises:
+            ValueError: If an inactive group is selected.
+        """
         groups_i, groups_j = self._correct_getitem_key(key)
 
         if isinstance(value, BlockMatrixStorage):
@@ -376,16 +417,17 @@ class BlockMatrixStorage:
             dofs_idx = []
             for group in take_groups:
                 for dof_idx in all_groups[group]:
-                    assert input_dofs_idx[dof_idx] is not None, (
-                        f"Taking inactive row {group}"
-                    )
+                    if input_dofs_idx[dof_idx] is None:
+                        raise ValueError(f"Taking inactive row {group}")
                     dofs_idx.append(input_dofs_idx[dof_idx])
             return np.concatenate(dofs_idx)
 
         row_idx = inner(self.local_dofs_row, groups_i, self.groups_to_blocks_row)
         col_idx = inner(self.local_dofs_col, groups_j, self.groups_to_blocks_col)
-        I, J = np.meshgrid(row_idx, col_idx, sparse=True, indexing="ij", copy=False)
-        self.mat[I, J] = value
+        row_expanded, col_expanded = np.meshgrid(
+            row_idx, col_idx, sparse=True, indexing="ij", copy=False
+        )
+        self.mat[row_expanded, col_expanded] = value
 
     def copy(self) -> BlockMatrixStorage:
         res = self.empty_container()
