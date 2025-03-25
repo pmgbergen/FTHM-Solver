@@ -54,7 +54,7 @@ class Geometry(pp.PorePyModel):
         return np.concatenate([zeros_ambient, src_frac, zeros_lower])
 
     def fluid_source_mass_rate(self):
-        if self.params["setup"]["steady_state"]:
+        if self.params["linear_solver_config"]["steady_state"]:
             return 0
         else:
             return self.units.convert_units(1e1, "kg * s^-1")
@@ -70,7 +70,7 @@ class Geometry(pp.PorePyModel):
         src *= self.fluid_source_mass_rate()
         cv = self.fluid.components[0].specific_heat_capacity
         t_inj = 40
-        if self.params["setup"].get("isothermal", False):
+        if self.params["linear_solver_config"].get("isothermal", False):
             t_inj = self.reference_variable_values.temperature - 273
 
         t_inj = (
@@ -117,7 +117,7 @@ class Geometry(pp.PorePyModel):
         vals = self.equation_system.get_variable_values(time_step_index=0)
         name = f"{self.simulation_name()}_endstate_{int(time.time() * 1000)}.npy"
         print("Saving", name)
-        self.params["setup"]["end_state_filename"] = name
+        self.params["linear_solver_config"]["end_state_filename"] = name
         np.save(name, vals)
 
 
@@ -125,9 +125,9 @@ class Setup(Geometry, THMSolver, StatisticsSavingMixin, Physics):
 
     def simulation_name(self):
         name = super().simulation_name()
-        if self.params["setup"].get("isothermal", False):
+        if self.params["linear_solver_config"].get("isothermal", False):
             name = f"{name}_isothermal"
-        if (x := self.params["setup"].get("thermal_conductivity_multiplier", 1)) != 1:
+        if (x := self.params["linear_solver_config"].get("thermal_conductivity_multiplier", 1)) != 1:
             name = f"{name}_diffusion={x}"
         if (x := self.params['setup'].get('friction_coef', None)):
             name = f"{name}_friction={x}"
@@ -158,7 +158,7 @@ def make_model(setup: dict):
     friction_coef = setup.get('friction_coef', 0.577)
 
     params = {
-        "setup": setup,
+        "linear_solver_config": setup,
         "folder_name": "visualization_2d",
         "material_constants": {
             "solid": pp.SolidConstants(

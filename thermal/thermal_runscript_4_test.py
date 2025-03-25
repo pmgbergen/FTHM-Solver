@@ -58,7 +58,7 @@ class Geometry(pp.SolutionStrategy):
         return np.concatenate([zeros_ambient, src_frac, zeros_lower])
 
     def fluid_source_mass_rate(self):
-        if self.params["setup"]["steady_state"]:
+        if self.params["linear_solver_config"]["steady_state"]:
             return 0
         else:
             return self.units.convert_units(1e1, "kg * s^-1")
@@ -98,7 +98,7 @@ class Geometry(pp.SolutionStrategy):
         vals = self.equation_system.get_variable_values(time_step_index=0)
         name = f"{self.simulation_name()}_endstate_{int(time.time() * 1000)}.npy"
         print("Saving", name)
-        self.params["setup"]["end_state_filename"] = name
+        self.params["linear_solver_config"]["end_state_filename"] = name
         np.save(name, vals)
 
 
@@ -127,7 +127,7 @@ def make_model(setup: dict):
     porosity = 1.3e-2  # probably on the low side
 
     params = {
-        "setup": setup,
+        "linear_solver_config": setup,
         "folder_name": "visualization_2d_test",
         "material_constants": {
             "solid": pp.SolidConstants(

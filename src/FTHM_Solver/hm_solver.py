@@ -370,7 +370,7 @@ class IterativeHMSolver(IterativeLinearSolver):
             return super().solve_linear_system()
 
     def make_solver_scheme(self) -> KSPScheme | LinearTransformedScheme:
-        solver_type = self.params["setup"]["solver"]
+        solver_type = self.params.get("linear_solver_config", {}).get("solver", 3)
 
         if solver_type == 2:  # GMRES + AMG
             return KSPScheme(

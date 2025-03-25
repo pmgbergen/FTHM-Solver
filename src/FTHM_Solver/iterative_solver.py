@@ -146,7 +146,9 @@ class IterativeLinearSolver(pp.PorePyModel):
         #     result = np.zeros_like(rhs)
         #     return result
 
-        if self.params["setup"].get("save_matrix", False):
+        config = self.params.get("linear_solver_config", {})
+
+        if config.get("save_matrix", False):
             self.save_matrix_state()
 
         scheme = self.make_solver_scheme()
@@ -158,8 +160,10 @@ class IterativeLinearSolver(pp.PorePyModel):
             solver = scheme.make_solver(bmat)
         except:
             self.save_matrix_state()
-            raise ValueError("Solver construction failed")
-        print("Construction took:", round(time.time() - t0, 2))
+            raise ValueError("Solver construction failed") from e
+
+        if config.get("logging", False):
+            print("Construction took:", round(time.time() - t0, 2))
 
         # Permute the rhs groups to match mat_permuted.
         rhs_local = bmat.project_rhs_to_local(rhs)
@@ -170,8 +174,10 @@ class IterativeLinearSolver(pp.PorePyModel):
             sol_local = solver.solve(rhs_local)
         except:
             self.save_matrix_state()
-            raise ValueError("Solver solve failed")
-        print("Solve took:", round(time.time() - t0, 2))
+            raise ValueError("Solver solve failed") from e
+        
+        if config.get("logging", False):
+            print("Solve took:", round(time.time() - t0, 2))
 
         info = solver.ksp.getConvergedReason()
 
