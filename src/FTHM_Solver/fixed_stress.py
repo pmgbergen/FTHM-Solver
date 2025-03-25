@@ -189,9 +189,6 @@ def get_fs_fractures_analytical(model: pp.PorePyModel) -> sps.spmatrix:
     dt = model.time_manager.dt
     val /= dt
 
-    intersect_zeros = np.zeros(sum(f.num_cells for f in intersections))
-    val = np.concatenate([val, intersect_zeros])
-
     return sps.diags(val)
 
 
