@@ -118,10 +118,10 @@ class StatisticsSavingMixin(ContactIndicators):
     def before_nonlinear_iteration(self) -> None:
         self._linear_solve_stats = LinearSolveStats()
         super().before_nonlinear_iteration()
-        self.collect_stats_sticking_sliding_open()
-        self.collect_stats_ut_mismatch()
-        self.collect_stats_coulomb_mismatch()
-        self.collect_stats_u_lambda_max()
+        # self.collect_stats_sticking_sliding_open()
+        # self.collect_stats_ut_mismatch()
+        # self.collect_stats_coulomb_mismatch()
+        # self.collect_stats_u_lambda_max()
 
     def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
         config = self.params.get("linear_solver_config", {})

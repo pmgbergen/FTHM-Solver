@@ -89,12 +89,17 @@ class THMSolver(IterativeHMSolver):
         """Prepares the groups of variables in the specific order, that we will use in
         the block Jacobian to access the submatrices:
 
-        `J[x, 0]` - matrix pressure variable;
-        `J[x, 1]` - matrix displacement variable;
-        `J[x, 2]` - lower-dim pressure variable;
-        `J[x, 3]` - interface Darcy flux variable;
-        `J[x, 4]` - contact traction variable;
-        `J[x, 5]` - interface displacement variable;
+        `J[x, 0]` - contact traction variable;
+        `J[x, 1]` - interface Darcy flux;
+        `J[x, 2]` - interface fluxes temperature;
+        `J[x, 3]` - displacement in ambient dimension;
+        `J[x, 4]` - displacement on interfaces;
+        `J[x, 5]` - pressure in ambient dimension;
+        `J[x, 6]` - pressure in fractures;
+        `J[x, 7]` - pressure in interfaces;
+        `J[x, 8]` - temperature in ambient dimension;
+        `J[x, 9]` - temperature in fractures;
+        `J[x, 10]` - temperature in interfaces;
 
         This index is not equivalen to PorePy model natural ordering. Constructed when
         first accessed.
@@ -205,9 +210,11 @@ class THMSolver(IterativeHMSolver):
                 "pc_fieldsplit_type": "additive",
             },
             elim_options={
-                "pc_type": "hypre",
-                "pc_hypre_type": "boomeramg",
-                "pc_hypre_boomeramg_strong_threshold": 0.7,
+                # "pc_type": "hypre",
+                # "pc_hypre_type": "boomeramg",
+                # "pc_hypre_boomeramg_strong_threshold": 0.7,
+                "pc_type": "gamg",
+                "pc_gamg_threshold": 0.02,
             },
             complement=PetscFieldSplitScheme(
                 groups=temp,
@@ -244,17 +251,15 @@ class THMSolver(IterativeHMSolver):
                 block_size=2,
             ),
             elim_options={
-                "python_pc_type": "hypre",
-                "python_pc_hypre_type": "boomeramg",
-                "python_pc_hypre_boomeramg_strong_threshold": 0.7,
-                "python_pc_hypre_boomeramg_P_max": 16,
-                # "python_pc_type": "hmg",
-                # "python_hmg_inner_pc_type": "hypre",
-                # "python_hmg_inner_pc_hypre_type": "boomeramg",
-                # "python_hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
-                # # "python_pc_hypre_boomeramg_P_max": 16,
-                # "python_mg_levels_ksp_type": "richardson",
-                # "python_mg_levels_ksp_max_it": 1,
+                # "python_pc_type": "hypre",
+                # "python_pc_hypre_type": "boomeramg",
+                # "python_pc_hypre_boomeramg_strong_threshold": 0.7,
+                # "python_pc_hypre_boomeramg_P_max": 16,
+                "python_pc_type": "gamg",
+                "python_pc_gamg_threshold": 0.02,
+                "python_mg_levels_ksp_type": "richardson",
+                "python_mg_levels_ksp_max_it": 4,
+                "python_mg_levels_pc_type": "sor",
             },
         )
 
@@ -382,13 +387,13 @@ class THMSolver(IterativeHMSolver):
                                     # 'pc_hypre_boomeramg_max_row_sum': 1.0,
                                     # # "pc_hypre_boomeramg_smooth_type": "Euclid",
                                     "pc_type": "hmg",
-                                    "hmg_inner_pc_type": "hypre",
-                                    "hmg_inner_pc_hypre_type": "boomeramg",
-                                    "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    "hmg_inner_pc_type": "gamg",
+                                    "hmg_inner_pc_gamg_threshold": 0.02,
+                                    # "hmg_inner_pc_hypre_type": "boomeramg",
+                                    # "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
                                     "mg_levels_ksp_type": "richardson",
                                     "mg_levels_ksp_max_it": 2,
-                                    # 3D model has bad grid
-                                    "mg_levels_pc_type": "ilu" if nd == 3 else "sor",
+                                    "mg_levels_pc_type": "ilu",
                                 }
                             ),
                             keep_options={},
@@ -456,7 +461,6 @@ class THMSolver(IterativeHMSolver):
                             "ksp_type": "gmres",
                             "ksp_rtol": inner_rtol,
                             "ksp_pc_side": "right",
-                            "ksp_monitor": None,
                             #
                             "pc_type": "ilu",
                         }
@@ -473,9 +477,11 @@ class THMSolver(IterativeHMSolver):
                                     "ksp_pc_side": "right",
                                     #
                                     "pc_type": "hmg",
-                                    "hmg_inner_pc_type": "hypre",
-                                    "hmg_inner_pc_hypre_type": "boomeramg",
-                                    "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    "hmg_inner_pc_type": "gamg",
+                                    "hmg_inner_pc_gamg_threshold": 0.02,
+                                    # "hmg_inner_pc_type": "hypre",
+                                    # "hmg_inner_pc_hypre_type": "boomeramg",
+                                    # "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
                                     "mg_levels_ksp_type": "richardson",
                                     "mg_levels_ksp_max_it": 2,
                                     # 3D model has bad grid
