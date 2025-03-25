@@ -44,12 +44,12 @@ class THMSolver(IterativeHMSolver):
     well_enthalpy_flux: Callable[[list[pp.MortarGrid]], pp.ad.MixedDimensionalVariable]
 
     def simulation_name(self) -> str:
-        name = "stats_thermal"
-        setup = self.params["setup"]
-        name = f"{name}_geo{setup['geometry']}x{setup['grid_refinement']}"
-        name = f"{name}_sol{setup['solver']}"
-        if (bc := setup.get("thermal_diffusion_bc")) not in ("dir", None):
-            name = f"{name}_bc{bc}"
+        name = "stats_thermoporomechanics"
+        # setup = self.params["linear_solver_config"]
+        # name = f"{name}_geo{setup['geometry']}x{setup['grid_refinement']}"
+        # name = f"{name}_sol{setup['solver']}"
+        # if (bc := setup.get("thermal_diffusion_bc")) not in ("dir", None):
+        #     name = f"{name}_bc{bc}"
         return name
 
     CONTACT_GROUP = 0
@@ -184,7 +184,8 @@ class THMSolver(IterativeHMSolver):
         return res
 
     def make_solver_scheme(self) -> FieldSplitScheme:
-        solver_type: str = self.params["setup"]["solver"]
+        config: dict = self.params.get("linear_solver_config", {})
+        solver_type: str = config.get("solver", "SAMG")
 
         if solver_type == "FGMRES":
             return self.make_solver_scheme_fgmres()
@@ -329,11 +330,16 @@ class THMSolver(IterativeHMSolver):
             ],
             # The inner solver is a KSP solver with a nested preconditioner.
             inner=PetscKSPScheme(
-                petsc_options={
-                    # "ksp_type": "fgmres",
-                    "ksp_monitor": None,
-                    "ksp_rtol": 1e-12,
-                },
+                petsc_options=(
+                    {
+                        # "ksp_type": "fgmres",
+                        "ksp_monitor": None,
+                        "ksp_rtol": 1e-8,
+                    }
+                    | {"ksp_monitor": None}
+                    if config.get("ksp_monitor", True)
+                    else {}
+                ),
                 compute_eigenvalues=False,
                 # Nested field split preconditioner. The outermost layer treats the contact
                 # equations.
@@ -405,6 +411,10 @@ class THMSolver(IterativeHMSolver):
         )
 
     def make_solver_scheme_fgmres(self):
+        config: dict = self.params.get("linear_solver_config", {})
+        ksp_monitor = (
+            {"ksp_monitor": None} if config.get("ksp_monitor", True) else {}
+        )
         nd = self.nd
         contact = [0]
         intf = [1, 2]
@@ -420,11 +430,13 @@ class THMSolver(IterativeHMSolver):
                 lambda bmat: self.scale_energy_balance(bmat),
             ],
             inner=PetscKSPScheme(
-                petsc_options={
-                    "ksp_type": "fgmres",
-                    "ksp_monitor": None,
-                    "ksp_rtol": 1e-12,
-                },
+                petsc_options=(
+                    {
+                        "ksp_type": "fgmres",
+                        "ksp_rtol": 1e-8,
+                    }
+                    | ksp_monitor
+                ),
                 compute_eigenvalues=False,
                 preconditioner=PetscFieldSplitScheme(
                     groups=contact,
@@ -447,7 +459,8 @@ class THMSolver(IterativeHMSolver):
                             "ksp_monitor": None,
                             #
                             "pc_type": "ilu",
-                        },
+                        }
+                        | ksp_monitor,
                         fieldsplit_options={
                             "pc_fieldsplit_schur_precondition": "selfp",
                         },
@@ -458,7 +471,6 @@ class THMSolver(IterativeHMSolver):
                                     "ksp_type": "gmres",
                                     "ksp_rtol": inner_rtol,
                                     "ksp_pc_side": "right",
-                                    "ksp_monitor": None,
                                     #
                                     "pc_type": "hmg",
                                     "hmg_inner_pc_type": "hypre",
@@ -467,15 +479,16 @@ class THMSolver(IterativeHMSolver):
                                     "mg_levels_ksp_type": "richardson",
                                     "mg_levels_ksp_max_it": 2,
                                     # 3D model has bad grid
-                                    "mg_levels_pc_type": "ilu" if nd == 3 else "sor",
+                                    "mg_levels_pc_type": "ilu",
                                 }
+                                | ksp_monitor
                             ),
                             keep_options={
                                 "ksp_type": "gmres",
                                 "ksp_rtol": inner_rtol,
                                 "ksp_pc_side": "right",
-                                "ksp_monitor": None,
-                            },
+                            }
+                            | ksp_monitor,
                             ksp_keep_use_pmat=True,
                             block_size=self.nd,
                             invert=lambda bmat: csr_to_petsc(
@@ -497,9 +510,11 @@ class THMSolver(IterativeHMSolver):
                                             "pc_fieldsplit_type": "additive",
                                         },
                                         elim_options={
-                                            "pc_type": "hypre",
-                                            "pc_hypre_type": "boomeramg",
-                                            "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                            "pc_type": "gamg",
+                                            "pc_gamg_threshold": 0.02,
+                                            # "pc_type": "hypre",
+                                            # "pc_hypre_type": "boomeramg",
+                                            # "pc_hypre_boomeramg_strong_threshold": 0.7,
                                         },
                                         complement=PetscFieldSplitScheme(
                                             groups=temp,

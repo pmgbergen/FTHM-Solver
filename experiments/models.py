@@ -56,7 +56,7 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
         return result
 
     def fluid_mass(self, subdomains: list[pp.Grid]) -> pp.ad.Operator:
-        physics_type = self.params["setup"]["physics"]
+        physics_type = self.params["linear_solver_config"]["physics"]
         if physics_type == 1:
             return super().fluid_mass(subdomains)
         elif physics_type == 0:
@@ -64,7 +64,7 @@ class Physics(DimensionDependentPermeability, SpecificStorage, Poromechanics):
         raise ValueError(physics_type)
 
     def permeability(self, subdomains):
-        physics_type = self.params["setup"]["physics"]
+        physics_type = self.params["linear_solver_config"]["physics"]
         permeability = self.params['setup'].get('permeability', 1)
 
         if permeability == 0:

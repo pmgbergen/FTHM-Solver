@@ -55,7 +55,7 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
 
     def initial_condition(self) -> None:
         super().initial_condition()
-        if self.params["setup"]["steady_state"]:
+        if self.params["linear_solver_config"]["steady_state"]:
             num_cells = sum([sd.num_cells for sd in self.mdg.subdomains()])
             val = self.reference_variable_values.pressure * np.ones(num_cells)
             for time_step_index in self.time_step_indices:
@@ -87,7 +87,7 @@ class Physics(CubicLawPermeability, Thermoporomechanics):
                     iterate_index=iterate_index,
                 )
         else:
-            initial_state = self.params["setup"]["initial_state"]
+            initial_state = self.params["linear_solver_config"]["initial_state"]
             if initial_state != "ignore":
                 vals = np.load(initial_state)
                 self.equation_system.set_variable_values(vals, time_step_index=0)

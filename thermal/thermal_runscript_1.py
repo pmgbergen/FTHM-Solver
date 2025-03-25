@@ -56,7 +56,7 @@ class Geometry(pp.SolutionStrategy):
     def bc_values_pressure(self, boundary_grid):
         vals = super().bc_values_pressure(boundary_grid)
         sides = self.domain_boundary_sides(boundary_grid)
-        x = self.params["setup"]["high_boundary_pressure_ratio"]
+        x = self.params["linear_solver_config"]["high_boundary_pressure_ratio"]
         vals[sides.east] *= x
         return vals
 
@@ -118,7 +118,7 @@ def make_model(setup: dict):
     specific_storage = 1 / (lame + 2 / 3 * shear) * (biot - porosity) * (1 - biot)
 
     params = {
-        "setup": setup,
+        "linear_solver_config": setup,
         "material_constants": {
             "solid": pp.SolidConstants(
                 shear_modulus=shear,  # [Pa]

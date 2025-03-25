@@ -125,7 +125,7 @@ def make_model(setup: dict):
     specific_storage = 1 / (lame + 2 / 3 * shear) * (biot - porosity) * (1 - biot)
 
     params = {
-        "setup": setup,
+        "linear_solver_config": setup,
         "material_constants": {
             "solid": pp.SolidConstants(
                 shear_modulus=shear,  # [Pa]

@@ -85,7 +85,7 @@ class StatisticsSavingMixin(ContactIndicators):
 
     def simulation_name(self) -> str:
         name = "stats"
-        setup = self.params["setup"]
+        setup = self.params["linear_solver_config"]
         name = f"{name}_geo{setup['geometry']}x{setup['grid_refinement']}"
         name = f"{name}_sol{setup['solver']}"
         name = f"{name}_ph{setup['physics']}"
@@ -96,11 +96,13 @@ class StatisticsSavingMixin(ContactIndicators):
     def before_nonlinear_loop(self) -> None:
         self._time_step_stats = TimeStepStats()
         self.statistics.append(self._time_step_stats)
-        print()
-        DAY = 24 * 60 * 60
-        print(
-            f"Sim time: {self.time_manager.time / DAY:.2e}, Dt: {self.time_manager.dt / DAY:.2e} (days)"
-        )
+        config = self.params.get("linear_solver_config", {})
+        if config.get("logging", False):
+            print()
+            DAY = 24 * 60 * 60
+            print(
+                f"Sim time: {self.time_manager.time / DAY:.2e}, Dt: {self.time_manager.dt / DAY:.2e} (days)"
+            )
         super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(self) -> None:
@@ -122,13 +124,15 @@ class StatisticsSavingMixin(ContactIndicators):
         self.collect_stats_u_lambda_max()
 
     def after_nonlinear_iteration(self, solution_vector: np.ndarray) -> None:
-        print(
-            f"Newton iter: {len(self._time_step_stats.linear_solves)}, "
-            f"Krylov iters: {self._linear_solve_stats.krylov_iters}"
-        )
+        config = self.params.get("linear_solver_config", {})
+        if config.get("logging", False):
+            print(
+                f"Newton iter: {len(self._time_step_stats.linear_solves)}, "
+                f"Krylov iters: {self._linear_solve_stats.krylov_iters}"
+            )
         self._linear_solve_stats.simulation_dt = self.time_manager.dt
         self._time_step_stats.linear_solves.append(self._linear_solve_stats)
-        # if self.params["setup"].get("save_matrix", False):
+        # if self.params["linear_solver_config"].get("save_matrix", False):
         #     self.save_matrix_state()
         dump_json(self.simulation_name() + ".json", self.statistics)
         from plot_utils import write_dofs_info
