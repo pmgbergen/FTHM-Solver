@@ -135,7 +135,7 @@ class StatisticsSavingMixin(ContactIndicators):
         # if self.params["linear_solver_config"].get("save_matrix", False):
         #     self.save_matrix_state()
         dump_json(self.simulation_name() + ".json", self.statistics)
-        from plot_utils import write_dofs_info
+        from FTHM_Solver.plot_utils import write_dofs_info
 
         write_dofs_info(self)
         super().after_nonlinear_iteration(solution_vector)
