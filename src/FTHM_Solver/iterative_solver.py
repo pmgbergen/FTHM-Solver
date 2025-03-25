@@ -1,6 +1,6 @@
 import sys
 from functools import cached_property
-from typing import Sequence, Callable
+from typing import Sequence
 import time
 
 import scipy.sparse as sps
@@ -9,10 +9,10 @@ import porepy as pp
 
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 
-from .stats import LinearSolveStats
+from .stats import LinearSolveStats, StatisticsSavingMixin
 
 
-class IterativeLinearSolver(pp.PorePyModel):
+class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
     """Mixin for iterative linear solvers."""
 
     nd: int
@@ -20,8 +20,6 @@ class IterativeLinearSolver(pp.PorePyModel):
     params: dict
     equation_system: pp.ad.EquationSystem
     linear_system: tuple[sps.spmatrix, np.ndarray]
-
-    save_matrix_state: Callable[..., None]
 
     _linear_solve_stats = LinearSolveStats()
     """A placeholder to statistics. The solver mixin only writes in it, not reads."""
@@ -158,7 +156,7 @@ class IterativeLinearSolver(pp.PorePyModel):
         t0 = time.time()
         try:
             solver = scheme.make_solver(bmat)
-        except:
+        except Exception as e:
             self.save_matrix_state()
             raise ValueError("Solver construction failed") from e
 
@@ -172,7 +170,7 @@ class IterativeLinearSolver(pp.PorePyModel):
         sol_local = solver.solve(rhs_local)
         try:
             sol_local = solver.solve(rhs_local)
-        except:
+        except Exception as e:
             self.save_matrix_state()
             raise ValueError("Solver solve failed") from e
         

@@ -354,21 +354,6 @@ class IterativeHMSolver(IterativeLinearSolver):
         self.bmat.mat = mat
         self.linear_system = mat, rhs
 
-    def solve_linear_system(self) -> np.ndarray:
-        rhs = self.linear_system[1]
-        if not np.all(np.isfinite(rhs)):
-            self._linear_solve_stats.krylov_iters = 0
-            result = np.zeros_like(rhs)
-            result[:] = np.nan
-            return result
-
-        solver_type = self.params["setup"]["solver"]
-        direct = solver_type == 0
-        if direct:
-            return scipy.sparse.linalg.spsolve(*self.linear_system)
-        else:
-            return super().solve_linear_system()
-
     def make_solver_scheme(self) -> KSPScheme | LinearTransformedScheme:
         solver_type = self.params.get("linear_solver_config", {}).get("solver", 3)
 
