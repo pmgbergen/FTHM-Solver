@@ -351,6 +351,8 @@ class THMSolver(IterativeHMSolver):
                 preconditioner=PetscFieldSplitScheme(
                     # The contact mechanics equations.
                     groups=contact,
+                    # The blocks are of size `nd`, the number of contact traction
+                    # components.
                     block_size=self.nd,
                     # Use a diagonal approximation when constructing the Schur
                     # complement, e.g. S_A = D - C diag(A)^-1 B. See the PETSc manual
@@ -358,6 +360,8 @@ class THMSolver(IterativeHMSolver):
                     fieldsplit_options={
                         "pc_fieldsplit_schur_precondition": "selfp",
                     },
+                    # PETSc's point block Jacobi preconditioner, with the given block
+                    # size.
                     elim_options={
                         "pc_type": "pbjacobi",
                     },

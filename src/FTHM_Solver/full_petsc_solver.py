@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 import numpy as np
 from .block_matrix import BlockMatrixStorage
 from .mat_utils import csr_to_petsc, сlear_petsc_options
@@ -49,6 +49,25 @@ def insert_petsc_options(options):
         petsc_options[k] = v
 
 
+def petsc_options_as_str(stem: str) -> str:
+    options = PETSc.Options().getAll()
+
+    s = ""
+    if stem.lower().strip() == "ksp":
+        known_keys = [
+            "ksp_type",
+            "ksp_rtol",
+            "ksp_max_it",
+            "ksp_gmres_cgs_refinement_type",
+            "ksp_gmres_classicalgramschmidt",
+        ]
+        for key in known_keys:
+            if key in options:
+                s += f"{key}: {options[key]}\n"
+
+    return s
+
+
 @dataclass
 class PetscFieldSplitScheme:
     """WARNING: This documentation is incomplete and may be incorrect.
@@ -85,8 +104,9 @@ class PetscFieldSplitScheme:
     """The preconditioner for the complement of the groups."""
 
     elim_options: dict[str, str | float | int] | None = None
-    """Options for the block that is eliminated in this preconditioner. Can be of the
-    form {"pctype": "ilu"}, for example.
+    """Options for the block that is eliminated in this preconditioner. Should contain
+    a key `pc_type` that determines the type of preconditioner used, as well as other
+    options that are specific to the preconditioner type.
     
     """
 
@@ -134,21 +154,31 @@ class PetscFieldSplitScheme:
         bmat: BlockMatrixStorage,
         petsc_pc: PETSc.PC,
         prefix: str = "",
-    ) -> tuple:
-        """Configure a PETSc PC object with the given block matrix and options."""
+    ) -> dict[str, Any]:
+        """Configure a PETSc PC object with the given block matrix and options.
+
+        Parameters:
+            bmat: The block matrix storage.
+            petsc_pc: The PETSc PC object to be configured.
+            prefix: A prefix to be used for the PETSc options.
+        """
         elim_options = self.elim_options or {}
         fieldsplit_options = self.fieldsplit_options or {}
         keep_options = self.keep_options or {}
 
         elim = self.groups
         if self.complement is None:
-            # If there is no complement, we can use a simpler preconditioner.
+            # There is no inner Schur complement to be treated by a nested fieldsplit.
+            # We just need to eliminate the given groups.
             options = (
                 {
+                    # By default, we use a direct solver for the eliminated block.
                     f"{prefix}ksp_type": "preonly",
                     f"{prefix}pc_type": "lu",
                 }
+                # Override with options provided for the eliminated block.
                 | {f"{prefix}{k}": v for k, v in elim_options.items()}
+                # Override with options provided for the fieldsplit. TODO: Why?
                 | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
             )
 
@@ -175,11 +205,6 @@ class PetscFieldSplitScheme:
         keep_tag = build_tag(keep)
         empty_bmat = bmat.empty_container()[elim + keep]
 
-        # Construct the PETSc IS objects for the groups to be eliminated and kept.
-        petsc_is_keep = construct_is(empty_bmat, keep)
-        petsc_is_elim = construct_is(empty_bmat, elim)
-        petsc_is_elim.setBlockSize(self.block_size)
-
         if self.invert is not None:
             # The user is obliged to provide a function that inverts the A_00 block used
             # to construct the Schur complement.
@@ -187,6 +212,8 @@ class PetscFieldSplitScheme:
 
         options = (
             {
+                # By default, we do a Schur complement preconditioner with a direct
+                # solver for the eliminated block.
                 f"{prefix}pc_type": "fieldsplit",
                 f"{prefix}pc_fieldsplit_type": "schur",
                 f"{prefix}pc_fieldsplit_schur_precondition": "selfp",
@@ -195,6 +222,8 @@ class PetscFieldSplitScheme:
                 f"{prefix}fieldsplit_{elim_tag}_pc_type": "lu",
                 f"{prefix}fieldsplit_{keep_tag}_ksp_type": "preonly",
             }
+            # Override with options provided for the eliminated block, the kept block,
+            # and the fieldsplit (in increasing order of precedence).
             | {f"{prefix}fieldsplit_{elim_tag}_{k}": v for k, v in elim_options.items()}
             | {f"{prefix}fieldsplit_{keep_tag}_{k}": v for k, v in keep_options.items()}
             | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
@@ -205,6 +234,10 @@ class PetscFieldSplitScheme:
         # Set the options for the PETSc PC object.
         petsc_pc.setFromOptions()
 
+        # Construct the PETSc IS objects for the groups to be eliminated and kept.
+        petsc_is_keep = construct_is(empty_bmat, keep)
+        petsc_is_elim = construct_is(empty_bmat, elim)
+        petsc_is_elim.setBlockSize(self.block_size)
         # Set the IS objects for the fieldsplit.
         petsc_pc.setFieldSplitIS((elim_tag, petsc_is_elim), (keep_tag, petsc_is_keep))
 
@@ -240,6 +273,10 @@ class PetscFieldSplitScheme:
             null_space_petsc = PETSc.NullSpace().create(True, null_space_vectors)
             petsc_pc_elim.getOperators()[1].setNearNullSpace(null_space_petsc)
 
+        # Call on self.complement to configure the PETSc PC object for the complement,
+        # and update (override) the options with the options returned by the complement.
+        # Note that, due to the tagging system, this may override some options that were
+        # set above.
         options |= self.complement.configure(
             bmat,
             prefix=f"{prefix}fieldsplit_{keep_tag}_",
@@ -313,6 +350,7 @@ class LinearTransformedScheme:
     right_transformations: Optional[
         list[Callable[[BlockMatrixStorage], BlockMatrixStorage]]
     ] = None
+    # This is not optional.
     inner: Optional[PetscKSPScheme] = None
     """The actual solver, to be applied after the transformations.
     

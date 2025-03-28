@@ -1,3 +1,4 @@
+from __future__ import annotations
 import itertools
 import json
 import time
@@ -15,7 +16,7 @@ from numpy.linalg import norm
 from scipy.sparse import bmat
 from scipy.sparse.linalg import LinearOperator
 
-from FTHM_Solver.stats import LinearSolveStats, dump_json
+from FTHM_Solver.stats import LinearSolveStats, dump_json, TimeStepStats
 
 if TYPE_CHECKING:
     from .block_matrix import (
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
     )
 
 from .mat_utils import PetscGMRES, PetscRichardson, condest, eigs
-from .stats import TimeStepStats
 
 
 def trim_label(label: str) -> str:
@@ -893,9 +893,9 @@ def plot_eigs_exact(mat, logx: bool = True):
 
 
 def solve_petsc_3(
-    bmat: "BlockMatrixStorage",
-    rhs_global: np.ndarray = None,
-    ksp_scheme: "KSPScheme" = None,
+    bmat: BlockMatrixStorage,
+    rhs_global: np.ndarray,
+    ksp_scheme: KSPScheme,
     label="",
     logx_eigs=False,
     normalize_residual=False,
@@ -910,7 +910,7 @@ def solve_petsc_3(
     t0 = time.time()
     krylov = ksp_scheme.make_solver(bmat)
     if options_view:
-        for k, v in ksp_scheme.options.items():
+        for k, v in ksp_scheme.petsc_options.items():
             print(k, v)
     print("Construction took:", round(time.time() - t0, 2))
 
