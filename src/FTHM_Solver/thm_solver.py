@@ -338,7 +338,6 @@ class THMSolver(IterativeHMSolver):
                 petsc_options=(
                     {
                         # "ksp_type": "fgmres",
-                        "ksp_monitor": None,
                         "ksp_rtol": 1e-8,
                     }
                     | {"ksp_monitor": None}
