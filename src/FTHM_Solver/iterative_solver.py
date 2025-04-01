@@ -167,7 +167,6 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
         rhs_local = bmat.project_rhs_to_local(rhs)
 
         t0 = time.time()
-        sol_local = solver.solve(rhs_local)
         try:
             sol_local = solver.solve(rhs_local)
         except Exception as e:

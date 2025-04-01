@@ -1,8 +1,8 @@
 from typing import Callable
 
 from functools import cached_property
-from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
-from .fixed_stress import make_fs_analytical, make_fs_analytical_slow
+from .block_matrix import BlockMatrixStorage, KSPScheme
+from .fixed_stress import make_fs_analytical_slow_new
 from .full_petsc_solver import (
     LinearTransformedScheme,
     PetscFieldSplitScheme,
@@ -15,16 +15,11 @@ from .iterative_solver import (
 )
 
 import numpy as np
-import scipy.sparse
 import porepy as pp
 from .mat_utils import (
-    PetscAMGFlow,
-    PetscAMGMechanics,
-    PetscILU,
-    csr_ones,
     csr_to_petsc,
-    extract_diag_inv,
     inv_block_diag,
+    csr_ones,
 )
 
 
@@ -84,8 +79,10 @@ class IterativeHMSolver(IterativeLinearSolver):
         """
         dim_max = self.mdg.dim_max()
         sd_ambient = self.mdg.subdomains(dim=dim_max)
-        sd_lower = [
-            k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
+        sd_intersec = [
+            k
+            for i in reversed(range(0, dim_max - 1))
+            for k in self.mdg.subdomains(dim=i)
         ]
         sd_frac = self.mdg.subdomains(dim=dim_max - 1)
         intf = self.mdg.interfaces()
@@ -99,7 +96,8 @@ class IterativeHMSolver(IterativeLinearSolver):
                 [self.displacement(sd_ambient)],  # 2
                 [self.interface_displacement(intf_frac)],  # 3
                 [self.pressure(sd_ambient)],  # 4
-                [self.pressure(sd_lower)],  # 5
+                [self.pressure(sd_frac)],  # 5
+                [self.pressure(sd_intersec)],  # 6
             ],
         )
 
@@ -127,8 +125,11 @@ class IterativeHMSolver(IterativeLinearSolver):
         """
         dim_max = self.mdg.dim_max()
         sd_ambient = self.mdg.subdomains(dim=dim_max)
-        sd_lower = [
-            k for i in reversed(range(0, dim_max)) for k in self.mdg.subdomains(dim=i)
+        sd_frac = self.mdg.subdomains(dim=dim_max - 1)
+        sd_intersec = [
+            k
+            for i in reversed(range(0, dim_max - 1))
+            for k in self.mdg.subdomains(dim=i)
         ]
         intf = self.mdg.interfaces()
 
@@ -137,14 +138,15 @@ class IterativeHMSolver(IterativeLinearSolver):
                 model=self,
                 equations_group_order=[
                     [  # 0
-                        ("normal_fracture_deformation_equation", sd_lower),
-                        ("tangential_fracture_deformation_equation", sd_lower),
+                        ("normal_fracture_deformation_equation", sd_frac),
+                        ("tangential_fracture_deformation_equation", sd_frac),
                     ],
                     [("interface_darcy_flux_equation", intf)],  # 1
                     [("momentum_balance_equation", sd_ambient)],  # 2
                     [("interface_force_balance_equation", intf)],  # 3
                     [("mass_balance_equation", sd_ambient)],  # 4
-                    [("mass_balance_equation", sd_lower)],  # 5
+                    [("mass_balance_equation", sd_frac)],  # 5
+                    [("mass_balance_equation", sd_intersec)],  # 6
                 ],
             ),
             contact_group=self.CONTACT_GROUP,
@@ -355,167 +357,94 @@ class IterativeHMSolver(IterativeLinearSolver):
         self.linear_system = mat, rhs
 
     def make_solver_scheme(self) -> KSPScheme | LinearTransformedScheme:
-        solver_type = self.params.get("linear_solver_config", {}).get("solver", 3)
+        contact = [0]
+        intf = [1]
+        mech = [2, 3]
+        flow = [4, 5, 6]
+        config = self.params.get("linear_solver_config", {})
 
-        if solver_type == 2:  # GMRES + AMG
-            return KSPScheme(
-                ksp="gmres",
-                rtol=1e-10,
-                pc_side="right",
-                right_transformations=[
-                    lambda bmat: self.Qright(
-                        contact_group=self.CONTACT_GROUP, u_intf_group=3
-                    )
-                ],
-                preconditioner=FieldSplitScheme(
-                    # Exactly eliminate contact mechanics (assuming linearly-transformed system)
-                    groups=[0],
-                    solve=lambda bmat: inv_block_diag(mat=bmat[[0]].mat, nd=self.nd),
-                    complement=FieldSplitScheme(
-                        # Eliminate interface flow,
-                        # Use diag() to approximate inverse and ILU to solve linear systems
-                        groups=[1],
-                        solve=lambda bmat: PetscILU(bmat[[1]].mat),
-                        invertor=lambda bmat: extract_diag_inv(bmat[[1]].mat),
-                        complement=FieldSplitScheme(
-                            # Eliminate elasticity. Use AMG to solve linear systems and fixed
-                            # stress to approximate inverse.
-                            groups=[2, 3],
-                            solve=lambda bmat: PetscAMGMechanics(
-                                mat=bmat[[2, 3]].mat,
-                                dim=self.nd,
-                                null_space=build_mechanics_near_null_space(self),
-                            ),
-                            invertor_type="physical",
-                            invertor=lambda bmat: make_fs_analytical(
-                                self, bmat, p_mat_group=4, p_frac_group=5
-                            ).mat,
-                            complement=FieldSplitScheme(
-                                # Use AMG to solve mass balance.
-                                groups=[4, 5],
-                                solve=lambda bmat: PetscAMGFlow(mat=bmat[[4, 5]].mat),
-                            ),
-                        ),
-                    ),
-                ),
-            )
-
-        elif solver_type == 1:  # Same as sequential iterative scheme.
-            return KSPScheme(
-                # ksp="gmres",
-                # rtol=1e-10,
-                # pc_side="right",
-                ksp="richardson",
-                atol=1e-10,
-                rtol=1e-10,
-                pc_side="left",
-                right_transformations=[],
-                preconditioner=FieldSplitScheme(
-                    groups=[0, 2, 3],
-                    invertor_type="physical",
-                    invertor=lambda bmat: make_fs_analytical_slow(
-                        self, bmat, p_mat_group=4, p_frac_group=5, groups=[1, 4, 5]
-                    ).mat,
-                    complement=FieldSplitScheme(
-                        groups=[1, 4, 5],
-                    ),
-                ),
-            )
-
-        elif solver_type == 21:  # GMRES + Direct subsolvers
-            return KSPScheme(
-                ksp="gmres",
-                rtol=1e-10,
-                pc_side="right",
-                right_transformations=[
-                    lambda bmat: self.Qright(
-                        contact_group=self.CONTACT_GROUP, u_intf_group=3
-                    )
-                ],
-                preconditioner=FieldSplitScheme(
-                    groups=[0],
-                    complement=FieldSplitScheme(
-                        groups=[1],
-                        complement=FieldSplitScheme(
-                            groups=[2, 3],
-                            invertor_type="physical",
-                            invertor=lambda bmat: make_fs_analytical(
-                                self, bmat, p_mat_group=4, p_frac_group=5
-                            ).mat,
-                            complement=FieldSplitScheme(
-                                groups=[4, 5],
-                            ),
-                        ),
-                    ),
-                ),
-            )
-
-        elif solver_type == 3:
-            return LinearTransformedScheme(
-                right_transformations=[
-                    lambda bmat: self.Qright(contact_group=0, u_intf_group=3)
-                ],
-                inner=PetscKSPScheme(
-                    petsc_options={
-                        "ksp_rtol": 1e-10,
-                        "ksp_atol": 1e-15,
-                        "ksp_max_it": 90,
-                        "ksp_gmres_restart": 30,
+        return LinearTransformedScheme(
+            right_transformations=[
+                lambda bmat: self.Qright(contact_group=0, u_intf_group=3)
+            ],
+            inner=PetscKSPScheme(
+                petsc_options={
+                    "ksp_rtol": 1e-10,
+                    "ksp_atol": 1e-15,
+                    "ksp_max_it": 90,
+                    "ksp_gmres_restart": 30,
+                }
+                | {"ksp_monitor": None}
+                if config.get("ksp_monitor", True)
+                else {},
+                preconditioner=PetscFieldSplitScheme(
+                    groups=contact,
+                    block_size=self.nd,
+                    fieldsplit_options={
+                        "pc_fieldsplit_schur_precondition": "selfp",
                     },
-                    preconditioner=PetscFieldSplitScheme(
-                        groups=[0],
-                        block_size=self.nd,
+                    elim_options={
+                        "pc_type": "pbjacobi",
+                    },
+                    keep_options={
+                        "mat_schur_complement_ainv_type": "blockdiag",
+                    },
+                    complement=PetscFieldSplitScheme(
+                        groups=intf,
                         fieldsplit_options={
                             "pc_fieldsplit_schur_precondition": "selfp",
                         },
                         elim_options={
-                            "pc_type": "pbjacobi",
-                        },
-                        keep_options={
-                            "mat_schur_complement_ainv_type": "blockdiag",
+                            "pc_type": "ilu",
                         },
                         complement=PetscFieldSplitScheme(
-                            groups=[1],
-                            fieldsplit_options={
-                                "pc_fieldsplit_schur_precondition": "selfp",
-                            },
+                            groups=mech,
+                            block_size=self.nd,
+                            invert=lambda bmat: csr_to_petsc(
+                                make_fs_analytical_slow_new(
+                                    self,
+                                    bmat,
+                                    p_mat_group=4,
+                                    p_frac_group=5,
+                                    groups=flow,
+                                ).mat,
+                                bsize=1,
+                            ),
+                            # fieldsplit_options={
+                            #     "pc_fieldsplit_schur_precondition": "selfp",
+                            # },
                             elim_options={
-                                "pc_type": "ilu",
+                                # "pc_type": "hypre",
+                                # "pc_hypre_type": "boomeramg",
+                                # "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                "pc_type": "hmg",
+                                "hmg_inner_pc_type": "gamg",
+                                "hmg_inner_pc_gamg_threshold": 0.02,
+                                # "hmg_inner_pc_hypre_type": "boomeramg",
+                                # "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
+                                "mg_levels_ksp_type": "richardson",
+                                "mg_levels_ksp_max_it": 2,
+                                "mg_levels_pc_type": "ilu",
                             },
                             complement=PetscFieldSplitScheme(
-                                groups=[2, 3],
-                                block_size=self.nd,
-                                invert=lambda bmat: csr_to_petsc(
-                                    make_fs_analytical(
-                                        self, bmat, p_mat_group=4, p_frac_group=5
-                                    ).mat,
-                                    bsize=1,
-                                ),
-                                # fieldsplit_options={
-                                #     "pc_fieldsplit_schur_precondition": "selfp",
-                                # },
+                                groups=flow,
                                 elim_options={
-                                    "pc_type": "hypre",
-                                    "pc_hypre_type": "boomeramg",
-                                    "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    # "pc_type": "hypre",
+                                    # "pc_hypre_type": "boomeramg",
+                                    # "pc_hypre_boomeramg_truncfactor": 0.3,
+                                    # # "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    "pc_type": "gamg",
+                                    "pc_gamg_threshold": 0.02,
+                                    "mg_levels_ksp_type": "richardson",
+                                    "mg_levels_ksp_max_it": 4,
+                                    "mg_levels_pc_type": "sor",
                                 },
-                                complement=PetscFieldSplitScheme(
-                                    groups=[4, 5],
-                                    elim_options={
-                                        "pc_type": "hypre",
-                                        "pc_hypre_type": "boomeramg",
-                                        "pc_hypre_boomeramg_truncfactor": 0.3,
-                                        # "pc_hypre_boomeramg_strong_threshold": 0.7,
-                                    },
-                                ),
                             ),
                         ),
                     ),
                 ),
-            )
-
-        else:
-            raise ValueError
+            ),
+        )
 
 
 def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.ndarray:

@@ -84,13 +84,7 @@ class StatisticsSavingMixin(ContactIndicators):
         return []
 
     def simulation_name(self) -> str:
-        name = "stats"
-        setup = self.params["linear_solver_config"]
-        name = f"{name}_geo{setup['geometry']}x{setup['grid_refinement']}"
-        name = f"{name}_sol{setup['solver']}"
-        name = f"{name}_ph{setup['physics']}"
-        name = f"{name}_bb{setup['barton_bandis_stiffness_type']}"
-        name = f"{name}_fr{setup['friction_type']}"
+        name = "stats_linear_solver"
         return name
 
     def before_nonlinear_loop(self) -> None:
@@ -106,13 +100,18 @@ class StatisticsSavingMixin(ContactIndicators):
         super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(self) -> None:
-        dump_json(self.simulation_name() + ".json", self.statistics)
+        config = self.params.get("linear_solver_config", {})
+        if config.get("save_statistics", False):
+            dump_json(self.simulation_name() + ".json", self.statistics)
         super().after_nonlinear_convergence()
 
     def after_nonlinear_failure(self) -> None:
         self._time_step_stats.nonlinear_convergence_status = -1
-        dump_json(self.simulation_name() + ".json", self.statistics)
-        print("Time step did not converge")
+        config = self.params.get("linear_solver_config", {})
+        if config.get("save_statistics", False):
+            dump_json(self.simulation_name() + ".json", self.statistics)
+        if config.get("logging", False):
+            print("Time step did not converge")
         super().after_nonlinear_failure()
 
     def before_nonlinear_iteration(self) -> None:
@@ -134,10 +133,13 @@ class StatisticsSavingMixin(ContactIndicators):
         self._time_step_stats.linear_solves.append(self._linear_solve_stats)
         # if self.params["linear_solver_config"].get("save_matrix", False):
         #     self.save_matrix_state()
-        dump_json(self.simulation_name() + ".json", self.statistics)
-        from FTHM_Solver.plot_utils import write_dofs_info
+        config = self.params.get("linear_solver_config", {})
+        if config.get("save_statistics", False):
+            from FTHM_Solver.plot_utils import write_dofs_info
 
-        write_dofs_info(self)
+            dump_json(self.simulation_name() + ".json", self.statistics)
+            write_dofs_info(self)
+
         super().after_nonlinear_iteration(solution_vector)
 
     def sticking_sliding_open(self):

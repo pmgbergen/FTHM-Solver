@@ -139,49 +139,28 @@ def get_fs_fractures_analytical(model: pp.PorePyModel) -> sps.spmatrix:
     M = 1 / model.solid.specific_storage  # [Pa]
     compressibility = model.fluid.components[0].compressibility  # [1 / Pa]
     porosity = model.solid.porosity
-    resid_aperture = model.solid.residual_aperture  # [m]
 
     fractures = model.mdg.subdomains(dim=model.nd - 1)
-    intersections = [
-        frac
-        for dim in reversed(range(model.nd - 1))
-        for frac in model.mdg.subdomains(dim=dim)
-    ]
-    # fractures += intersections
+
+    if len(fractures) == 0:
+        return sps.csr_matrix((0, 0))
 
     nd_vec_to_normal = model.normal_component(fractures)
     # The normal component of the contact traction and the displacement jump.
     u_n_operator = nd_vec_to_normal @ model.displacement_jump(fractures)
     u_n = u_n_operator.value(model.equation_system)
 
-    # alpha^2 / (lambda * (1 / (C_f * M) + phi_0))
-    # val = alpha_biot**2 / (lame_lambda * (1 / (compressibility * M) + porosity))
-
-    # C_f_c * M * alpha^2 / (lambda * (1 + phi_0 * M * C_f))
-    # val = (
-    #     compressibility
-    #     * M
-    #     * alpha_biot**2
-    #     / (lame_lambda * (1 + porosity * M * compressibility))
-    # )
-
-    val = (
-        alpha_biot**2
-        * u_n  # / resid_aperture# ** 3
-        / (lame_lambda / (compressibility * M) + porosity * lame_lambda)
-    )
-
-    if len(fractures) == 0:
-        return sps.csr_matrix((0, 0))
+    if compressibility != 0:
+        val = (
+            alpha_biot**2
+            * u_n  # / resid_aperture# ** 3
+            / (lame_lambda / (compressibility * M) + porosity * lame_lambda)
+        )
+    else:
+        val = 0
 
     cell_volumes = np.concatenate([f.cell_volumes for f in fractures])
     val *= cell_volumes
-
-    # intersections ?
-
-    # specific volume ?
-    # specific_volume = model.specific_volume(fractures).value(model.equation_system)
-    # val *= specific_volume
 
     density = model.fluid.density(fractures).value(model.equation_system)
     val *= density
