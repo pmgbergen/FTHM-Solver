@@ -24,6 +24,9 @@ from .mat_utils import (
 from .plot_utils import plot_mat, spy
 
 
+__all__ = ["BlockMatrixStorage", "PreconditionerScheme", "FieldSplitScheme"]
+
+
 def color_spy(
     mat: spmatrix,
     row_idx: list[list[int]],

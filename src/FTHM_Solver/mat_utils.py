@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 petsc4py.init(sys.argv)
 
 
+__all__ = ["csr_to_petsc", "petsc_to_csr", "сlear_petsc_options"]
+
+
 def assert_finite(vals: np.ndarray, groups: list[int]) -> None:
     pass
     # if not np.all(np.isfinite(vals)) or np.any(abs(vals).max() > 1e30):

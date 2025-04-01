@@ -6,6 +6,13 @@ from .block_matrix import BlockMatrixStorage
 from .mat_utils import csr_to_petsc, сlear_petsc_options
 from petsc4py import PETSc
 
+__all__ = [
+    "PetscFieldSplitScheme",
+    "PetscKSPScheme",
+    "insert_petsc_options",
+    "petsc_options_as_str",
+]
+
 
 def construct_is(bmat: BlockMatrixStorage, groups: list[int]) -> PETSc.IS:
     """Construct a PETSc IS (index set) from a list of groups.
