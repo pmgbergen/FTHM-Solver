@@ -167,7 +167,9 @@ class PetscFieldSplitScheme:
         Parameters:
             bmat: The block matrix storage.
             petsc_pc: The PETSc PC object to be configured.
-            prefix: A prefix to be used for the PETSc options.
+            prefix: A prefix to be used for the PETSc options. Should coincide with the
+                prefix used for petsc_pc (the return of petsc_pc.getOptionsPrefix()).
+
         """
         elim_options = self.elim_options or {}
         fieldsplit_options = self.fieldsplit_options or {}
@@ -185,7 +187,9 @@ class PetscFieldSplitScheme:
                 }
                 # Override with options provided for the eliminated block.
                 | {f"{prefix}{k}": v for k, v in elim_options.items()}
-                # Override with options provided for the fieldsplit. TODO: Why?
+                # Override with options provided for the fieldsplit. TODO: Why? it makes
+                # more sense to EK to use the options from the eliminated block only.
+                # This can probably go.
                 | {f"{prefix}{k}": v for k, v in fieldsplit_options.items()}
             )
 
@@ -221,6 +225,9 @@ class PetscFieldSplitScheme:
             {
                 # By default, we do a Schur complement preconditioner with a direct
                 # solver for the eliminated block.
+                #
+                # EK note to self: The settings here have proven useful so far, but
+                # should not be considered sacrosanct.
                 f"{prefix}pc_type": "fieldsplit",
                 f"{prefix}pc_fieldsplit_type": "schur",
                 f"{prefix}pc_fieldsplit_schur_precondition": "selfp",
@@ -242,8 +249,8 @@ class PetscFieldSplitScheme:
         petsc_pc.setFromOptions()
 
         # Construct the PETSc IS objects for the groups to be eliminated and kept.
-        petsc_is_keep = construct_is(empty_bmat, keep)
-        petsc_is_elim = construct_is(empty_bmat, elim)
+        petsc_is_keep: PETSc.IS = construct_is(empty_bmat, keep)
+        petsc_is_elim: PETSc.IS = construct_is(empty_bmat, elim)
         petsc_is_elim.setBlockSize(self.block_size)
         # Set the IS objects for the fieldsplit.
         petsc_pc.setFieldSplitIS((elim_tag, petsc_is_elim), (keep_tag, petsc_is_keep))
@@ -255,6 +262,8 @@ class PetscFieldSplitScheme:
 
             petsc_pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
 
+        # Set up the preconditioner. This presumably (EK) constructs sub KSPs for the
+        # eliminate and keep blocks.
         petsc_pc.setUp()
 
         petsc_ksp_elim = petsc_pc.getFieldSplitSubKSP()[0]
