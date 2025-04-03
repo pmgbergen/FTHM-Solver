@@ -1,10 +1,10 @@
 from __future__ import annotations
+
 import itertools
 import json
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Sequence, Optional
-from scipy.sparse import spmatrix
+from typing import TYPE_CHECKING, Literal, Optional, Sequence
 
 import numpy as np
 import porepy as pp
@@ -13,10 +13,10 @@ import scipy.linalg
 from matplotlib import pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from numpy.linalg import norm
-from scipy.sparse import bmat
+from scipy.sparse import bmat, spmatrix
 from scipy.sparse.linalg import LinearOperator
 
-from FTHM_Solver.stats import LinearSolveStats, dump_json, TimeStepStats
+from FTHM_Solver.stats import LinearSolveStats, TimeStepStats, dump_json
 
 if TYPE_CHECKING:
     from .block_matrix import (
@@ -932,7 +932,7 @@ def solve_petsc_3(
     linestyle = "-"
     try:
         eigs = krylov.ksp.computeEigenvalues()
-    except:
+    except Exception:
         eigs = None
     else:
         if info <= 0:

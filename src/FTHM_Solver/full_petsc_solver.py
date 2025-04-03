@@ -1,10 +1,13 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Callable, Optional, Any
+from typing import Any, Callable, Optional
+
 import numpy as np
+from petsc4py import PETSc
+
 from .block_matrix import BlockMatrixStorage
 from .mat_utils import csr_to_petsc, сlear_petsc_options
-from petsc4py import PETSc
 
 __all__ = [
     "PetscFieldSplitScheme",

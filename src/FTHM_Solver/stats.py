@@ -1,13 +1,14 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
-from functools import cached_property
+
 import json
-from pathlib import Path
-from dataclasses import asdict
 import time
-import scipy.sparse
+from dataclasses import asdict, dataclass, field
+from functools import cached_property
+from pathlib import Path
+
 import numpy as np
 import porepy as pp
+import scipy.sparse
 from porepy.models.solution_strategy import ContactIndicators
 
 

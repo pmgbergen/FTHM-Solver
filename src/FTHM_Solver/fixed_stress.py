@@ -1,8 +1,8 @@
 import numpy as np
-import scipy.sparse as sps
-import scipy.sparse.linalg as spla
-from .block_matrix import BlockMatrixStorage
 import porepy as pp
+import scipy.sparse as sps
+
+from .block_matrix import BlockMatrixStorage
 
 # def assemble_localization_matrices_mechanics(
 #     bmat: BlockMatrixStorage,
@@ -273,11 +273,6 @@ def get_fs_fractures_energy(model):
     porosity = model.solid.porosity
 
     fractures = model.mdg.subdomains(dim=model.nd - 1)
-    intersections = [
-        frac
-        for dim in reversed(range(model.nd - 1))
-        for frac in model.mdg.subdomains(dim=dim)
-    ]
 
     nd_vec_to_normal = model.normal_component(fractures)
     # The normal component of the contact traction and the displacement jump.

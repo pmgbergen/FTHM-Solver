@@ -1,14 +1,13 @@
 import sys
+import time
 from functools import cached_property
 from typing import Sequence
-import time
 
-import scipy.sparse as sps
 import numpy as np
 import porepy as pp
+import scipy.sparse as sps
 
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
-
 from .stats import LinearSolveStats, StatisticsSavingMixin
 
 
@@ -172,7 +171,7 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
         except Exception as e:
             self.save_matrix_state()
             raise ValueError("Solver solve failed") from e
-        
+
         if config.get("logging", False):
             print("Solve took:", round(time.time() - t0, 2))
 
