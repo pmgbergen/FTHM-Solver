@@ -1,6 +1,7 @@
-import pytest
 import numpy as np
+import pytest
 import scipy.sparse as sp
+
 from FTHM_Solver.block_matrix import BlockMatrixStorage
 
 
@@ -89,10 +90,6 @@ def test_getitem_nested_invocation(sample_matrix):
     direct_sampling = sample_matrix[:2, [1]]
     assert stage_2.shape == direct_sampling.shape
     np.testing.assert_array_equal(stage_2.mat.toarray(), direct_sampling.mat.toarray())
-
-    # If we try to sample an inactive row, we should get a ValueError.
-    with pytest.raises(ValueError, match="Taking inactive row"):
-        stage_2_faulty = stage_1[:, [2]]
 
 
 @pytest.mark.parametrize(

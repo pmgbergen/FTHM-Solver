@@ -1,13 +1,14 @@
 from __future__ import annotations
+
 import sys
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
-from numba import njit
 import petsc4py
 import scipy.linalg
 import scipy.sparse
 import scipy.sparse.linalg
+from numba import njit
 from petsc4py import PETSc
 
 if TYPE_CHECKING:
@@ -323,13 +324,6 @@ class PetscAMGFlow(PetscPC):
         super().__init__(mat=mat, block_size=1)
 
 
-class PetscSOR(PetscPC):
-    def __init__(self, mat=None, factor_levels: int = 0) -> None:
-        options = сlear_petsc_options()
-        options.setValue("pc_type", "sor")
-        super().__init__(mat=mat)
-
-
 class PetscLU(PetscPC):
     def __init__(self, mat=None) -> None:
         options = сlear_petsc_options()
@@ -568,10 +562,10 @@ def lump_nd(mat, nd: int):
         for j in range(nd):
             indices_i = indices + i
             indices_j = indices + j
-            I, J = np.meshgrid(
+            ind_i, ind_j = np.meshgrid(
                 indices_i, indices_j, copy=False, sparse=True, indexing="ij"
             )
-            submat = mat[I, J]
+            submat = mat[ind_i, ind_j]
             lump = np.array(submat.sum(axis=1)).ravel()
             result[indices_i, indices_j] = lump
     return result.tocsr()

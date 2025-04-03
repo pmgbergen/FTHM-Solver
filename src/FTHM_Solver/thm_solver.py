@@ -1,33 +1,18 @@
 from functools import cached_property
+from typing import Callable
 
-from typing import Union, Callable
-
-import scipy.sparse
-from .block_matrix import (
-    BlockMatrixStorage,
-    FieldSplitScheme,
-)
 import numpy as np
-from .fixed_stress import make_fs_analytical_slow_new
-from .full_petsc_solver import (
-    LinearTransformedScheme,
-    PcPythonPermutation,
-    PetscCompositeScheme,
-    PetscFieldSplitScheme,
-    PetscKSPScheme,
-)
-from .mat_utils import (
-    csr_to_petsc,
-)
-from .hm_solver import (
-    IterativeHMSolver,
-)
-from .iterative_solver import (
-    get_equations_group_ids,
-    get_variables_group_ids,
-)
-
 import porepy as pp
+import scipy.sparse
+
+from .block_matrix import BlockMatrixStorage, FieldSplitScheme
+from .fixed_stress import make_fs_analytical_slow_new
+from .full_petsc_solver import (LinearTransformedScheme, PcPythonPermutation,
+                                PetscCompositeScheme, PetscFieldSplitScheme,
+                                PetscKSPScheme)
+from .hm_solver import IterativeHMSolver
+from .iterative_solver import get_equations_group_ids, get_variables_group_ids
+from .mat_utils import csr_to_petsc
 
 
 class THMSolver(IterativeHMSolver):
@@ -194,8 +179,6 @@ class THMSolver(IterativeHMSolver):
 
         if solver_type == "FGMRES":
             return self.make_solver_scheme_fgmres()
-
-        nd = self.nd
 
         # Groups of equations. See `equation_groups` property.
         contact = [0]  # Fracture deformation equations
@@ -420,10 +403,7 @@ class THMSolver(IterativeHMSolver):
 
     def make_solver_scheme_fgmres(self):
         config: dict = self.params.get("linear_solver_config", {})
-        ksp_monitor = (
-            {"ksp_monitor": None} if config.get("ksp_monitor", True) else {}
-        )
-        nd = self.nd
+        ksp_monitor = {"ksp_monitor": None} if config.get("ksp_monitor", True) else {}
         contact = [0]
         intf = [1, 2]
         mech = [3, 4]

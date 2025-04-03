@@ -1,26 +1,20 @@
 from __future__ import annotations
+
+import itertools
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Optional
-import itertools
 
-import scipy.linalg
-import seaborn as sns
-import numpy as np
 import matplotlib
+import numpy as np
+import scipy.linalg
 import scipy.sparse
-from scipy.sparse import spmatrix, csr_matrix
+import seaborn as sns
 from matplotlib import pyplot as plt
+from scipy.sparse import csr_matrix, spmatrix
 
-from .mat_utils import (
-    FieldSplit,
-    TwoStagePreconditioner,
-    inv,
-    cond,
-    PetscGMRES,
-    PetscRichardson,
-    PetscKrylovSolver,
-)
+from .mat_utils import (FieldSplit, PetscGMRES, PetscKrylovSolver,
+                        PetscRichardson, TwoStagePreconditioner, cond, inv)
 from .plot_utils import plot_mat, spy
 
 
@@ -655,8 +649,10 @@ class BlockMatrixStorage:
         for row in row_idx:
             row_data = []
             for col in col_idx:
-                I, J = np.meshgrid(row, col, sparse=True, indexing="ij", copy=False)
-                submat = self.mat[I, J]
+                ind_i, ind_j = np.meshgrid(
+                    row, col, sparse=True, indexing="ij", copy=False
+                )
+                submat = self.mat[ind_i, ind_j]
                 if submat.data.size == 0:
                     row_data.append(np.nan)
                 else:
